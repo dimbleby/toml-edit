@@ -148,6 +148,12 @@ _TOML_1_1_VALID_NOW: frozenset[str] = frozenset({
     "invalid/datetime/no-secs.toml",
     "invalid/local-datetime/no-secs.toml",
     "invalid/local-time/no-secs.toml",
+    # Newlines and trailing commas are now allowed in inline tables.
+    "invalid/inline-table/linebreak-01.toml",
+    "invalid/inline-table/linebreak-02.toml",
+    "invalid/inline-table/linebreak-03.toml",
+    "invalid/inline-table/linebreak-04.toml",
+    "invalid/inline-table/trailing-comma.toml",
 })
 
 

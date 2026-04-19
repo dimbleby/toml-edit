@@ -149,3 +149,64 @@ def test_partial_seconds_form_rejected() -> None:
 def test_too_short_time_rejected() -> None:
     with pytest.raises(tomle.TOMLParseError):
         tomle.parse("t = 07:3\n")
+
+
+# ---------------------------------------------------------------------------
+# Inline tables: newlines + trailing commas
+# ---------------------------------------------------------------------------
+
+
+def test_inline_table_trailing_comma_accepted() -> None:
+    src = "a = { x = 1, y = 2, }\n"
+    doc = tomle.parse(src)
+    a = doc["a"]
+    assert isinstance(a, tomle.Table)
+    assert dict(a) == {"x": 1, "y": 2}
+    assert tomle.dumps(doc) == src
+
+
+def test_inline_table_multiline() -> None:
+    src = "a = {\n    x = 1,\n    y = 2,\n}\n"
+    doc = tomle.parse(src)
+    a = doc["a"]
+    assert isinstance(a, tomle.Table)
+    assert dict(a) == {"x": 1, "y": 2}
+    assert tomle.dumps(doc) == src
+
+
+def test_inline_table_multiline_no_trailing_comma() -> None:
+    src = "a = {\n    x = 1,\n    y = 2\n}\n"
+    doc = tomle.parse(src)
+    a = doc["a"]
+    assert isinstance(a, tomle.Table)
+    assert dict(a) == {"x": 1, "y": 2}
+    assert tomle.dumps(doc) == src
+
+
+def test_inline_table_newline_with_comments_round_trips() -> None:
+    src = "a = { # opener\n    x = 1, # one\n    y = 2, # two\n}\n"
+    doc = tomle.parse(src)
+    a = doc["a"]
+    assert isinstance(a, tomle.Table)
+    assert dict(a) == {"x": 1, "y": 2}
+    assert tomle.dumps(doc) == src
+
+
+def test_inline_table_empty_multiline() -> None:
+    src = "a = {\n}\n"
+    doc = tomle.parse(src)
+    a = doc["a"]
+    assert isinstance(a, tomle.Table)
+    assert dict(a) == {}
+    assert tomle.dumps(doc) == src
+
+
+def test_inline_table_nested_multiline_round_trip() -> None:
+    src = (
+        'contact = {\n'
+        '    personal = { name = "Donald", email = "d@d.com" },\n'
+        '    work = { name = "Cleaner", email = "d@s.com" },\n'
+        '}\n'
+    )
+    doc = tomle.parse(src)
+    assert tomle.dumps(doc) == src

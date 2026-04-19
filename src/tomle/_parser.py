@@ -1265,7 +1265,9 @@ class _Parser:
         assert self._peek() == "{"
         self._advance(1)
         node = InlineTableNode()
-        leading = self._consume_inline_ws()
+        # TOML 1.1: newlines and trailing comma are allowed inside an
+        # inline table, with the same trivia rules as arrays.
+        leading = self._consume_array_trivia()
         if self._peek() == "}":
             node.final_trivia = leading
             self._advance(1)
@@ -1286,18 +1288,16 @@ class _Parser:
             self._advance(1)
             post_eq = self._consume_inline_ws()
             value = self._parse_value()
-            trailing = self._consume_inline_ws()
+            trailing = self._consume_array_trivia()
             has_comma = False
             post_comma = Trivia()
             if self._peek() == ",":
                 self._advance(1)
                 has_comma = True
-                post_comma = self._consume_inline_ws()
+                post_comma = self._consume_array_trivia()
             elif self._peek() != "}":
                 msg = f"expected ',' or '}}' in inline table, got {self._peek()!r}"
-                raise self._error(
-                    msg,
-                )
+                raise self._error(msg)
             node.entries.append(
                 InlineTableEntry(
                     leading=leading,
@@ -1311,14 +1311,14 @@ class _Parser:
                 ),
             )
             if not has_comma:
+                # We're at '}'.
                 self._advance(1)
                 return node
-            # TOML 1.0 forbids a trailing comma in inline tables.
             leading = Trivia()
-            # consumed as post_comma; following key starts after ws.
             if self._peek() == "}":
-                msg = "trailing comma not allowed in inline table (TOML 1.0)"
-                raise self._error(msg)
+                # Trailing comma followed by the closer (TOML 1.1).
+                self._advance(1)
+                return node
 
 
 # Re-export convenience.
