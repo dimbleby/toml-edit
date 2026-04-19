@@ -19,12 +19,14 @@ from tomle._errors import TOMLEditError
 from tomle._nodes import (
     ArrayNode,
     BoolNode,
+    CommentNode,
     DateTimeNode,
     FloatNode,
     InlineTableEntry,
     InlineTableNode,
     IntegerNode,
     Key,
+    KeyValueNode,
     NewlineNode,
     SectionNode,
     StringNode,
@@ -35,13 +37,13 @@ from tomle._nodes import (
 from tomle._synthesise import make_key_part, make_keyvalue_node, value_to_node
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator
+    from collections.abc import Callable, Iterable, Iterator, Sequence
     from typing import Self
 
     from tomle._nodes import (
         ArrayItem,
         DocumentNode,
-        KeyValueNode,
+        TriviaPiece,
         ValueNode,
     )
 
@@ -112,6 +114,91 @@ def _ensure_trailing_newline(section: SectionNode) -> None:
         last.newline = NewlineNode("\n")
 
 
+def _strip_comment_marker(text: str) -> str:
+    """``"# foo "`` → ``"foo"``.
+
+    Removes a leading ``#``, an optional single space, and trailing
+    horizontal whitespace.
+    """
+    text = text.removeprefix("#")
+    text = text.removeprefix(" ")
+    return text.rstrip(" \t")
+
+
+def _format_comment(text: str) -> str:
+    """Format user text as the payload for a :class:`CommentNode`.
+
+    Adds a leading ``#`` plus a space (unless the user already supplied
+    one). Raises :class:`TOMLEditError` if ``text`` contains any line
+    terminator, since comments are single-line by definition.
+    """
+    if "\n" in text or "\r" in text:
+        msg = "comment text must not contain a line terminator"
+        raise TOMLEditError(msg)
+    if text.startswith("#"):
+        return text
+    if text == "":
+        return "#"
+    return "# " + text
+
+
+def _trivia_ends_with_space(trivia: Trivia) -> bool:
+    if not trivia.pieces:
+        return False
+    last = trivia.pieces[-1]
+    return isinstance(last, WhitespaceNode) and last.text.endswith((" ", "\t"))
+
+
+def _kv_indent(kv: KeyValueNode) -> str:
+    """Indent (run of spaces/tabs) the entry's source line started with."""
+    text = kv.leading.render()
+    nl = text.rfind("\n")
+    candidate = text[nl + 1 :] if nl >= 0 else text
+    if all(c in " \t" for c in candidate):
+        return candidate
+    return ""
+
+
+def _build_promoted_section(
+    path: tuple[str, ...],
+    inline: InlineTableNode,
+    source_kv: KeyValueNode,
+) -> SectionNode:
+    """Build a ``[path]`` section containing ``inline``'s entries.
+
+    Comments that lived above the original inline-table KV (its
+    ``leading`` trivia) and any inline EOL comment are carried over to
+    the new header so authoring intent is preserved.
+    """
+    parts = [make_key_part(p) for p in path]
+    seps = ["."] * (len(parts) - 1)
+    header = TableHeaderNode(
+        leading=Trivia(list(source_kv.leading.pieces)),
+        kind="table",
+        inner_pre=Trivia(),
+        key=Key(parts=parts, separators=seps),
+        inner_post=Trivia(),
+        trailing=Trivia(list(source_kv.trailing.pieces)),
+        trailing_comment=source_kv.trailing_comment,
+        newline=NewlineNode("\n"),
+    )
+    section = SectionNode(header=header, entries=[])
+    for entry in inline.entries:
+        section.entries.append(
+            KeyValueNode(
+                leading=Trivia(),
+                key=entry.key,
+                pre_eq=Trivia([WhitespaceNode(" ")]),
+                post_eq=Trivia([WhitespaceNode(" ")]),
+                value=entry.value,
+                trailing=Trivia(),
+                trailing_comment=None,
+                newline=NewlineNode("\n"),
+            ),
+        )
+    return section
+
+
 # ---------------------------------------------------------------------------
 # Tables
 # ---------------------------------------------------------------------------
@@ -179,6 +266,48 @@ class Table(MutableMapping[str, TomlValue]):
     def __repr__(self) -> str:
         body = ", ".join(f"{k!r}: {v!r}" for k, v in self._items())
         return f"{type(self).__name__}({{{body}}})"
+
+    # ------------------------------------------------------------------
+    # Comment API (default raises; concrete subclasses override).
+    # ------------------------------------------------------------------
+
+    def comment(self, key: str) -> str | None:  # noqa: ARG002
+        """Return the end-of-line comment text bound to ``key``.
+
+        The leading ``#`` and a single separating space are stripped.
+        Returns ``None`` when the key has no inline comment.
+        """
+        msg = "this table flavour does not support the comment API"
+        raise TOMLEditError(msg)
+
+    def set_comment(self, key: str, text: str | None) -> None:  # noqa: ARG002
+        """Set or remove the end-of-line comment bound to ``key``.
+
+        Pass ``None`` to delete the comment. The supplied ``text`` may
+        omit the leading ``#``; toml-edit will add it.
+        """
+        msg = "this table flavour does not support the comment API"
+        raise TOMLEditError(msg)
+
+    def leading_comments(self, key: str) -> list[str]:  # noqa: ARG002
+        """Return the contiguous comment block immediately above ``key``."""
+        msg = "this table flavour does not support the comment API"
+        raise TOMLEditError(msg)
+
+    def set_leading_comments(self, key: str, lines: Sequence[str]) -> None:  # noqa: ARG002
+        """Replace the contiguous comment block immediately above ``key``."""
+        msg = "this table flavour does not support the comment API"
+        raise TOMLEditError(msg)
+
+    def promote_inline(self, key: str) -> Table:  # noqa: ARG002
+        """Promote an inline-table-valued ``key`` to a standard table.
+
+        After promotion the entry is rendered as a separate
+        ``[parent.key]`` section, allowing comments and dotted-key
+        expansions on its members.
+        """
+        msg = "this table flavour does not support inline-table promotion"
+        raise TOMLEditError(msg)
 
 
 class _InlineTable(Table):
@@ -387,8 +516,6 @@ class _StdTable(Table):
 
     @override
     def _set_value(self, key: str, value: object) -> None:
-        from tomle._nodes import KeyValueNode  # noqa: PLC0415
-
         # Special case: assigning an AoT (or list of dicts targeted as AoT)
         # is a *structural* edit, not a value assignment.
         if isinstance(value, AoT):
@@ -443,8 +570,6 @@ class _StdTable(Table):
 
     @override
     def _delete_value(self, key: str) -> None:
-        from tomle._nodes import KeyValueNode  # noqa: PLC0415
-
         kind, payload = self._classify(key)
         if kind == "direct":
             assert isinstance(payload, KeyValueNode)
@@ -477,6 +602,114 @@ class _StdTable(Table):
         new_sec = SectionNode(header=None, entries=[])
         doc_node.sections.insert(0, new_sec)
         return new_sec
+
+    # ------------------------------------------------------------------
+    # Comment API
+    # ------------------------------------------------------------------
+
+    def _find_direct_kv(self, key: str) -> tuple[SectionNode, KeyValueNode]:
+        """Return the section + KV node binding ``key`` as a single segment.
+
+        Raises :class:`KeyError` when ``key`` is absent or the binding is
+        a child table / dotted-key prefix rather than a simple
+        ``key = value`` line.
+        """
+        for sec in self._direct_sections():
+            for kv in sec.entries:
+                if (
+                    kv.key.path
+                    and len(kv.key.path) == 1
+                    and kv.key.path[0] == key
+                ):
+                    return sec, kv
+        raise KeyError(key)
+
+    @override
+    def comment(self, key: str) -> str | None:
+        _, kv = self._find_direct_kv(key)
+        if kv.trailing_comment is None:
+            return None
+        return _strip_comment_marker(kv.trailing_comment.text)
+
+    @override
+    def set_comment(self, key: str, text: str | None) -> None:
+        _, kv = self._find_direct_kv(key)
+        if text is None:
+            kv.trailing_comment = None
+            return
+        if not _trivia_ends_with_space(kv.trailing):
+            kv.trailing.pieces.append(WhitespaceNode(" "))
+        kv.trailing_comment = CommentNode(text=_format_comment(text))
+        if kv.newline is None:
+            kv.newline = NewlineNode("\n")
+
+    @override
+    def leading_comments(self, key: str) -> list[str]:
+        _, kv = self._find_direct_kv(key)
+        return [
+            _strip_comment_marker(p.text)
+            for p in kv.leading.pieces
+            if isinstance(p, CommentNode)
+        ]
+
+    @override
+    def set_leading_comments(self, key: str, lines: Sequence[str]) -> None:
+        _, kv = self._find_direct_kv(key)
+        indent = _kv_indent(kv)
+        # Preserve the trailing whitespace run that anchored the key
+        # to its column (everything after the last non-whitespace
+        # piece of the existing leading trivia).
+        tail: list[TriviaPiece] = []
+        for piece in reversed(kv.leading.pieces):
+            if isinstance(piece, WhitespaceNode):
+                tail.insert(0, piece)
+            else:
+                break
+        new_pieces: list[TriviaPiece] = []
+        for line in lines:
+            if indent:
+                new_pieces.append(WhitespaceNode(indent))
+            new_pieces.append(CommentNode(text=_format_comment(line)))
+            new_pieces.append(NewlineNode("\n"))
+        kv.leading.pieces = new_pieces + tail
+
+    @override
+    def promote_inline(self, key: str) -> Table:
+        sec, kv = self._find_direct_kv(key)
+        if not isinstance(kv.value, InlineTableNode):
+            msg = f"{key!r} is not an inline table; nothing to promote"
+            raise TOMLEditError(msg)
+        inline = kv.value
+        child_path = (*self._path, key)
+        # Refuse if a [child_path] section already exists in the document
+        # (defensive: the parser blocks any source where this would arise,
+        # and the mutation API also refuses to create the conflicting
+        # state, so this branch only fires under direct CST manipulation).
+        for existing in self._doc_view._node.sections:  # noqa: SLF001
+            hdr = existing.header
+            if hdr is not None and hdr.key.path == child_path:  # pragma: no cover
+                msg = (
+                    f"cannot promote {key!r}: a "
+                    f"[{'.'.join(child_path)}] section already exists"
+                )
+                raise TOMLEditError(msg)
+        new_sec = _build_promoted_section(child_path, inline, kv)
+        # Remove the inline KV from its host section.
+        sec.entries.remove(kv)
+        # Insert the promoted section after the parent's last direct
+        # section (or at end of document if the parent has none).
+        sections = self._doc_view._node.sections  # noqa: SLF001
+        parent_secs = self._direct_sections()
+        if parent_secs:
+            anchor = parent_secs[-1]
+            anchor_idx = next(
+                (i for i, s in enumerate(sections) if s is anchor),
+                len(sections) - 1,
+            )
+            sections.insert(anchor_idx + 1, new_sec)
+        else:
+            sections.append(new_sec)
+        return _StdTable(self._doc_view, child_path)
 
 
 class Document(_StdTable):
