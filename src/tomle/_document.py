@@ -322,7 +322,7 @@ class _DottedInlineSubTable(Table):
 class _StdTable(Table):
     """Standard TOML table view: aggregates physical sections by path."""
 
-    __slots__ = ("_doc_view", "_path", "_pinned_sections")
+    __slots__ = ("_doc_view", "_extra_kvs", "_owned_scope", "_path", "_pinned_sections")
 
     def __init__(
         self,
@@ -330,14 +330,23 @@ class _StdTable(Table):
         path: tuple[str, ...],
         *,
         sections: list[SectionNode] | None = None,
+        owned_scope: list[SectionNode] | None = None,
+        extra_kvs: list[tuple[tuple[str, ...], KeyValueNode]] | None = None,
     ) -> None:
         self._doc_view = doc_view
         self._path = path
         self._pinned_sections = sections
+        self._owned_scope = owned_scope
+        self._extra_kvs = extra_kvs
 
     @override
     def _items(self) -> Iterator[tuple[str, TomlValue]]:
-        return self._doc_view.iter_table(self._path, self._pinned_sections)
+        return self._doc_view.iter_table(
+            self._path,
+            pinned_sections=self._pinned_sections,
+            owned_scope=self._owned_scope,
+            extra_kvs=self._extra_kvs,
+        )
 
     def _direct_sections(self) -> list[SectionNode]:
         if self._pinned_sections is not None:
@@ -685,53 +694,206 @@ class _DocumentView:
                 seen.setdefault(hpath[len(path)], None)
         return [(*path, k) for k in seen]
 
+    def _aot_owned_range(self, aot_sec: SectionNode) -> list[SectionNode]:
+        """Sections owned by this AoT entry.
+
+        Owned = sections that come *after* ``aot_sec`` in document order
+        and whose header path strictly extends this AoT's path. The range
+        ends at the next [[same-path]] header or any other section that
+        doesn't extend ``aot_sec``'s path.
+        """
+        if aot_sec.header is None:
+            return []
+        aot_path = aot_sec.header.key.path
+        sections = self._node.sections
+        i = -1
+        for idx, candidate in enumerate(sections):
+            if candidate is aot_sec:
+                i = idx
+                break
+        if i < 0:
+            return []
+        owned: list[SectionNode] = []
+        for j in range(i + 1, len(sections)):
+            sec = sections[j]
+            hdr = sec.header
+            if hdr is None:
+                # The synthetic root section appears only at index 0; safe to stop.
+                break
+            hpath = hdr.key.path
+            if hdr.kind == "array" and hpath == aot_path:
+                break  # next AoT entry of same path — terminate
+            if len(hpath) > len(aot_path) and hpath[: len(aot_path)] == aot_path:
+                owned.append(sec)
+            else:
+                # sibling or outer section — terminate ownership
+                break
+        return owned
+
     def iter_table(
         self,
         path: tuple[str, ...],
-        pinned: list[SectionNode] | None = None,
+        *,
+        pinned_sections: list[SectionNode] | None = None,
+        owned_scope: list[SectionNode] | None = None,
+        extra_kvs: list[tuple[tuple[str, ...], KeyValueNode]] | None = None,
     ) -> Iterator[tuple[str, TomlValue]]:
-        emitted: set[str] = set()
-        sections = pinned if pinned is not None else self._direct_sections(path)
-        for sec in sections:
-            yield from self._iter_section_entries(sec, emitted)
-        if pinned is not None:
-            return
-        for child_path in self._child_table_paths(path):
-            name = child_path[-1]
-            if name in emitted:
-                continue
-            emitted.add(name)
-            aot_secs = self._aot_sections(child_path)
-            if aot_secs:
-                tables: list[Table] = [
-                    _StdTable(self, child_path, sections=[sec]) for sec in aot_secs
-                ]
-                yield name, AoT(tables)
-            else:
-                yield name, _StdTable(self, child_path)
+        # Pool of sections to consult for sub-tables / sub-AoTs.
+        sub_pool: list[SectionNode] = (
+            owned_scope if owned_scope is not None else list(self._node.sections)
+        )
 
-    def _iter_section_entries(
-        self,
-        section: SectionNode,
-        emitted: set[str],
-    ) -> Iterator[tuple[str, TomlValue]]:
-        order: list[str] = []
-        groups: dict[str, list[KeyValueNode]] = {}
-        for entry in section.entries:
-            head = entry.key.path[0]
-            if head not in groups:
-                groups[head] = []
-                order.append(head)
-            groups[head].append(entry)
-        for head in order:
-            if head in emitted:
+        # Direct sections that contribute KV entries at this exact path.
+        direct_secs: list[SectionNode]
+        if pinned_sections is not None:
+            direct_secs = pinned_sections
+        elif path == ():
+            direct_secs = [
+                s
+                for s in (
+                    owned_scope
+                    if owned_scope is not None
+                    else self._node.sections
+                )
+                if s.header is None
+            ]
+        else:
+            direct_secs = [
+                s
+                for s in (
+                    owned_scope
+                    if owned_scope is not None
+                    else self._node.sections
+                )
+                if s.header is not None
+                and s.header.kind == "table"
+                and s.header.key.path == path
+            ]
+
+        name_order: list[str] = []
+        seen: set[str] = set()
+
+        def _add(name: str) -> None:
+            if name not in seen:
+                seen.add(name)
+                name_order.append(name)
+
+        direct_kvs_by_head: dict[str, list[KeyValueNode]] = {}
+        extras_by_head: dict[
+            str, list[tuple[tuple[str, ...], KeyValueNode]]
+        ] = {}
+        aot_by_head: dict[str, list[SectionNode]] = {}
+        sub_by_head: dict[str, list[SectionNode]] = {}
+
+        for sec in direct_secs:
+            for entry in sec.entries:
+                head = entry.key.path[0]
+                direct_kvs_by_head.setdefault(head, []).append(entry)
+                _add(head)
+
+        if extra_kvs:
+            for rel_path, entry in extra_kvs:
+                head = rel_path[0]
+                extras_by_head.setdefault(head, []).append((rel_path, entry))
+                _add(head)
+
+        plen = len(path)
+        for sec in sub_pool:
+            hdr = sec.header
+            if hdr is None:
                 continue
-            emitted.add(head)
-            kvs = groups[head]
-            if len(kvs) == 1 and len(kvs[0].key.path) == 1:
-                yield head, _value_for(kvs[0].value)
+            hpath = hdr.key.path
+            if len(hpath) <= plen or hpath[:plen] != path:
+                continue
+            head = hpath[plen]
+            if hdr.kind == "array" and hpath == (*path, head):
+                aot_by_head.setdefault(head, []).append(sec)
             else:
-                yield head, _DottedKvSubTable(kvs, depth=1)
+                sub_by_head.setdefault(head, []).append(sec)
+            _add(head)
+
+        for head in name_order:
+            direct_kvs = direct_kvs_by_head.get(head, [])
+            extras = extras_by_head.get(head, [])
+            aot_secs = aot_by_head.get(head, [])
+            sub_secs = sub_by_head.get(head, [])
+
+            if aot_secs:
+                tables: list[Table] = []
+                for s in aot_secs:
+                    owned = self._aot_owned_range(s)
+                    tables.append(
+                        _StdTable(
+                            self,
+                            (*path, head),
+                            sections=[s],
+                            owned_scope=[s, *owned],
+                        ),
+                    )
+                yield head, AoT(tables)
+                continue
+
+            # Split into "terminal" (binds a value at this name) and
+            # "nested" (contributes to a sub-table at this name).
+            terminal: KeyValueNode | None = None
+            nested_kvs: list[KeyValueNode] = []
+            nested_extras: list[tuple[tuple[str, ...], KeyValueNode]] = []
+            for kv in direct_kvs:
+                if len(kv.key.path) == 1:
+                    if terminal is None:
+                        terminal = kv
+                else:
+                    nested_kvs.append(kv)
+            for rel_path, kv in extras:
+                if len(rel_path) == 1:
+                    if terminal is None:
+                        terminal = kv
+                else:
+                    nested_extras.append((rel_path, kv))
+
+            if (
+                terminal is not None
+                and not nested_kvs
+                and not nested_extras
+                and not sub_secs
+            ):
+                yield head, _value_for(terminal.value)
+                continue
+
+            if not sub_secs and not nested_extras:
+                # Pure dotted from this section level.
+                yield head, _DottedKvSubTable(nested_kvs, depth=1)
+                continue
+
+            # Merged view at path + (head,): combines sub-section content with
+            # any dotted KVs from this section and any ancestor-dotted extras.
+            child_extras: list[tuple[tuple[str, ...], KeyValueNode]] = [
+                (kv.key.path[1:], kv) for kv in nested_kvs
+            ]
+            child_extras.extend((rel_path[1:], entry) for rel_path, entry in nested_extras)
+
+            if owned_scope is not None:
+                child_path = (*path, head)
+                cplen = len(child_path)
+                child_owned = [
+                    s
+                    for s in owned_scope
+                    if s.header is not None
+                    and len(s.header.key.path) >= cplen
+                    and s.header.key.path[:cplen] == child_path
+                ]
+                yield head, _StdTable(
+                    self,
+                    child_path,
+                    owned_scope=child_owned,
+                    extra_kvs=child_extras or None,
+                )
+            else:
+                yield head, _StdTable(
+                    self,
+                    (*path, head),
+                    extra_kvs=child_extras or None,
+                )
 
 
 class _DottedKvSubTable(Table):
