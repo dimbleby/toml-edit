@@ -7,22 +7,15 @@ requires-python = ">=3.11"
 license = "MIT"
 dependencies = []
 classifiers = [
-  "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
   "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3 :: Only",
-  "Programming Language :: Python :: 3.11",
-  "Programming Language :: Python :: 3.12",
-  "Programming Language :: Python :: 3.13",
-  "Programming Language :: Python :: 3.14",
   "Topic :: Software Development :: Libraries",
   "Typing :: Typed",
 ]
 
 [project.urls]
-Homepage = "https://github.com/dch/toml-edit"
-Source = "https://github.com/dch/toml-edit"
+Repository = "https://github.com/dch/toml-edit"
 
 [dependency-groups]
 dev = [
@@ -30,7 +23,6 @@ dev = [
   "pytest-cov>=5",
   "hypothesis>=6",
   "mypy>=1.11",
-  "ruff>=0.6",
   "tomlkit>=0.13",  # for differential/benchmark tests only
 ]
 
