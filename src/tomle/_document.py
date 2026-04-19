@@ -256,6 +256,69 @@ def _replace_trailing_comment_block(
     trivia.pieces = list(pieces[:start]) + new_pieces + tail_ws
 
 
+def _extract_eol_comment(trivia: Trivia) -> str | None:
+    """Return the EOL comment at the *start* of ``trivia``.
+
+    The EOL comment is the (optional WS-then-)CommentNode that appears
+    before the first NewlineNode. Returns ``None`` if none.
+    """
+    for piece in trivia.pieces:
+        if isinstance(piece, WhitespaceNode):
+            continue
+        if isinstance(piece, CommentNode):
+            return _strip_comment_marker(piece.text)
+        return None
+    return None
+
+
+def _replace_eol_comment(
+    trivia: Trivia, value: str | None, *, force_newline: bool,
+) -> None:
+    """Set or clear the EOL comment at the *start* of ``trivia``.
+
+    Existing EOL prefix (``[WS]? CommentNode``) is removed if present.
+    If ``value`` is non-empty, ``" # value"`` is prepended. When
+    ``force_newline`` is True and the trivia would otherwise lack a
+    NewlineNode after the new comment, one is inserted (so following
+    content doesn't end up on the same line as the comment).
+    """
+    pieces = trivia.pieces
+    end_eol = 0
+    while end_eol < len(pieces) and isinstance(pieces[end_eol], WhitespaceNode):
+        end_eol += 1
+    if end_eol < len(pieces) and isinstance(pieces[end_eol], CommentNode):
+        end_eol += 1
+    else:
+        end_eol = 0
+    rest = list(pieces[end_eol:])
+    new_prefix: list[TriviaPiece] = []
+    if value is not None and value != "":
+        new_prefix.append(WhitespaceNode(" "))
+        new_prefix.append(CommentNode(text=_format_comment(value)))
+        if force_newline and not any(isinstance(p, NewlineNode) for p in rest):
+            new_prefix.append(NewlineNode("\n"))
+    trivia.pieces = new_prefix + rest
+
+
+def _array_indent(arr: ArrayNode) -> str:
+    """Best-guess per-item indent for inserting comment lines."""
+    for item in arr.items:
+        text = item.leading.render()
+        nl = text.rfind("\n")
+        if nl >= 0:
+            cand = text[nl + 1 :]
+            if cand and all(c in " \t" for c in cand):
+                return cand
+    for item in arr.items[:-1]:
+        text = item.post_comma_trivia.render()
+        nl = text.rfind("\n")
+        if nl >= 0:
+            cand = text[nl + 1 :]
+            if cand and all(c in " \t" for c in cand):
+                return cand
+    return " "
+
+
 def _build_promoted_section(
     path: tuple[str, ...],
     inline: InlineTableNode,
@@ -1046,6 +1109,259 @@ class _TableLeadingCommentsView(MutableMapping[str, "tuple[str, ...]"]):
         return f"{type(self).__name__}({{{body}}})"
 
 
+class _ArrayCommentsView(MutableMapping[int, str]):
+    """Live mapping from array index to that item's end-of-line comment.
+
+    Backed by an :class:`Array`. An index is "present" iff the
+    corresponding item currently carries an EOL comment in its
+    ``post_comma_trivia`` (when the item has a trailing comma) or
+    its ``trailing`` trivia (last item, no trailing comma).
+    """
+
+    __slots__ = ("_array",)
+
+    def __init__(self, array: Array) -> None:
+        self._array = array
+
+    def _check_index(self, key: object) -> int:
+        if not isinstance(key, int):
+            msg = f"Array.comments index must be int, got {type(key).__name__}"
+            raise TypeError(msg)
+        n = len(self._array._node.items)  # noqa: SLF001
+        if not 0 <= key < n:
+            raise KeyError(key)
+        return key
+
+    def _read_eol(self, i: int) -> str | None:
+        item = self._array._node.items[i]  # noqa: SLF001
+        if item.has_comma:
+            c = _extract_eol_comment(item.post_comma_trivia)
+            if c is not None:
+                return c
+        return _extract_eol_comment(item.trailing)
+
+    @override
+    def __getitem__(self, key: int) -> str:
+        i = self._check_index(key)
+        c = self._read_eol(i)
+        if c is None:
+            raise KeyError(key)
+        return c
+
+    @override
+    def __setitem__(self, key: int, value: str) -> None:
+        i = self._check_index(key)
+        items = self._array._node.items  # noqa: SLF001
+        item = items[i]
+        n = len(items)
+        is_last = i == n - 1
+        if value == "":
+            del self[key]
+            return
+        if not is_last:
+            # Mid-array: must use post_comma_trivia, with a forced
+            # newline so the next item doesn't end up on the same line.
+            if not item.post_comma_trivia.pieces:
+                item.post_comma_trivia = Trivia([WhitespaceNode(" ")])
+            _replace_eol_comment(
+                item.post_comma_trivia, value, force_newline=True,
+            )
+            indent = _array_indent(self._array._node)  # noqa: SLF001
+            # If we just forced a newline and the very next item lacks
+            # any leading newline+indent, prepend one for clean output.
+            next_item = items[i + 1]
+            if not next_item.leading.pieces and indent:
+                next_item.leading = Trivia([WhitespaceNode(indent)])
+            elif (
+                next_item.leading.pieces
+                and isinstance(next_item.leading.pieces[0], WhitespaceNode)
+                and "\n" not in next_item.leading.render()
+                and indent
+            ):
+                next_item.leading.pieces[0] = WhitespaceNode(indent)
+        elif item.has_comma:
+            # Last item with trailing comma: write into post_comma_trivia.
+            # Must end with a newline so `]` ends up on the next line.
+            _replace_eol_comment(
+                item.post_comma_trivia, value, force_newline=True,
+            )
+            self._ensure_array_break_before_close()
+        else:
+            # Last item without comma: write into trailing.
+            # Must end with a newline before final_trivia so `]` ends
+            # up on the next line (otherwise the comment swallows it).
+            _replace_eol_comment(item.trailing, value, force_newline=True)
+            self._ensure_array_break_before_close()
+        self._array._resync()  # noqa: SLF001
+
+    def _ensure_array_break_before_close(self) -> None:
+        """Ensure ``]`` ends up on its own line when the last item carries
+        an EOL comment.
+
+        After attaching such a comment, the comment runs to end of line,
+        so ``]`` cannot sit on the same line as the value/comma. We add
+        a newline at the start of ``final_trivia`` only when the trivia
+        immediately preceding ``final_trivia`` doesn't already end with
+        one.
+        """
+        node = self._array._node  # noqa: SLF001
+        ft = node.final_trivia
+        if any(isinstance(p, NewlineNode) for p in ft.pieces):
+            return
+        items = node.items
+        if items:
+            last = items[-1]
+            preceding = (
+                last.post_comma_trivia.pieces
+                if last.has_comma
+                else last.trailing.pieces
+            )
+            if preceding and isinstance(preceding[-1], NewlineNode):
+                return
+        kept: list[TriviaPiece] = []
+        skipped = True
+        for p in ft.pieces:
+            if skipped and isinstance(p, WhitespaceNode):
+                continue
+            skipped = False
+            kept.append(p)
+        ft.pieces = [NewlineNode("\n"), *kept]
+
+    @override
+    def __delitem__(self, key: int) -> None:
+        i = self._check_index(key)
+        item = self._array._node.items[i]  # noqa: SLF001
+        had = False
+        if _extract_eol_comment(item.post_comma_trivia) is not None:
+            _replace_eol_comment(item.post_comma_trivia, None, force_newline=False)
+            had = True
+        if _extract_eol_comment(item.trailing) is not None:
+            _replace_eol_comment(item.trailing, None, force_newline=False)
+            had = True
+        if not had:
+            raise KeyError(key)
+        self._array._resync()  # noqa: SLF001
+
+    @override
+    def __iter__(self) -> Iterator[int]:
+        for i in range(len(self._array._node.items)):  # noqa: SLF001
+            if self._read_eol(i) is not None:
+                yield i
+
+    @override
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
+
+    @override
+    def __contains__(self, key: object) -> bool:
+        if not isinstance(key, int):
+            return False
+        n = len(self._array._node.items)  # noqa: SLF001
+        if not 0 <= key < n:
+            return False
+        return self._read_eol(key) is not None
+
+    @override
+    def __repr__(self) -> str:
+        body = ", ".join(f"{k}: {v!r}" for k, v in self.items())
+        return f"{type(self).__name__}({{{body}}})"
+
+
+class _ArrayLeadingCommentsView(MutableMapping[int, "tuple[str, ...]"]):
+    """Live mapping from array index to its leading comment block.
+
+    For item 0, the block is extracted from ``items[0].leading`` (the
+    trivia between ``[`` and the first value). For item i > 0, it is
+    extracted from ``items[i-1].post_comma_trivia`` (specifically, the
+    contiguous trailing run of comment lines, ignoring any EOL portion
+    that belongs to item i-1).
+    """
+
+    __slots__ = ("_array",)
+
+    def __init__(self, array: Array) -> None:
+        self._array = array
+
+    def _check_index(self, key: object) -> int:
+        if not isinstance(key, int):
+            msg = (
+                "Array.leading_comments index must be int, "
+                f"got {type(key).__name__}"
+            )
+            raise TypeError(msg)
+        n = len(self._array._node.items)  # noqa: SLF001
+        if not 0 <= key < n:
+            raise KeyError(key)
+        return key
+
+    def _trivia_for(self, i: int) -> Trivia:
+        items = self._array._node.items  # noqa: SLF001
+        if i == 0:
+            return items[0].leading
+        return items[i - 1].post_comma_trivia
+
+    @override
+    def __getitem__(self, key: int) -> tuple[str, ...]:
+        i = self._check_index(key)
+        block = _extract_trailing_comment_block(self._trivia_for(i))
+        if not block:
+            raise KeyError(key)
+        return block
+
+    @override
+    def __setitem__(self, key: int, value: Sequence[str]) -> None:
+        i = self._check_index(key)
+        trivia = self._trivia_for(i)
+        indent = _array_indent(self._array._node)  # noqa: SLF001
+        # Ensure the trivia ends with a newline+indent anchor so the
+        # comment block lands on its own line(s) before the next value.
+        if value and not any(isinstance(p, NewlineNode) for p in trivia.pieces):
+            while trivia.pieces and isinstance(
+                trivia.pieces[-1], WhitespaceNode,
+            ):
+                trivia.pieces.pop()
+            trivia.pieces.append(NewlineNode("\n"))
+            if indent:
+                trivia.pieces.append(WhitespaceNode(indent))
+        _replace_trailing_comment_block(trivia, value, indent)
+        self._array._resync()  # noqa: SLF001
+
+    @override
+    def __delitem__(self, key: int) -> None:
+        i = self._check_index(key)
+        trivia = self._trivia_for(i)
+        if not _extract_trailing_comment_block(trivia):
+            raise KeyError(key)
+        _replace_trailing_comment_block(
+            trivia, (), _array_indent(self._array._node),  # noqa: SLF001
+        )
+        self._array._resync()  # noqa: SLF001
+
+    @override
+    def __iter__(self) -> Iterator[int]:
+        for i in range(len(self._array._node.items)):  # noqa: SLF001
+            if _extract_trailing_comment_block(self._trivia_for(i)):
+                yield i
+
+    @override
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
+
+    @override
+    def __contains__(self, key: object) -> bool:
+        if not isinstance(key, int):
+            return False
+        n = len(self._array._node.items)  # noqa: SLF001
+        if not 0 <= key < n:
+            return False
+        return bool(_extract_trailing_comment_block(self._trivia_for(key)))
+
+    @override
+    def __repr__(self) -> str:
+        body = ", ".join(f"{k}: {list(v)!r}" for k, v in self.items())
+        return f"{type(self).__name__}({{{body}}})"
+
+
 # ---------------------------------------------------------------------------
 # Array (inline) and AoT (array of tables)
 # ---------------------------------------------------------------------------
@@ -1090,21 +1406,61 @@ class Array(list[TomlValue]):
         )
 
     def _rebuild_separators(self) -> None:
-        """Normalise commas/spacing across the underlying ArrayItems."""
+        """Normalise commas/spacing across the underlying ArrayItems.
+
+        Also migrates any EOL comment between ``trailing`` and
+        ``post_comma_trivia`` when an item changes its ``has_comma``
+        flag, so the comment stays logically attached to its item
+        rather than ending up in the wrong physical slot.
+        """
         items = self._node.items
         n = len(items)
         for i, item in enumerate(items):
             if i < n - 1:
                 if not item.has_comma:
+                    # Was last (no comma); now mid-array. Migrate any
+                    # EOL comment from `trailing` into the freshly
+                    # synthesized post_comma_trivia, then clear `trailing`
+                    # entirely (its newline/spacing belonged to "no item
+                    # follows" and is now wrong).
+                    eol = _extract_eol_comment(item.trailing)
+                    item.trailing = Trivia()
                     item.has_comma = True
-                if not item.post_comma_trivia.pieces:
+                    item.post_comma_trivia = Trivia([WhitespaceNode(" ")])
+                    if eol is not None:
+                        _replace_eol_comment(
+                            item.post_comma_trivia, eol, force_newline=True,
+                        )
+                elif not item.post_comma_trivia.pieces:
                     item.post_comma_trivia = Trivia([WhitespaceNode(" ")])
             else:
-                # Last item: drop trailing comma we synthesized.
+                # Last item: drop trailing comma we synthesized iff the
+                # post-comma slot is otherwise empty.
                 if item.has_comma and not item.post_comma_trivia.pieces:
                     item.has_comma = False
         if not items:
             self._node.final_trivia = Trivia()
+
+    @property
+    def comments(self) -> MutableMapping[int, str]:
+        """Live mapping of ``index -> end-of-line comment text``.
+
+        Only items that currently carry an EOL comment are present.
+        Setting ``""`` removes the comment, mirroring ``del``.
+        Reads return the comment text without the leading ``#`` or
+        surrounding whitespace.
+        """
+        return _ArrayCommentsView(self)
+
+    @property
+    def leading_comments(self) -> MutableMapping[int, tuple[str, ...]]:
+        """Live mapping of ``index -> tuple of comment lines above item``.
+
+        For item 0 the lines come from inside the array opening, before
+        the first value. For item i > 0 they come from the trivia
+        between item i-1's separator and item i's value.
+        """
+        return _ArrayLeadingCommentsView(self)
 
     # ------------------------------------------------------------------
     # Mutators (override every one)
