@@ -114,6 +114,32 @@ def _ensure_trailing_newline(section: SectionNode) -> None:
         last.newline = NewlineNode("\n")
 
 
+def _starts_with_blank_line(trivia: Trivia) -> bool:
+    """``True`` iff ``trivia`` begins with a bare newline.
+
+    A bare ``NewlineNode`` at the start of an entry's leading trivia
+    is how the parser records "blank line above this line": the
+    previous entry ended with its own newline, then this newline
+    forms the empty line, then the entry's indent / content begins.
+    """
+    return bool(trivia.pieces) and isinstance(trivia.pieces[0], NewlineNode)
+
+
+def _gaps_uniformly_blank(leadings: Sequence[Trivia]) -> bool:
+    """Decide whether existing siblings are uniformly blank-line separated.
+
+    ``leadings`` is the leading trivia of every sibling *except the
+    first* (the first has no preceding sibling, so its leading
+    describes the gap to the document preamble, not an inter-sibling
+    gap). Returns ``True`` only when every such gap starts with a
+    blank line; mixed layouts fall back to ``False`` so we don't
+    impose spacing the user may have deliberately omitted.
+    """
+    if not leadings:
+        return False
+    return all(_starts_with_blank_line(t) for t in leadings)
+
+
 def _strip_comment_marker(text: str) -> str:
     """``"# foo "`` → ``"foo"``.
 
@@ -532,6 +558,8 @@ class _StdTable(Table):
         target = sections[-1]
         indent = _detect_indent(target)
         new_kv = make_keyvalue_node(key, value, indent=indent)
+        if _gaps_uniformly_blank([kv.leading for kv in target.entries[1:]]):
+            new_kv.leading.pieces.insert(0, NewlineNode("\n"))
         _ensure_trailing_newline(target)
         target.entries.append(new_kv)
 
@@ -1157,6 +1185,12 @@ class AoT(list[Table]):
         py_index = max(0, min(py_index, n))
         new_sec = self._make_header_section()
         self._populate_section(new_sec, value)
+        own_header_leadings = [
+            sec.header.leading for sec in own[1:] if sec.header is not None
+        ]
+        if _gaps_uniformly_blank(own_header_leadings):
+            assert new_sec.header is not None
+            new_sec.header.leading.pieces.insert(0, NewlineNode("\n"))
         sections = self._doc_view._node.sections  # noqa: SLF001
         if py_index == n:
             # Append: insert after the last [[path]] entry's owned range,
