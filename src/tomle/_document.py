@@ -7,9 +7,11 @@ added in a follow-up phase (see plan.md).
 
 from __future__ import annotations
 
-from collections.abc import Iterator, MutableMapping
+import operator
+from collections.abc import MutableMapping
+from copy import deepcopy
 from datetime import date, datetime, time
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING, SupportsIndex, TypeAlias, overload
 
 from typing_extensions import override
 
@@ -19,18 +21,25 @@ from tomle._nodes import (
     BoolNode,
     DateTimeNode,
     FloatNode,
+    InlineTableEntry,
     InlineTableNode,
     IntegerNode,
+    SectionNode,
     StringNode,
+    Trivia,
+    WhitespaceNode,
 )
+from tomle._synthesise import make_keyvalue_node, value_to_node
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterable, Iterator
+    from typing import Self
 
     from tomle._nodes import (
+        ArrayItem,
         DocumentNode,
+        Key,
         KeyValueNode,
-        SectionNode,
         ValueNode,
     )
 
@@ -71,6 +80,36 @@ def _value_for(node: ValueNode) -> TomlValue:
 
 def _materialise_array(node: ArrayNode) -> list[TomlValue]:
     return [_value_for(item.value) for item in node.items]
+
+
+def _detect_indent(section: SectionNode) -> str:
+    """Return the leading-whitespace indent used by the section's last entry."""
+    if not section.entries:
+        return ""
+    last = section.entries[-1]
+    text = last.leading.render()
+    # Take everything after the final newline (the line's indent).
+    nl = text.rfind("\n")
+    candidate = text[nl + 1 :] if nl >= 0 else text
+    if all(c in " \t" for c in candidate):
+        return candidate
+    return ""
+
+
+def _ensure_trailing_newline(section: SectionNode) -> None:
+    """Make sure the section's last entry ends with a newline.
+
+    A parsed file's final entry may lack a newline at EOF. Before we
+    append a sibling we have to terminate the previous line so the
+    output is still well-formed.
+    """
+    if not section.entries:
+        return
+    last = section.entries[-1]
+    if last.newline is None:
+        from tomle._nodes import NewlineNode  # noqa: PLC0415
+
+        last.newline = NewlineNode("\n")
 
 
 # ---------------------------------------------------------------------------
@@ -120,15 +159,22 @@ class Table(MutableMapping[str, TomlValue]):
         raise KeyError(key)
 
     @override
-    def __setitem__(self, key: str, value: TomlValue) -> None:  # pragma: no cover
-        raise TOMLEditError(
-            "mutation is not yet implemented in this build of toml-edit",
-        )
+    def __setitem__(self, key: str, value: object) -> None:
+        self._set_value(key, value)
 
     @override
-    def __delitem__(self, key: str) -> None:  # pragma: no cover
+    def __delitem__(self, key: str) -> None:
+        self._delete_value(key)
+
+    # Subclasses override these.
+    def _set_value(self, key: str, value: object) -> None:  # noqa: ARG002, pragma: no cover
         raise TOMLEditError(
-            "mutation is not yet implemented in this build of toml-edit",
+            "this table flavour does not support mutation in this build",
+        )
+
+    def _delete_value(self, key: str) -> None:  # noqa: ARG002, pragma: no cover
+        raise TOMLEditError(
+            "this table flavour does not support mutation in this build",
         )
 
     @override
@@ -161,6 +207,76 @@ class _InlineTable(Table):
                 yield head, _value_for(entries[0][1])
             else:
                 yield head, _DottedInlineSubTable(entries, depth=1)
+
+    def _find_entry(self, key: str) -> InlineTableEntry | None:
+        for entry in self._node.entries:
+            if len(entry.key.path) == 1 and entry.key.path[0] == key:
+                return entry
+        return None
+
+    @override
+    def _set_value(self, key: str, value: object) -> None:
+        # Reject conflict with dotted entries.
+        for entry in self._node.entries:
+            if entry.key.path[0] == key and len(entry.key.path) > 1:
+                msg = (
+                    f"cannot assign to {key!r} inside an inline table: "
+                    "conflicts with an existing dotted-key entry."
+                )
+                raise TOMLEditError(msg)
+        existing = self._find_entry(key)
+        if existing is not None:
+            existing.value = value_to_node(value)
+            return
+        # Append a new entry, fixing up the previous last entry's comma.
+        new_entry = InlineTableEntry(
+            leading=Trivia([WhitespaceNode(" ")]),
+            key=_make_simple_key_for_inline(key),
+            pre_eq=Trivia([WhitespaceNode(" ")]),
+            post_eq=Trivia([WhitespaceNode(" ")]),
+            value=value_to_node(value),
+            trailing=Trivia(),
+            has_comma=False,
+            post_comma_trivia=Trivia(),
+        )
+        if self._node.entries:
+            prev = self._node.entries[-1]
+            if not prev.has_comma:
+                prev.has_comma = True
+                prev.post_comma_trivia = Trivia()
+        else:
+            # Empty inline table: drop any whitespace-only final_trivia.
+            self._node.final_trivia = Trivia([WhitespaceNode(" ")])
+        self._node.entries.append(new_entry)
+
+    @override
+    def _delete_value(self, key: str) -> None:
+        existing = self._find_entry(key)
+        if existing is None:
+            # might be dotted-only → unsupported / KeyError per semantics
+            for entry in self._node.entries:
+                if entry.key.path[0] == key:
+                    msg = (
+                        f"cannot delete dotted-key entry {key!r} from inline "
+                        "table in this build."
+                    )
+                    raise TOMLEditError(msg)
+            raise KeyError(key)
+        idx = self._node.entries.index(existing)
+        was_last = idx == len(self._node.entries) - 1
+        self._node.entries.pop(idx)
+        if was_last and self._node.entries:
+            new_last = self._node.entries[-1]
+            new_last.has_comma = False
+            new_last.post_comma_trivia = Trivia()
+        if not self._node.entries:
+            self._node.final_trivia = Trivia()
+
+
+def _make_simple_key_for_inline(name: str) -> Key:
+    from tomle._synthesise import make_simple_key  # noqa: PLC0415
+
+    return make_simple_key(name)
 
 
 class _DottedInlineSubTable(Table):
@@ -221,6 +337,99 @@ class _StdTable(Table):
     def _items(self) -> Iterator[tuple[str, TomlValue]]:
         return self._doc_view.iter_table(self._path, self._pinned_sections)
 
+    def _direct_sections(self) -> list[SectionNode]:
+        if self._pinned_sections is not None:
+            return self._pinned_sections
+        return self._doc_view._direct_sections(self._path)  # noqa: SLF001
+
+    def _classify(self, key: str) -> tuple[str, object]:
+        """Classify a key for mutation purposes.
+
+        Returns one of:
+            ("direct", KeyValueNode)         - a single-part scalar/value entry
+            ("dotted", None)                 - dotted-key prefix (e.g. b.c=...)
+            ("table", None)                  - child standard table [self.path.key]
+            ("aot", None)                    - child AoT [[self.path.key]]
+            ("absent", None)
+        """
+        for sec in self._direct_sections():
+            for kv in sec.entries:
+                if kv.key.path[0] == key:
+                    if len(kv.key.path) == 1:
+                        return ("direct", kv)
+                    return ("dotted", None)
+        child = (*self._path, key)
+        if self._doc_view._aot_sections(child):  # noqa: SLF001
+            return ("aot", None)
+        for sec in self._doc_view._node.sections:  # noqa: SLF001
+            hdr = sec.header
+            if hdr is not None and hdr.kind == "table":
+                hpath = hdr.key.path
+                if len(hpath) >= len(child) and hpath[: len(child)] == child:
+                    return ("table", None)
+        return ("absent", None)
+
+    @override
+    def _set_value(self, key: str, value: object) -> None:
+        from tomle._nodes import KeyValueNode  # noqa: PLC0415
+
+        kind, payload = self._classify(key)
+        if kind == "direct":
+            assert isinstance(payload, KeyValueNode)
+            payload.value = value_to_node(value)
+            return
+        if kind in ("dotted", "table", "aot"):
+            msg = (
+                f"cannot assign to {key!r}: existing structure conflicts "
+                f"({kind}). Mutate the nested table or remove it first."
+            )
+            raise TOMLEditError(msg)
+        sections = self._direct_sections()
+        if not sections:
+            sections = [self._ensure_section()]
+        target = sections[-1]
+        indent = _detect_indent(target)
+        new_kv = make_keyvalue_node(key, value, indent=indent)
+        _ensure_trailing_newline(target)
+        target.entries.append(new_kv)
+
+    @override
+    def _delete_value(self, key: str) -> None:
+        from tomle._nodes import KeyValueNode  # noqa: PLC0415
+
+        kind, payload = self._classify(key)
+        if kind == "direct":
+            assert isinstance(payload, KeyValueNode)
+            for sec in self._direct_sections():
+                if payload in sec.entries:
+                    sec.entries.remove(payload)
+                    return
+            raise KeyError(key)
+        if kind == "absent":
+            raise KeyError(key)
+        msg = (
+            f"cannot delete {key!r}: deleting child tables / dotted-key "
+            "subtrees is not yet supported in this build."
+        )
+        raise TOMLEditError(msg)
+
+    def _ensure_section(self) -> SectionNode:
+        """Create an implicit pre-header section for the document root.
+
+        Only valid for the top-level Document; sub-tables created via
+        ``__setitem__`` are deferred (raise above).
+        """
+        if self._path != ():  # pragma: no cover - defensive
+            msg = (
+                f"no [{'.'.join(self._path)}] section exists; creating "
+                "new sub-tables via assignment is not yet supported."
+            )
+            raise TOMLEditError(msg)
+        doc_node = self._doc_view._node  # noqa: SLF001
+        new_sec = SectionNode(header=None, entries=[])
+        doc_node.sections.insert(0, new_sec)
+        return new_sec
+
 
 class Document(_StdTable):
     """Top-level TOML document. Subclass of :class:`Table`."""
@@ -249,8 +458,10 @@ class Document(_StdTable):
 class Array(list[TomlValue]):
     """Inline TOML array exposed as a real :class:`list`.
 
-    Mutation is not yet wired through to the underlying CST in this MVP
-    cut; reads return plain Python values.
+    Every standard list mutator is overridden so the underlying CST
+    stays in sync. Existing handles to nested ``Array``/``Table`` values
+    that were *not* removed remain valid; handles to removed/replaced
+    elements become detached.
     """
 
     __slots__ = ("_node",)
@@ -258,6 +469,161 @@ class Array(list[TomlValue]):
     def __init__(self, node: ArrayNode) -> None:
         self._node = node
         super().__init__(_materialise_array(node))
+
+    # ------------------------------------------------------------------
+    # CST <-> list synchronisation helpers
+    # ------------------------------------------------------------------
+
+    def _resync(self) -> None:
+        """Rebuild the public list from the CST after a structural change."""
+        list.clear(self)
+        list.extend(self, _materialise_array(self._node))
+
+    @staticmethod
+    def _make_item(value: TomlValue, *, with_comma: bool) -> ArrayItem:
+        from tomle._nodes import ArrayItem  # noqa: PLC0415
+
+        return ArrayItem(
+            leading=Trivia([WhitespaceNode(" ")]),
+            value=value_to_node(value),
+            trailing=Trivia(),
+            has_comma=with_comma,
+            post_comma_trivia=(
+                Trivia([WhitespaceNode(" ")]) if with_comma else Trivia()
+            ),
+        )
+
+    def _rebuild_separators(self) -> None:
+        """Normalise commas/spacing across the underlying ArrayItems."""
+        items = self._node.items
+        n = len(items)
+        for i, item in enumerate(items):
+            if i < n - 1:
+                if not item.has_comma:
+                    item.has_comma = True
+                if not item.post_comma_trivia.pieces:
+                    item.post_comma_trivia = Trivia([WhitespaceNode(" ")])
+            else:
+                # Last item: drop trailing comma we synthesized.
+                if item.has_comma and not item.post_comma_trivia.pieces:
+                    item.has_comma = False
+        if not items:
+            self._node.final_trivia = Trivia()
+        elif not self._node.final_trivia.pieces:
+            self._node.final_trivia = Trivia([WhitespaceNode(" ")])
+
+    # ------------------------------------------------------------------
+    # Mutators (override every one)
+    # ------------------------------------------------------------------
+
+    @override
+    def append(self, value: TomlValue) -> None:
+        self._node.items.append(self._make_item(value, with_comma=False))
+        self._rebuild_separators()
+        self._resync()
+
+    @override
+    def extend(self, values: Iterable[TomlValue]) -> None:
+        for v in list(values):
+            self._node.items.append(self._make_item(v, with_comma=False))
+        self._rebuild_separators()
+        self._resync()
+
+    @override
+    def insert(self, index: SupportsIndex, value: TomlValue) -> None:
+        self._node.items.insert(operator.index(index), self._make_item(value, with_comma=False))
+        self._rebuild_separators()
+        self._resync()
+
+    @overload
+    def __setitem__(self, index: SupportsIndex, value: TomlValue) -> None: ...
+    @overload
+    def __setitem__(self, index: slice, value: Iterable[TomlValue]) -> None: ...
+    @override
+    def __setitem__(
+        self,
+        index: SupportsIndex | slice,
+        value: TomlValue | Iterable[TomlValue],
+    ) -> None:
+        if isinstance(index, slice):
+            assert not isinstance(value, (str, bytes))
+            new_items = [
+                self._make_item(v, with_comma=False)
+                for v in list(value)  # type: ignore[arg-type]
+            ]
+            self._node.items[index] = new_items
+        else:
+            i = operator.index(index)
+            self._node.items[i].value = value_to_node(value)
+        self._rebuild_separators()
+        self._resync()
+
+    @override
+    def __delitem__(self, index: SupportsIndex | slice) -> None:
+        if isinstance(index, slice):
+            del self._node.items[index]
+        else:
+            del self._node.items[operator.index(index)]
+        self._rebuild_separators()
+        self._resync()
+
+    @override
+    def pop(self, index: SupportsIndex = -1) -> TomlValue:
+        item = self._node.items.pop(operator.index(index))
+        self._rebuild_separators()
+        self._resync()
+        return _value_for(item.value)
+
+    @override
+    def remove(self, value: TomlValue) -> None:
+        idx = list.index(self, value)
+        del self[idx]
+
+    @override
+    def clear(self) -> None:
+        self._node.items.clear()
+        self._rebuild_separators()
+        self._resync()
+
+    @override
+    def reverse(self) -> None:
+        self._node.items.reverse()
+        self._rebuild_separators()
+        self._resync()
+
+    @override
+    def sort(
+        self,
+        *,
+        key: Callable[[TomlValue], object] | None = None,
+        reverse: bool = False,
+    ) -> None:
+        pairs = list(zip(_materialise_array(self._node), self._node.items, strict=True))
+        if key is None:
+            pairs.sort(key=lambda p: p[0], reverse=reverse)  # type: ignore[arg-type, return-value]
+        else:
+            pairs.sort(key=lambda p: key(p[0]), reverse=reverse)  # type: ignore[arg-type, return-value]
+        self._node.items[:] = [item for _, item in pairs]
+        self._rebuild_separators()
+        self._resync()
+
+    @override
+    def __iadd__(self, values: Iterable[TomlValue]) -> Self:  # type: ignore[override]
+        self.extend(values)
+        return self
+
+    @override
+    def __imul__(self, count: SupportsIndex) -> Self:
+        n = operator.index(count)
+        if n <= 0:
+            self.clear()
+        else:
+            base = list(self._node.items)
+            for _ in range(n - 1):
+                self._node.items.extend(deepcopy(item) for item in base)
+            self._rebuild_separators()
+            self._resync()
+        return self
 
 
 class AoT(list[Table]):
