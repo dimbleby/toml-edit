@@ -12,6 +12,7 @@ jobs:
   test:
     name: test (py${{ matrix.python-version }} on ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental == true }}
     permissions:
       contents: read
     strategy:
@@ -19,11 +20,17 @@ jobs:
       matrix:
         os: [ubuntu-latest]
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        experimental: [false]
         include:
           - os: macos-latest
             python-version: "3.14"
+            experimental: false
           - os: windows-latest
             python-version: "3.14"
+            experimental: false
+          - os: ubuntu-latest
+            python-version: "3.15"
+            experimental: true
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
@@ -38,10 +45,10 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install project
-        run: uv sync --frozen
+        run: uv sync --frozen --prerelease=allow
 
       - name: Run tests
-        run: uv run --frozen pytest -q
+        run: uv run --frozen --prerelease=allow pytest -q
 
   lint:
     name: lint and type-check
