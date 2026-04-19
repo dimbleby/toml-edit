@@ -1,8 +1,8 @@
 """Logical Document/Table/Array/AoT view over a CST.
 
 This module exposes the public mapping/sequence types that users
-interact with. The read path is implemented here; mutation will be
-added in a follow-up phase (see plan.md).
+interact with. It implements both the read path and the structural
+mutation API on top of the physical CST defined in :mod:`tomle._nodes`.
 """
 
 from __future__ import annotations
@@ -168,16 +168,12 @@ class Table(MutableMapping[str, TomlValue]):
 
     # Subclasses override these.
     def _set_value(self, key: str, value: object) -> None:  # noqa: ARG002, pragma: no cover
-        msg = "this table flavour does not support mutation in this build"
-        raise TOMLEditError(
-            msg,
-        )
+        msg = "this table flavour does not support mutation"
+        raise TOMLEditError(msg)
 
     def _delete_value(self, key: str) -> None:  # noqa: ARG002, pragma: no cover
-        msg = "this table flavour does not support mutation in this build"
-        raise TOMLEditError(
-            msg,
-        )
+        msg = "this table flavour does not support mutation"
+        raise TOMLEditError(msg)
 
     @override
     def __repr__(self) -> str:
@@ -259,8 +255,8 @@ class _InlineTable(Table):
             for entry in self._node.entries:
                 if entry.key.path[0] == key:
                     msg = (
-                        f"cannot delete dotted-key entry {key!r} from inline "
-                        "table in this build."
+                        f"cannot delete dotted-key entry {key!r} from "
+                        "inline table"
                     )
                     raise TOMLEditError(msg)
             raise KeyError(key)
@@ -460,8 +456,8 @@ class _StdTable(Table):
         if kind == "absent":
             raise KeyError(key)
         msg = (
-            f"cannot delete {key!r}: deleting child tables / dotted-key "
-            "subtrees is not yet supported in this build."
+            f"cannot delete {key!r}: deleting child tables and "
+            "dotted-key subtrees is not supported."
         )
         raise TOMLEditError(msg)
 
@@ -469,12 +465,12 @@ class _StdTable(Table):
         """Create an implicit pre-header section for the document root.
 
         Only valid for the top-level Document; sub-tables created via
-        ``__setitem__`` are deferred (raise above).
+        ``__setitem__`` raise above.
         """
         if self._path != ():  # pragma: no cover - defensive
             msg = (
                 f"no [{'.'.join(self._path)}] section exists; creating "
-                "new sub-tables via assignment is not yet supported."
+                "new sub-tables via assignment is not supported."
             )
             raise TOMLEditError(msg)
         doc_node = self._doc_view._node  # noqa: SLF001

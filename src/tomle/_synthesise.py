@@ -1,9 +1,10 @@
 """Synthesise CST nodes from plain Python values.
 
 Used by the mutation API to convert user-provided values into fresh
-CST nodes when an entry is created or replaced. See plan.md (locked-in
-decision #4: cross-container assignment deep-clones; #6: mappings
-synthesise as inline tables in the MVP).
+CST nodes when an entry is created or replaced. Containers backed by
+an existing CST are deep-cloned so that assigning a value never aliases
+mutable state across keys or documents; plain mappings are emitted as
+inline tables.
 """
 
 from __future__ import annotations
@@ -174,9 +175,9 @@ def value_to_node(value: object) -> ValueNode:
     """Convert a logical value to a fresh :class:`ValueNode`.
 
     Containers already backed by a CST are deep-cloned so the new node
-    is independent of the source (locked-in decision #4). Plain
-    :class:`list` and :class:`dict` values are accepted in addition to
-    the typed :class:`TomlValue` union.
+    is independent of the source. Plain :class:`list` and :class:`dict`
+    values are accepted in addition to the typed :class:`TomlValue`
+    union.
     """
     # Local imports avoid a circular dependency.
     from tomle._document import AoT, Array, Table  # noqa: PLC0415
@@ -185,8 +186,9 @@ def value_to_node(value: object) -> ValueNode:
         return deepcopy(value._node)  # noqa: SLF001
     if isinstance(value, AoT):
         msg = (
-            "Assigning an array-of-tables (AoT) directly is not yet "
-            "supported; create [[ ... ]] sections instead."
+            "Cannot store an array-of-tables as an inline value; "
+            "assign it at the table-key level so it can be emitted as "
+            "[[ ... ]] sections."
         )
         raise TOMLEditError(msg)
     if isinstance(value, Table):

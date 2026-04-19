@@ -13,7 +13,7 @@ inside container nodes:
 * "trivia" nodes (`WhitespaceNode`, `NewlineNode`, `CommentNode`)
   that carry the surrounding whitespace and comments.
 
-Trivia ownership rule (locked in plan.md):
+Trivia ownership rule:
 * Leading whitespace and comment lines (with their trailing newlines)
   belong to the **following** structural node, attached as `leading`.
 * The end-of-line comment after a key/value pair (and its trailing

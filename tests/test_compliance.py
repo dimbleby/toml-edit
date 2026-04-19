@@ -136,7 +136,7 @@ def _materialise(value: object) -> object:
 # ---------------------------------------------------------------------------
 
 
-# Cross-section duplicate-key conflict detection is deferred (see plan.md).
+# Cross-section duplicate-key conflict detection is not yet implemented.
 _KNOWN_INVALID_FAILURES: frozenset[str] = frozenset({
     # Filled in lazily below if/when we discover them.
 })

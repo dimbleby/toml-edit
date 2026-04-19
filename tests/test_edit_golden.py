@@ -3,13 +3,13 @@
 Each test exercises a mutation pathway and asserts the *exact* rendered
 output, so any regression in trivia handling is immediately visible.
 
-Coverage targets (from plan.md step 9):
+Coverage targets:
 - discontiguous tables (multiple physical sections for one logical table)
 - dotted-key tables (logical table created via dotted keys)
 - AoT middle/append/insert ops; AoT entries with nested sub-sections
 - inline-table edits round-tripping
 - cross-document assignment with deep-clone semantics
-- mutation interaction with the new logical-view scoping
+- mutation interaction with logical-view scoping for AoT entries
 """
 
 from __future__ import annotations

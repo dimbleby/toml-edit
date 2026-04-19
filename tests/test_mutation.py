@@ -244,7 +244,8 @@ def test_array_insert() -> None:
     assert _reparses(out) == {"xs": [1, 2, 3]}
 
 
-# Per locked-in rule #7 — every mutator is wired through the CST.
+# Every Array/AoT mutator must be wired through the CST so the
+# rendered output stays in sync with in-memory mutations.
 @pytest.mark.parametrize(
     "name",
     [

@@ -1,7 +1,9 @@
 """TOML 1.0.0 parser producing a :mod:`tomle._nodes` CST.
 
 Hand-written recursive-descent over a ``str`` plus an integer cursor.
-Allocates only the node objects themselves; no regex in hot paths.
+Bulk character runs (whitespace, bare keys, string bodies, comment
+bodies) are scanned with module-level compiled regexes so each run is
+a single C call rather than a Python-level character loop.
 
 The parser is responsible *only* for producing the physical CST. Logical
 table semantics (duplicate-key detection across discontiguous headers,
