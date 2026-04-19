@@ -1892,27 +1892,24 @@ class _DocumentView:
         owned_scope: list[SectionNode] | None = None,
         extra_kvs: list[tuple[tuple[str, ...], KeyValueNode]] | None = None,
     ) -> Iterator[tuple[str, TomlValue]]:
-        # Pool of sections to consult for sub-tables / sub-AoTs.
-        sub_pool: list[SectionNode] = (
+        # The pool of sections we walk in physical order.
+        section_pool: list[SectionNode] = (
             owned_scope if owned_scope is not None else list(self._node.sections)
         )
 
-        # Direct sections that contribute KV entries at this exact path.
+        # Sections whose entries are "direct" key/values at this exact path.
         direct_secs: list[SectionNode]
         if pinned_sections is not None:
             direct_secs = pinned_sections
         elif path == ():
-            direct_secs = [
-                s
-                for s in (owned_scope if owned_scope is not None else self._node.sections)
-                if s.header is None
-            ]
+            direct_secs = [s for s in section_pool if s.header is None]
         else:
             direct_secs = [
                 s
-                for s in (owned_scope if owned_scope is not None else self._node.sections)
+                for s in section_pool
                 if s.header is not None and s.header.kind == "table" and s.header.key.path == path
             ]
+        direct_ids = {id(s) for s in direct_secs}
 
         name_order: list[str] = []
         seen: set[str] = set()
@@ -1927,20 +1924,17 @@ class _DocumentView:
         aot_by_head: dict[str, list[SectionNode]] = {}
         sub_by_head: dict[str, list[SectionNode]] = {}
 
-        for sec in direct_secs:
-            for entry in sec.entries:
-                head = entry.key.path[0]
-                direct_kvs_by_head.setdefault(head, []).append(entry)
-                _add(head)
-
-        if extra_kvs:
-            for rel_path, entry in extra_kvs:
-                head = rel_path[0]
-                extras_by_head.setdefault(head, []).append((rel_path, entry))
-                _add(head)
-
+        # Single physical-order walk: each section either contributes direct
+        # entries (header == path) or registers a sub-table / sub-AoT head.
+        # First-appearance order matches what tomllib produces.
         plen = len(path)
-        for sec in sub_pool:
+        for sec in section_pool:
+            if id(sec) in direct_ids:
+                for entry in sec.entries:
+                    head = entry.key.path[0]
+                    direct_kvs_by_head.setdefault(head, []).append(entry)
+                    _add(head)
+                continue
             hdr = sec.header
             if hdr is None:
                 continue
@@ -1953,6 +1947,14 @@ class _DocumentView:
             else:
                 sub_by_head.setdefault(head, []).append(sec)
             _add(head)
+
+        # Extras (dotted-key prefixes inherited from an ancestor) have no
+        # physical position; tack their heads on at the end.
+        if extra_kvs:
+            for rel_path, entry in extra_kvs:
+                head = rel_path[0]
+                extras_by_head.setdefault(head, []).append((rel_path, entry))
+                _add(head)
 
         for head in name_order:
             direct_kvs = direct_kvs_by_head.get(head, [])

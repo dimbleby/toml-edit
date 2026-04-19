@@ -257,3 +257,38 @@ def test_moderate_array_nesting_still_parses() -> None:
     payload = "x = " + "[" * 50 + "1" + "]" * 50 + "\n"
     doc = toml_edit.parse(payload)
     assert toml_edit.dumps(doc) == payload
+
+
+# ---------------------------------------------------------------------------
+# Out-of-order tables — iteration order should match tomllib (first-appearance)
+# ---------------------------------------------------------------------------
+
+
+def test_iteration_order_child_section_before_parent() -> None:
+    src = "[a.b]\nx = 1\n[a]\ny = 2\n"
+    doc = toml_edit.parse(src)
+    a = doc.table("a")
+    assert list(a) == ["b", "y"]
+
+
+def test_iteration_order_parent_then_child_then_more_direct_keys() -> None:
+    # With a single [a] block plus a sub-section after it, direct keys
+    # come first because they appear first physically.
+    src = "[a]\nx = 1\n[a.b]\ny = 2\n"
+    doc = toml_edit.parse(src)
+    assert list(doc.table("a")) == ["x", "b"]
+
+
+def test_iteration_order_sibling_interleaved_between_parent_and_child() -> None:
+    src = "[a]\nx = 1\n[b]\ny = 2\n[a.sub]\nz = 3\n"
+    doc = toml_edit.parse(src)
+    assert list(doc) == ["a", "b"]
+    assert list(doc.table("a")) == ["x", "sub"]
+
+
+def test_iteration_order_aot_then_sibling_then_more_aot() -> None:
+    src = '[[fruits]]\nname = "apple"\n[[other]]\nn = 1\n[[fruits]]\nname = "banana"\n'
+    doc = toml_edit.parse(src)
+    assert list(doc) == ["fruits", "other"]
+    fruits = doc.aot("fruits")
+    assert [t["name"] for t in fruits] == ["apple", "banana"]
