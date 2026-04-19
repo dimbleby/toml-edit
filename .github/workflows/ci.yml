@@ -17,58 +17,52 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
+        os:
+          - ubuntu-latest
+        python-version:
+          - "3.10"
+          - "3.11"
+          - "3.12"
+          - "3.13"
+          - "3.14"
+          - "3.15"
         include:
           - os: macos-latest
             python-version: "3.14"
           - os: windows-latest
             python-version: "3.14"
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5
+      - name: Set up python {{ matrix.python-version }}
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
-          enable-cache: true
-
-      - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
-
-      - name: Install project
-        run: uv sync --frozen --prerelease=allow
-
-      - name: Run tests
-        run: uv run --frozen --prerelease=allow pytest -q
-
-  lint:
-    name: lint and type-check
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
-        with:
-          persist-credentials: false
+          python-version: ${{ matrix.python-version }}
+          allow-prereleases: true
 
       - name: Install uv
-        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5
-        with:
-          enable-cache: true
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
 
-      - name: Set up Python
-        run: uv python install 3.14
+      - name: Check lockfile
+        run: uv lock --check
 
       - name: Install project
-        run: uv sync --frozen
+        run: uv sync -p ${{ matrix.python-version }}
 
-      - name: Ruff
-        run: uv run --frozen ruff check .
+      - name: Install ruff
+        uses: astral-sh/ruff-action@0ce1b0bf8b818ef400413f810f8a11cdbda0034b # v4.0.0
 
-      - name: Ruff format check
-        run: uv run --frozen ruff format --check .
+      - name: ruff check
+        run: ruff check .
 
-      - name: Mypy
-        run: uv run --frozen mypy
+      - name: ruff format
+        run: ruff format --check .
+
+      - name: pytest
+        run: uv run pytest
+
+      - name: mypy
+        run: uv run mypy
