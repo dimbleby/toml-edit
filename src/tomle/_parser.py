@@ -856,11 +856,14 @@ class _Parser:
             "n": "\n",
             "f": "\f",
             "r": "\r",
+            "e": "\x1b",  # TOML 1.1: ESC
             '"': '"',
             "\\": "\\",
         }
         if ch in simple:
             return simple[ch]
+        if ch == "x":  # TOML 1.1: 2-digit hex escape (U+0000..U+00FF)
+            return self._parse_unicode_escape(2)
         if ch == "u":
             return self._parse_unicode_escape(4)
         if ch == "U":

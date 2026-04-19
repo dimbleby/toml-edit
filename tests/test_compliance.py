@@ -136,10 +136,18 @@ def _materialise(value: object) -> object:
 # ---------------------------------------------------------------------------
 
 
-# Cross-section duplicate-key conflict detection is not yet implemented.
-_KNOWN_INVALID_FAILURES: frozenset[str] = frozenset({
-    # Filled in lazily below if/when we discover them.
+# These fixtures encode TOML 1.0 behaviour that has changed in 1.1.0.
+# As we adopt 1.1 features they shift from "invalid" to "valid", so the
+# vendored 1.0-era corpus marks them as failures of an obsolete rule.
+# All entries here will be removed when the corpus is re-baselined to
+# the 1.1.0 test set.
+_TOML_1_1_VALID_NOW: frozenset[str] = frozenset({
+    # \xHH is now a valid basic-string escape (was rejected in 1.0).
+    "invalid/string/basic-byte-escapes.toml",
 })
+
+
+_KNOWN_INVALID_FAILURES: frozenset[str] = _TOML_1_1_VALID_NOW
 
 _KNOWN_VALID_FAILURES: frozenset[str] = frozenset({
     # Filled in lazily below if/when we discover them.
