@@ -5,7 +5,7 @@ https://github.com/toml-lang/toml-test, gitignored). If the directory
 is missing the whole module is skipped so the suite still runs in
 clean checkouts.
 
-For every entry in the TOML 1.0.0 manifest:
+For every entry in the TOML 1.1.0 manifest:
 
 * ``valid/X.toml`` is parsed; its decoded values are compared against
   the tagged JSON in ``valid/X.json`` (the toml-test "tagged" format).
@@ -26,7 +26,7 @@ import tomle
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _TOML_TEST_ROOT = _REPO_ROOT / "vendor" / "toml-test"
-_MANIFEST = _TOML_TEST_ROOT / "tests" / "files-toml-1.0.0"
+_MANIFEST = _TOML_TEST_ROOT / "tests" / "files-toml-1.1.0"
 
 if not _MANIFEST.is_file():
     pytest.skip(
@@ -136,25 +136,11 @@ def _materialise(value: object) -> object:
 # ---------------------------------------------------------------------------
 
 
-# These fixtures encode TOML 1.0 behaviour that has changed in 1.1.0.
-# As we adopt 1.1 features they shift from "invalid" to "valid", so the
-# vendored 1.0-era corpus marks them as failures of an obsolete rule.
-# All entries here will be removed when the corpus is re-baselined to
-# the 1.1.0 test set.
-_TOML_1_1_VALID_NOW: frozenset[str] = frozenset({
-    # \xHH is now a valid basic-string escape (was rejected in 1.0).
-    "invalid/string/basic-byte-escapes.toml",
-    # Seconds are now optional in time / datetime values.
-    "invalid/datetime/no-secs.toml",
-    "invalid/local-datetime/no-secs.toml",
-    "invalid/local-time/no-secs.toml",
-    # Newlines and trailing commas are now allowed in inline tables.
-    "invalid/inline-table/linebreak-01.toml",
-    "invalid/inline-table/linebreak-02.toml",
-    "invalid/inline-table/linebreak-03.toml",
-    "invalid/inline-table/linebreak-04.toml",
-    "invalid/inline-table/trailing-comma.toml",
-})
+# These TOML 1.0 fixtures are not in the 1.1 manifest because their
+# behaviour changed in 1.1.0; left here as documentation of the deltas
+# we adopted. The set is empty because the 1.1 manifest already drops
+# them, but we keep the wiring in case future fixtures need it.
+_TOML_1_1_VALID_NOW: frozenset[str] = frozenset()
 
 
 _KNOWN_INVALID_FAILURES: frozenset[str] = _TOML_1_1_VALID_NOW
