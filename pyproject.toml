@@ -74,7 +74,6 @@ exclude_also = [
 ]
 
 [tool.mypy]
-python_version = "3.11"
 files = ["src", "tests"]
 strict = true
 warn_unreachable = true
