@@ -79,7 +79,9 @@ def test_set_eol_comment_to_empty_string_removes() -> None:
     src = 'name = "ada"  # old\n'
     doc = tomle.parse(src)
     doc.comments["name"] = ""
-    assert tomle.dumps(doc) == 'name = "ada"  \n'
+    # Clearing also drops the inline whitespace that separated the
+    # comment from the value, so we don't render `name = "ada"  \n`.
+    assert tomle.dumps(doc) == 'name = "ada"\n'
     assert "name" not in doc.comments
 
 
@@ -87,6 +89,7 @@ def test_del_eol_comment_removes_it() -> None:
     src = 'name = "ada"  # old\n'
     doc = tomle.parse(src)
     del doc.comments["name"]
+    assert tomle.dumps(doc) == 'name = "ada"\n'
     assert "name" not in doc.comments
     with pytest.raises(KeyError):
         del doc.comments["name"]

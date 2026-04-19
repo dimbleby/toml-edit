@@ -11,7 +11,7 @@ import operator
 from collections.abc import Mapping, MutableMapping
 from copy import deepcopy
 from datetime import date, datetime, time
-from typing import TYPE_CHECKING, SupportsIndex, TypeAlias, overload
+from typing import TYPE_CHECKING, Protocol, SupportsIndex, TypeAlias, overload
 
 from typing_extensions import override
 
@@ -175,24 +175,49 @@ def _trivia_ends_with_space(trivia: Trivia) -> bool:
     return isinstance(last, WhitespaceNode) and last.text.endswith((" ", "\t"))
 
 
-def _kv_indent(kv: KeyValueNode) -> str:
-    """Indent (run of spaces/tabs) the entry's source line started with."""
-    text = kv.leading.render()
+def _indent_after_last_newline(trivia: Trivia, *, require_newline: bool = False) -> str:
+    """Indent (run of spaces/tabs) after the trivia's last newline, if any.
+
+    Returns the empty string if the run after the last newline contains
+    anything other than spaces/tabs (e.g. a comment). When
+    ``require_newline`` is True, also returns "" if ``trivia`` has no
+    newline at all (callers that want to seed a brand-new indented line
+    should fall back to a default in that case).
+    """
+    text = trivia.render()
     nl = text.rfind("\n")
+    if nl < 0 and require_newline:
+        return ""
     candidate = text[nl + 1 :] if nl >= 0 else text
     if all(c in " \t" for c in candidate):
         return candidate
     return ""
 
 
-def _header_indent(header: TableHeaderNode) -> str:
-    """Indent (run of spaces/tabs) the header's source line started with."""
-    text = header.leading.render()
-    nl = text.rfind("\n")
-    candidate = text[nl + 1 :] if nl >= 0 else text
-    if all(c in " \t" for c in candidate):
-        return candidate
-    return ""
+class _HasEolComment(Protocol):
+    trailing: Trivia
+    trailing_comment: CommentNode | None
+    newline: NewlineNode | None
+
+
+def _set_eol_comment(node: _HasEolComment, value: str | None) -> None:
+    """Set or clear the trailing ``# comment`` of a KV / header node.
+
+    Clearing also strips trailing whitespace from ``node.trailing`` so we
+    don't render ``foo = 12 \\n`` after the comment goes away.
+    """
+    if value is None or value == "":
+        node.trailing_comment = None
+        while node.trailing.pieces and isinstance(
+            node.trailing.pieces[-1], WhitespaceNode,
+        ):
+            node.trailing.pieces.pop()
+        return
+    if not _trivia_ends_with_space(node.trailing):
+        node.trailing.pieces.append(WhitespaceNode(" "))
+    node.trailing_comment = CommentNode(text=_format_comment(value))
+    if node.newline is None:
+        node.newline = NewlineNode("\n")
 
 
 def _extract_trailing_comment_block(trivia: Trivia) -> tuple[str, ...]:
@@ -303,19 +328,15 @@ def _replace_eol_comment(
 def _array_indent(arr: ArrayNode) -> str:
     """Best-guess per-item indent for inserting comment lines."""
     for item in arr.items:
-        text = item.leading.render()
-        nl = text.rfind("\n")
-        if nl >= 0:
-            cand = text[nl + 1 :]
-            if cand and all(c in " \t" for c in cand):
-                return cand
+        cand = _indent_after_last_newline(item.leading, require_newline=True)
+        if cand:
+            return cand
     for item in arr.items[:-1]:
-        text = item.post_comma_trivia.render()
-        nl = text.rfind("\n")
-        if nl >= 0:
-            cand = text[nl + 1 :]
-            if cand and all(c in " \t" for c in cand):
-                return cand
+        cand = _indent_after_last_newline(
+            item.post_comma_trivia, require_newline=True,
+        )
+        if cand:
+            return cand
     return " "
 
 
@@ -827,14 +848,6 @@ class _StdTable(Table):
                     return sec, kv
         raise KeyError(key)
 
-    def _find_direct_kv_optional(
-        self, key: str,
-    ) -> tuple[SectionNode, KeyValueNode] | None:
-        try:
-            return self._find_direct_kv(key)
-        except KeyError:
-            return None
-
     @property
     @override
     def comments(self) -> MutableMapping[str, str]:
@@ -866,30 +879,11 @@ class _StdTable(Table):
 
     @header_comment.setter
     def header_comment(self, value: str | None) -> None:
-        header = self._first_header()
-        if value is None or value == "":
-            header.trailing_comment = None
-            # Drop the trailing whitespace we (or the parser) added to
-            # separate ']' from '#'; otherwise we render `[server] \n`.
-            while header.trailing.pieces and isinstance(
-                header.trailing.pieces[-1], WhitespaceNode,
-            ):
-                header.trailing.pieces.pop()
-            return
-        if not _trivia_ends_with_space(header.trailing):
-            header.trailing.pieces.append(WhitespaceNode(" "))
-        header.trailing_comment = CommentNode(text=_format_comment(value))
-        if header.newline is None:
-            header.newline = NewlineNode("\n")
+        _set_eol_comment(self._first_header(), value)
 
     @header_comment.deleter
     def header_comment(self) -> None:
-        header = self._first_header()
-        header.trailing_comment = None
-        while header.trailing.pieces and isinstance(
-            header.trailing.pieces[-1], WhitespaceNode,
-        ):
-            header.trailing.pieces.pop()
+        _set_eol_comment(self._first_header(), None)
 
     @property  # type: ignore[explicit-override]
     @override
@@ -901,13 +895,15 @@ class _StdTable(Table):
     def header_leading_comments(self, value: Sequence[str]) -> None:
         header = self._first_header()
         _replace_trailing_comment_block(
-            header.leading, value, _header_indent(header),
+            header.leading, value, _indent_after_last_newline(header.leading),
         )
 
     @header_leading_comments.deleter
     def header_leading_comments(self) -> None:
         header = self._first_header()
-        _replace_trailing_comment_block(header.leading, (), _header_indent(header))
+        _replace_trailing_comment_block(
+            header.leading, (), _indent_after_last_newline(header.leading),
+        )
 
     @override
     def promote_inline(self, key: str) -> Table:
@@ -1005,21 +1001,14 @@ class _TableCommentsView(MutableMapping[str, str]):
     @override
     def __setitem__(self, key: str, value: str) -> None:
         _, kv = self._table._find_direct_kv(key)  # noqa: SLF001
-        if value == "":
-            kv.trailing_comment = None
-            return
-        if not _trivia_ends_with_space(kv.trailing):
-            kv.trailing.pieces.append(WhitespaceNode(" "))
-        kv.trailing_comment = CommentNode(text=_format_comment(value))
-        if kv.newline is None:
-            kv.newline = NewlineNode("\n")
+        _set_eol_comment(kv, value if value != "" else None)
 
     @override
     def __delitem__(self, key: str) -> None:
         _, kv = self._table._find_direct_kv(key)  # noqa: SLF001
         if kv.trailing_comment is None:
             raise KeyError(key)
-        kv.trailing_comment = None
+        _set_eol_comment(kv, None)
 
     @override
     def __iter__(self) -> Iterator[str]:
@@ -1034,8 +1023,11 @@ class _TableCommentsView(MutableMapping[str, str]):
     def __contains__(self, key: object) -> bool:
         if not isinstance(key, str):
             return False
-        found = self._table._find_direct_kv_optional(key)  # noqa: SLF001
-        return found is not None and found[1].trailing_comment is not None
+        try:
+            _, kv = self._table._find_direct_kv(key)  # noqa: SLF001
+        except KeyError:
+            return False
+        return kv.trailing_comment is not None
 
     @override
     def __repr__(self) -> str:
@@ -1057,14 +1049,10 @@ class _TableLeadingCommentsView(MutableMapping[str, "tuple[str, ...]"]):
     def __init__(self, table: _StdTable) -> None:
         self._table = table
 
-    @staticmethod
-    def _extract_block(kv: KeyValueNode) -> tuple[str, ...]:
-        return _extract_trailing_comment_block(kv.leading)
-
     @override
     def __getitem__(self, key: str) -> tuple[str, ...]:
         _, kv = self._table._find_direct_kv(key)  # noqa: SLF001
-        block = self._extract_block(kv)
+        block = _extract_trailing_comment_block(kv.leading)
         if not block:
             raise KeyError(key)
         return block
@@ -1072,12 +1060,14 @@ class _TableLeadingCommentsView(MutableMapping[str, "tuple[str, ...]"]):
     @override
     def __setitem__(self, key: str, value: Sequence[str]) -> None:
         _, kv = self._table._find_direct_kv(key)  # noqa: SLF001
-        _replace_trailing_comment_block(kv.leading, value, _kv_indent(kv))
+        _replace_trailing_comment_block(
+            kv.leading, value, _indent_after_last_newline(kv.leading),
+        )
 
     @override
     def __delitem__(self, key: str) -> None:
         _, kv = self._table._find_direct_kv(key)  # noqa: SLF001
-        if not self._extract_block(kv):
+        if not _extract_trailing_comment_block(kv.leading):
             raise KeyError(key)
         self[key] = ()
 
@@ -1088,7 +1078,7 @@ class _TableLeadingCommentsView(MutableMapping[str, "tuple[str, ...]"]):
                 if (
                     kv.key.path
                     and len(kv.key.path) == 1
-                    and self._extract_block(kv)
+                    and _extract_trailing_comment_block(kv.leading)
                 ):
                     yield kv.key.path[0]
 
@@ -1100,8 +1090,11 @@ class _TableLeadingCommentsView(MutableMapping[str, "tuple[str, ...]"]):
     def __contains__(self, key: object) -> bool:
         if not isinstance(key, str):
             return False
-        found = self._table._find_direct_kv_optional(key)  # noqa: SLF001
-        return found is not None and bool(self._extract_block(found[1]))
+        try:
+            _, kv = self._table._find_direct_kv(key)  # noqa: SLF001
+        except KeyError:
+            return False
+        return bool(_extract_trailing_comment_block(kv.leading))
 
     @override
     def __repr__(self) -> str:
@@ -1153,79 +1146,53 @@ class _ArrayCommentsView(MutableMapping[int, str]):
         i = self._check_index(key)
         items = self._array._node.items  # noqa: SLF001
         item = items[i]
-        n = len(items)
-        is_last = i == n - 1
+        is_last = i == len(items) - 1
         if value == "":
             del self[key]
             return
-        if not is_last:
-            # Mid-array: must use post_comma_trivia, with a forced
-            # newline so the next item doesn't end up on the same line.
+        # Pick the slot that will carry the comment. Mid-array items
+        # (and last items with a synthesized trailing comma) write into
+        # post_comma_trivia; the only case left -- last item with no
+        # comma -- writes into the value's trailing.
+        if not is_last or item.has_comma:
             if not item.post_comma_trivia.pieces:
                 item.post_comma_trivia = Trivia([WhitespaceNode(" ")])
-            _replace_eol_comment(
-                item.post_comma_trivia, value, force_newline=True,
-            )
-            indent = _array_indent(self._array._node)  # noqa: SLF001
-            # If we just forced a newline and the very next item lacks
-            # any leading newline+indent, prepend one for clean output.
-            next_item = items[i + 1]
-            if not next_item.leading.pieces and indent:
-                next_item.leading = Trivia([WhitespaceNode(indent)])
-            elif (
-                next_item.leading.pieces
-                and isinstance(next_item.leading.pieces[0], WhitespaceNode)
-                and "\n" not in next_item.leading.render()
-                and indent
-            ):
-                next_item.leading.pieces[0] = WhitespaceNode(indent)
-        elif item.has_comma:
-            # Last item with trailing comma: write into post_comma_trivia.
-            # Must end with a newline so `]` ends up on the next line.
-            _replace_eol_comment(
-                item.post_comma_trivia, value, force_newline=True,
-            )
+            slot = item.post_comma_trivia
+        else:
+            slot = item.trailing
+        _replace_eol_comment(slot, value, force_newline=True)
+        if is_last:
+            # Comment runs to EOL: `]` must drop to the next line.
             self._ensure_array_break_before_close()
         else:
-            # Last item without comma: write into trailing.
-            # Must end with a newline before final_trivia so `]` ends
-            # up on the next line (otherwise the comment swallows it).
-            _replace_eol_comment(item.trailing, value, force_newline=True)
-            self._ensure_array_break_before_close()
-        self._array._resync()  # noqa: SLF001
+            # The next item now starts on a fresh line: give it an
+            # indent that matches its siblings.
+            indent = _array_indent(self._array._node)  # noqa: SLF001
+            next_item = items[i + 1]
+            if indent and "\n" not in next_item.leading.render():
+                next_item.leading = Trivia([WhitespaceNode(indent)])
 
     def _ensure_array_break_before_close(self) -> None:
-        """Ensure ``]`` ends up on its own line when the last item carries
-        an EOL comment.
-
-        After attaching such a comment, the comment runs to end of line,
-        so ``]`` cannot sit on the same line as the value/comma. We add
-        a newline at the start of ``final_trivia`` only when the trivia
-        immediately preceding ``final_trivia`` doesn't already end with
-        one.
-        """
+        """Force ``]`` onto a new line when the last item carries an EOL
+        comment (the comment otherwise swallows the closing bracket)."""
         node = self._array._node  # noqa: SLF001
         ft = node.final_trivia
-        if any(isinstance(p, NewlineNode) for p in ft.pieces):
+        if "\n" in ft.render():
             return
-        items = node.items
-        if items:
-            last = items[-1]
+        last = node.items[-1] if node.items else None
+        if last is not None:
             preceding = (
-                last.post_comma_trivia.pieces
-                if last.has_comma
-                else last.trailing.pieces
+                last.post_comma_trivia if last.has_comma else last.trailing
             )
-            if preceding and isinstance(preceding[-1], NewlineNode):
+            if preceding.pieces and isinstance(
+                preceding.pieces[-1], NewlineNode,
+            ):
                 return
-        kept: list[TriviaPiece] = []
-        skipped = True
-        for p in ft.pieces:
-            if skipped and isinstance(p, WhitespaceNode):
-                continue
-            skipped = False
-            kept.append(p)
-        ft.pieces = [NewlineNode("\n"), *kept]
+        # Strip only the leading WS so we don't render `\n   ]`.
+        pieces = list(ft.pieces)
+        while pieces and isinstance(pieces[0], WhitespaceNode):
+            pieces.pop(0)
+        ft.pieces = [NewlineNode("\n"), *pieces]
 
     @override
     def __delitem__(self, key: int) -> None:
@@ -1240,7 +1207,6 @@ class _ArrayCommentsView(MutableMapping[int, str]):
             had = True
         if not had:
             raise KeyError(key)
-        self._array._resync()  # noqa: SLF001
 
     @override
     def __iter__(self) -> Iterator[int]:
@@ -1324,7 +1290,6 @@ class _ArrayLeadingCommentsView(MutableMapping[int, "tuple[str, ...]"]):
             if indent:
                 trivia.pieces.append(WhitespaceNode(indent))
         _replace_trailing_comment_block(trivia, value, indent)
-        self._array._resync()  # noqa: SLF001
 
     @override
     def __delitem__(self, key: int) -> None:
@@ -1335,7 +1300,6 @@ class _ArrayLeadingCommentsView(MutableMapping[int, "tuple[str, ...]"]):
         _replace_trailing_comment_block(
             trivia, (), _array_indent(self._array._node),  # noqa: SLF001
         )
-        self._array._resync()  # noqa: SLF001
 
     @override
     def __iter__(self) -> Iterator[int]:
