@@ -8,7 +8,7 @@ added in a follow-up phase (see plan.md).
 from __future__ import annotations
 
 import operator
-from collections.abc import MutableMapping
+from collections.abc import Mapping, MutableMapping
 from copy import deepcopy
 from datetime import date, datetime, time
 from typing import TYPE_CHECKING, SupportsIndex, TypeAlias, overload
@@ -24,12 +24,15 @@ from tomle._nodes import (
     InlineTableEntry,
     InlineTableNode,
     IntegerNode,
+    Key,
+    NewlineNode,
     SectionNode,
     StringNode,
+    TableHeaderNode,
     Trivia,
     WhitespaceNode,
 )
-from tomle._synthesise import make_keyvalue_node, value_to_node
+from tomle._synthesise import make_key_part, make_keyvalue_node, value_to_node
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
@@ -38,7 +41,6 @@ if TYPE_CHECKING:
     from tomle._nodes import (
         ArrayItem,
         DocumentNode,
-        Key,
         KeyValueNode,
         ValueNode,
     )
@@ -107,8 +109,6 @@ def _ensure_trailing_newline(section: SectionNode) -> None:
         return
     last = section.entries[-1]
     if last.newline is None:
-        from tomle._nodes import NewlineNode  # noqa: PLC0415
-
         last.newline = NewlineNode("\n")
 
 
@@ -351,6 +351,15 @@ class _StdTable(Table):
     def _direct_sections(self) -> list[SectionNode]:
         if self._pinned_sections is not None:
             return self._pinned_sections
+        if self._owned_scope is not None:
+            path = self._path
+            return [
+                s
+                for s in self._owned_scope
+                if s.header is not None
+                and s.header.kind == "table"
+                and s.header.key.path == path
+            ]
         return self._doc_view._direct_sections(self._path)  # noqa: SLF001
 
     def _classify(self, key: str) -> tuple[str, object]:
@@ -384,6 +393,12 @@ class _StdTable(Table):
     def _set_value(self, key: str, value: object) -> None:
         from tomle._nodes import KeyValueNode  # noqa: PLC0415
 
+        # Special case: assigning an AoT (or list of dicts targeted as AoT)
+        # is a *structural* edit, not a value assignment.
+        if isinstance(value, AoT):
+            self._set_aot_value(key, value)
+            return
+
         kind, payload = self._classify(key)
         if kind == "direct":
             assert isinstance(payload, KeyValueNode)
@@ -403,6 +418,32 @@ class _StdTable(Table):
         new_kv = make_keyvalue_node(key, value, indent=indent)
         _ensure_trailing_newline(target)
         target.entries.append(new_kv)
+
+    def _set_aot_value(self, key: str, value: AoT) -> None:
+        """Assign a (possibly cross-document) AoT to ``key``.
+
+        Each source entry's ``[[..]]`` section is deep-cloned and its
+        header path rewritten to ``(*self._path, key)``. New sections
+        are appended to the document.
+        """
+        kind, _ = self._classify(key)
+        if kind != "absent":
+            msg = (
+                f"cannot assign array-of-tables to {key!r}: name is "
+                f"already in use ({kind}). Remove it first."
+            )
+            raise TOMLEditError(msg)
+        new_path = (*self._path, key)
+        new_parts = [make_key_part(p) for p in new_path]
+        new_seps = ["."] * (len(new_parts) - 1)
+        # Source sections to clone, in source-document order:
+        src_own = value._own_sections()  # noqa: SLF001
+        doc_node = self._doc_view._node  # noqa: SLF001
+        for src_sec in src_own:
+            cloned = deepcopy(src_sec)
+            assert cloned.header is not None
+            cloned.header.key = Key(parts=list(new_parts), separators=list(new_seps))
+            doc_node.sections.append(cloned)
 
     @override
     def _delete_value(self, key: str) -> None:
@@ -520,8 +561,6 @@ class Array(list[TomlValue]):
                     item.has_comma = False
         if not items:
             self._node.final_trivia = Trivia()
-        elif not self._node.final_trivia.pieces:
-            self._node.final_trivia = Trivia([WhitespaceNode(" ")])
 
     # ------------------------------------------------------------------
     # Mutators (override every one)
@@ -640,13 +679,208 @@ class Array(list[TomlValue]):
 class AoT(list[Table]):
     """Array-of-tables, e.g. ``[[products]]`` repeated.
 
-    Subclass of :class:`list`; reads are wired up, mutation is not yet.
+    Subclass of :class:`list`; supports basic mutation (append/insert
+    of dict-shaped or :class:`Table` entries) by synthesizing fresh
+    ``[[path]]`` sections in the underlying CST.
     """
 
-    __slots__ = ()
+    __slots__ = ("_doc_view", "_path")
 
-    def __init__(self, tables: list[Table]) -> None:
+    def __init__(
+        self,
+        doc_view: _DocumentView,
+        path: tuple[str, ...],
+        tables: list[Table],
+    ) -> None:
         super().__init__(tables)
+        self._doc_view = doc_view
+        self._path = path
+
+    # ------------------------------------------------------------------
+    # CST <-> list synchronisation
+    # ------------------------------------------------------------------
+
+    def _own_sections(self) -> list[SectionNode]:
+        """Sections that act as the [[path]] entry headers (in doc order)."""
+        return [
+            s
+            for s in self._doc_view._node.sections  # noqa: SLF001
+            if s.header is not None
+            and s.header.kind == "array"
+            and s.header.key.path == self._path
+        ]
+
+    def _resync(self) -> None:
+        own = self._own_sections()
+        list.clear(self)
+        for s in own:
+            owned = self._doc_view._aot_owned_range(s)  # noqa: SLF001
+            list.append(
+                self,
+                _StdTable(
+                    self._doc_view,
+                    self._path,
+                    sections=[s],
+                    owned_scope=[s, *owned],
+                ),
+            )
+
+    def _make_header_section(self) -> SectionNode:
+        # Build a [[path]] header.
+        parts = [make_key_part(p) for p in self._path]
+        seps = ["."] * (len(parts) - 1)
+        key = Key(parts=parts, separators=seps)
+        header = TableHeaderNode(
+            leading=Trivia(),
+            kind="array",
+            inner_pre=Trivia(),
+            key=key,
+            inner_post=Trivia(),
+            trailing=Trivia(),
+            trailing_comment=None,
+            newline=NewlineNode("\n"),
+        )
+        return SectionNode(header=header, entries=[])
+
+    def _populate_section(self, sec: SectionNode, value: object) -> None:
+        """Fill ``sec`` with KV entries derived from ``value``.
+
+        Accepts a plain dict, a :class:`Table`, or any
+        :class:`collections.abc.Mapping`. Cross-document Tables are
+        deep-cloned to satisfy the "no shared mutable state" rule.
+        """
+        if isinstance(value, Table):
+            # Walk the source table's items; values are deep-cloned by
+            # value_to_node so inline tables / arrays aren't aliased.
+            for k, v in value.items():
+                sec.entries.append(make_keyvalue_node(k, v))
+            return
+        if isinstance(value, Mapping):
+            for k, v in value.items():
+                if not isinstance(k, str):
+                    msg = f"AoT entry keys must be strings, got {type(k).__name__}"
+                    raise TOMLEditError(msg)
+                sec.entries.append(make_keyvalue_node(k, v))
+            return
+        msg = (
+            f"cannot append a value of type {type(value).__name__} to an "
+            "array-of-tables; expected a dict or Table"
+        )
+        raise TOMLEditError(msg)
+
+    # ------------------------------------------------------------------
+    # Mutators
+    # ------------------------------------------------------------------
+
+    @override
+    def append(self, value: Table | Mapping[str, object]) -> None:
+        self._insert_at(len(self), value)
+
+    @override
+    def insert(
+        self,
+        index: SupportsIndex,
+        value: Table | Mapping[str, object],
+    ) -> None:
+        self._insert_at(operator.index(index), value)
+
+    @override
+    def extend(
+        self,
+        values: Iterable[Table | Mapping[str, object]],
+    ) -> None:
+        for v in list(values):
+            self._insert_at(len(self), v)
+
+    def _insert_at(
+        self,
+        py_index: int,
+        value: Table | Mapping[str, object],
+    ) -> None:
+        own = self._own_sections()
+        n = len(own)
+        if py_index < 0:
+            py_index += n
+        py_index = max(0, min(py_index, n))
+        new_sec = self._make_header_section()
+        self._populate_section(new_sec, value)
+        sections = self._doc_view._node.sections  # noqa: SLF001
+        if py_index == n:
+            # Append: insert after the last [[path]] entry's owned range,
+            # or at end of doc if no entries exist yet.
+            if own:
+                last = own[-1]
+                owned = self._doc_view._aot_owned_range(last)  # noqa: SLF001
+                tail = owned[-1] if owned else last
+                tail_idx = _index_of(sections, tail)
+                sections.insert(tail_idx + 1, new_sec)
+            else:
+                sections.append(new_sec)
+        else:
+            # Insert before the entry currently at py_index.
+            target = own[py_index]
+            target_idx = _index_of(sections, target)
+            sections.insert(target_idx, new_sec)
+        self._resync()
+
+    @override
+    def pop(self, index: SupportsIndex = -1) -> Table:
+        own = self._own_sections()
+        n = len(own)
+        i = operator.index(index)
+        if i < 0:
+            i += n
+        if i < 0 or i >= n:
+            msg = "pop index out of range"
+            raise IndexError(msg)
+        target = own[i]
+        owned = self._doc_view._aot_owned_range(target)  # noqa: SLF001
+        sections = self._doc_view._node.sections  # noqa: SLF001
+        # Remove the entry header AND every section it owned.
+        to_remove = {id(target), *(id(s) for s in owned)}
+        # Capture the popped Table view *before* mutating sections.
+        popped = _StdTable(
+            self._doc_view,
+            self._path,
+            sections=[target],
+            owned_scope=[target, *owned],
+        )
+        self._doc_view._node.sections = [  # noqa: SLF001
+            s for s in sections if id(s) not in to_remove
+        ]
+        self._resync()
+        return popped
+
+    @override
+    def clear(self) -> None:
+        own = self._own_sections()
+        to_remove: set[int] = set()
+        for s in own:
+            to_remove.add(id(s))
+            for sub in self._doc_view._aot_owned_range(s):  # noqa: SLF001
+                to_remove.add(id(sub))
+        sections = self._doc_view._node.sections  # noqa: SLF001
+        self._doc_view._node.sections = [  # noqa: SLF001
+            s for s in sections if id(s) not in to_remove
+        ]
+        self._resync()
+
+    @override
+    def __delitem__(self, index: SupportsIndex | slice) -> None:
+        if isinstance(index, slice):
+            indices = range(*index.indices(len(self)))
+            for i in sorted(indices, reverse=True):
+                self.pop(i)
+        else:
+            self.pop(index)
+
+
+def _index_of(sections: list[SectionNode], target: SectionNode) -> int:
+    for i, s in enumerate(sections):
+        if s is target:
+            return i
+    msg = "section not found in document (internal error)"
+    raise RuntimeError(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -830,7 +1064,7 @@ class _DocumentView:
                             owned_scope=[s, *owned],
                         ),
                     )
-                yield head, AoT(tables)
+                yield head, AoT(self, (*path, head), tables)
                 continue
 
             # Split into "terminal" (binds a value at this name) and
