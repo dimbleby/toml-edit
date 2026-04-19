@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Quick benchmark: tomle vs tomlkit on parse/dump round-trips.
 
 Run as a script: ``python benches/bench_vs_tomlkit.py``.

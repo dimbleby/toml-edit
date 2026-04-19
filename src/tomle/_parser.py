@@ -11,6 +11,7 @@ in :mod:`tomle._document` rely on this validation having happened.
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, date, datetime, time, timedelta, timezone
 from typing import TYPE_CHECKING, Final
 
@@ -48,12 +49,35 @@ _DEC_DIGITS: Final[frozenset[str]] = frozenset("0123456789")
 _OCT_DIGITS: Final[frozenset[str]] = frozenset("01234567")
 _BIN_DIGITS: Final[frozenset[str]] = frozenset("01")
 
+# Compiled regexes used for bulk-scanning hot paths. Each pattern is
+# anchored at the cursor (we use ``match`` with an explicit ``pos``);
+# the resulting ``end()`` tells us how many characters to consume in a
+# single C-level call instead of a Python-level loop.
+_RE_INLINE_WS = re.compile(r"[ \t]+")
+_RE_BARE_KEY = re.compile(r"[A-Za-z0-9_\-]+")
+# Body of a basic string: any run of chars that are NOT a quote,
+# backslash, newline, or control char (control = U+0000-U+001F or
+# U+007F, except tab which we *do* allow).
+_RE_BASIC_STR_BODY = re.compile(r'[^"\\\n\r\x00-\x08\x0b-\x1f\x7f]+')
+# Body of a literal string: anything except quote, newline, control
+# char (tab and newline-not-allowed handled by the caller).
+_RE_LITERAL_STR_BODY = re.compile(r"[^'\n\r\x00-\x08\x0b-\x1f\x7f]+")
+# Body of a multi-line basic string fragment: stops at " or \\ or \r or
+# \n or a control char. \n and \r\n are valid in ML strings, so the
+# caller handles them; we stop at \r so the caller can verify it's
+# followed by \n and emit a normalized pair.
+_RE_ML_BASIC_BODY = re.compile(r'[^"\\\r\n\x00-\x08\x0b-\x1f\x7f]+')
+_RE_ML_LITERAL_BODY = re.compile(r"[^'\r\n\x00-\x08\x0b-\x1f\x7f]+")
+# Comment body: anything except newline + control chars (tab is OK).
+_RE_COMMENT_BODY = re.compile(r"[^\r\n\x00-\x08\x0b-\x1f\x7f]*")
+
 
 class _Parser:
     __slots__ = (
         "_aot_paths",
         "_current_section",
         "_dotted_paths",
+        "_end",
         "_explicit_table_paths",
         "_implicit_table_paths",
         "_pos",
@@ -63,6 +87,7 @@ class _Parser:
 
     def __init__(self, src: str) -> None:
         self._src = src
+        self._end = len(src)
         self._pos = 0
         # Persistent structural facts (not cleared when re-entering an AoT).
         self._explicit_table_paths: set[tuple[str, ...]] = set()
@@ -79,7 +104,7 @@ class _Parser:
 
     def _peek(self, offset: int = 0) -> str:
         i = self._pos + offset
-        if i >= len(self._src):
+        if i >= self._end:
             return ""
         return self._src[i]
 
@@ -87,7 +112,7 @@ class _Parser:
         return self._src.startswith(s, self._pos)
 
     def _eof(self) -> bool:
-        return self._pos >= len(self._src)
+        return self._pos >= self._end
 
     def _advance(self, n: int = 1) -> str:
         s = self._src[self._pos : self._pos + n]
@@ -150,72 +175,94 @@ class _Parser:
         block; the structural token starts at ``self._pos``).
         """
         trivia = Trivia()
-        while not self._eof():
-            ch = self._peek()
-            if ch in (" ", "\t"):
-                start = self._pos
-                while self._peek() in (" ", "\t"):
-                    self._pos += 1
-                trivia.pieces.append(WhitespaceNode(self._src[start : self._pos]))
+        pieces = trivia.pieces
+        src = self._src
+        end = self._end
+        pos = self._pos
+        while pos < end:
+            ch = src[pos]
+            if ch == " " or ch == "\t":
+                m = _RE_INLINE_WS.match(src, pos)
+                # m is non-None because src[pos] matched the class.
+                assert m is not None
+                pieces.append(WhitespaceNode(m.group(0)))
+                pos = m.end()
             elif ch == "#":
-                trivia.pieces.append(self._consume_comment())
+                self._pos = pos
+                pieces.append(self._consume_comment())
+                pos = self._pos
             elif ch == "\n":
-                self._pos += 1
-                trivia.pieces.append(NewlineNode("\n"))
+                pos += 1
+                pieces.append(NewlineNode("\n"))
             elif ch == "\r":
-                if self._peek(1) != "\n":
+                if pos + 1 >= end or src[pos + 1] != "\n":
+                    self._pos = pos
                     msg = "stray carriage return"
                     raise self._error(msg)
-                self._pos += 2
-                trivia.pieces.append(NewlineNode("\r\n"))
+                pos += 2
+                pieces.append(NewlineNode("\r\n"))
             else:
                 break
+        self._pos = pos
         return trivia
 
     def _consume_comment(self) -> CommentNode:
+        # Comment starts at '#' and runs until newline or EOF. Control
+        # chars (other than tab) are forbidden.
+        src = self._src
         start = self._pos
-        # Comment runs until newline or EOF; we do not include the newline.
-        while not self._eof() and self._peek() not in ("\n", "\r"):
-            ch = self._peek()
-            cp = ord(ch)
-            # Per TOML, control chars other than tab are not allowed in
-            # comments.
-            if cp != 0x09 and (cp <= 0x1F or cp == 0x7F):
+        m = _RE_COMMENT_BODY.match(src, start + 1)
+        # The pattern is unbounded above (*), so match always succeeds.
+        assert m is not None
+        end_pos = m.end()
+        # If we stopped before EOF and not at newline, the next char is
+        # an illegal control character.
+        if end_pos < self._end:
+            ch = src[end_pos]
+            if ch != "\n" and ch != "\r":
+                self._pos = end_pos
+                cp = ord(ch)
                 msg = f"invalid control character U+{cp:04X} in comment"
                 raise self._error(msg)
-            self._pos += 1
-        return CommentNode(self._src[start : self._pos])
+        self._pos = end_pos
+        return CommentNode(src[start:end_pos])
 
     def _consume_inline_ws(self) -> Trivia:
         """Whitespace (no newlines, no comments)."""
         trivia = Trivia()
-        if self._peek() in (" ", "\t"):
-            start = self._pos
-            while self._peek() in (" ", "\t"):
-                self._pos += 1
-            trivia.pieces.append(WhitespaceNode(self._src[start : self._pos]))
+        m = _RE_INLINE_WS.match(self._src, self._pos)
+        if m is not None:
+            trivia.pieces.append(WhitespaceNode(m.group(0)))
+            self._pos = m.end()
         return trivia
 
     def _consume_array_trivia(self) -> Trivia:
         """Whitespace, newlines and comments allowed inside arrays."""
         trivia = Trivia()
-        while not self._eof():
-            ch = self._peek()
-            if ch in (" ", "\t"):
-                start = self._pos
-                while self._peek() in (" ", "\t"):
-                    self._pos += 1
-                trivia.pieces.append(WhitespaceNode(self._src[start : self._pos]))
+        pieces = trivia.pieces
+        src = self._src
+        end = self._end
+        pos = self._pos
+        while pos < end:
+            ch = src[pos]
+            if ch == " " or ch == "\t":
+                m = _RE_INLINE_WS.match(src, pos)
+                assert m is not None
+                pieces.append(WhitespaceNode(m.group(0)))
+                pos = m.end()
             elif ch == "\n":
-                self._pos += 1
-                trivia.pieces.append(NewlineNode("\n"))
-            elif ch == "\r" and self._peek(1) == "\n":
-                self._pos += 2
-                trivia.pieces.append(NewlineNode("\r\n"))
+                pos += 1
+                pieces.append(NewlineNode("\n"))
+            elif ch == "\r" and pos + 1 < end and src[pos + 1] == "\n":
+                pos += 2
+                pieces.append(NewlineNode("\r\n"))
             elif ch == "#":
-                trivia.pieces.append(self._consume_comment())
+                self._pos = pos
+                pieces.append(self._consume_comment())
+                pos = self._pos
             else:
                 break
+        self._pos = pos
         return trivia
 
     def _consume_eol(self) -> tuple[Trivia, CommentNode | None, NewlineNode | None]:
@@ -302,16 +349,19 @@ class _Parser:
     def _parse_key(self) -> Key:
         parts: list[KeyPart] = [self._parse_key_part()]
         separators: list[str] = []
+        src = self._src
         while True:
             save = self._pos
-            ws_before = self._consume_inline_ws()
-            if self._peek() != ".":
+            m = _RE_INLINE_WS.match(src, save)
+            ws_end = m.end() if m is not None else save
+            if ws_end >= self._end or src[ws_end] != ".":
                 self._pos = save
                 break
-            self._advance(1)
-            ws_after = self._consume_inline_ws()
-            sep = ws_before.render() + "." + ws_after.render()
-            separators.append(sep)
+            after_dot = ws_end + 1
+            m2 = _RE_INLINE_WS.match(src, after_dot)
+            sep_end = m2.end() if m2 is not None else after_dot
+            self._pos = sep_end
+            separators.append(src[save:sep_end])
             parts.append(self._parse_key_part())
         return Key(parts=parts, separators=separators)
 
@@ -321,11 +371,10 @@ class _Parser:
             return self._parse_basic_key()
         if ch == "'":
             return self._parse_literal_key()
-        if ch in _BARE_KEY_CHARS:
-            start = self._pos
-            while self._peek() in _BARE_KEY_CHARS:
-                self._pos += 1
-            raw = self._src[start : self._pos]
+        m = _RE_BARE_KEY.match(self._src, self._pos)
+        if m is not None:
+            raw = m.group(0)
+            self._pos = m.end()
             return KeyPart(raw=raw, value=raw, kind="bare")
         msg = f"expected key, got {ch!r}"
         raise self._error(msg)
@@ -579,31 +628,34 @@ class _Parser:
         if self._peek() != '"':
             msg = "expected '\"' to start basic string"
             raise self._error(msg)
-        self._advance(1)
+        self._pos += 1
+        src = self._src
+        end = self._end
         out: list[str] = []
         while True:
-            if self._eof():
+            m = _RE_BASIC_STR_BODY.match(src, self._pos)
+            if m is not None:
+                out.append(m.group(0))
+                self._pos = m.end()
+            if self._pos >= end:
                 msg = "unterminated basic string"
                 raise self._error(msg)
-            ch = self._peek()
+            ch = src[self._pos]
             if ch == '"':
-                self._advance(1)
+                self._pos += 1
                 return StringNode(raw="", value="".join(out), style="basic")
-            if ch == "\n" or (ch == "\r" and self._peek(1) == "\n"):
-                msg = "newline in basic string"
-                raise self._error(msg)
             if ch == "\\":
                 out.append(self._parse_escape(multiline=False))
                 continue
-            cp = ord(ch)
-            if cp <= 0x1F and cp != 0x09:
-                msg = f"invalid control character U+{cp:04X} in string"
+            if ch == "\n" or ch == "\r":
+                msg = "newline in basic string"
                 raise self._error(msg)
+            cp = ord(ch)
             if cp == 0x7F:
                 msg = "invalid control character U+007F in string"
                 raise self._error(msg)
-            out.append(ch)
-            self._pos += 1
+            msg = f"invalid control character U+{cp:04X} in string"
+            raise self._error(msg)
 
     def _parse_ml_basic_string(self) -> StringNode:
         assert self._starts_with('"""')
@@ -618,6 +670,12 @@ class _Parser:
             if self._eof():
                 msg = "unterminated multi-line basic string"
                 raise self._error(msg)
+            m = _RE_ML_BASIC_BODY.match(self._src, self._pos)
+            if m is not None:
+                out.append(m.group(0))
+                self._pos = m.end()
+                if self._eof():
+                    continue
             if self._starts_with('"""'):
                 # Up to two extra trailing quotes are allowed inside.
                 self._advance(3)
@@ -628,6 +686,12 @@ class _Parser:
                     extras += 1
                 return StringNode(raw="", value="".join(out), style="ml-basic")
             ch = self._peek()
+            if ch == '"':
+                # Single or double quote (not the closing triple) — emit and
+                # continue. The body regex stops at any quote.
+                out.append('"')
+                self._pos += 1
+                continue
             if ch == "\\":
                 # Line-ending backslash: trim trailing ws+newline+leading-ws.
                 if self._peek(1) in ("\n", " ", "\t", "\r"):
@@ -680,28 +744,30 @@ class _Parser:
         if self._peek() != "'":
             msg = "expected \"'\" to start literal string"
             raise self._error(msg)
-        self._advance(1)
+        self._pos += 1
+        src = self._src
+        end = self._end
         start = self._pos
-        while True:
-            if self._eof():
-                msg = "unterminated literal string"
-                raise self._error(msg)
-            ch = self._peek()
-            if ch == "'":
-                value = self._src[start : self._pos]
-                self._advance(1)
-                return StringNode(raw="", value=value, style="literal")
-            if ch == "\n" or (ch == "\r" and self._peek(1) == "\n"):
-                msg = "newline in literal string"
-                raise self._error(msg)
-            cp = ord(ch)
-            if cp <= 0x1F and cp != 0x09:
-                msg = f"invalid control character U+{cp:04X} in string"
-                raise self._error(msg)
-            if cp == 0x7F:
-                msg = "invalid control character U+007F in string"
-                raise self._error(msg)
+        m = _RE_LITERAL_STR_BODY.match(src, start)
+        if m is not None:
+            self._pos = m.end()
+        if self._pos >= end:
+            msg = "unterminated literal string"
+            raise self._error(msg)
+        ch = src[self._pos]
+        if ch == "'":
+            value = src[start : self._pos]
             self._pos += 1
+            return StringNode(raw="", value=value, style="literal")
+        if ch == "\n" or ch == "\r":
+            msg = "newline in literal string"
+            raise self._error(msg)
+        cp = ord(ch)
+        if cp == 0x7F:
+            msg = "invalid control character U+007F in string"
+            raise self._error(msg)
+        msg = f"invalid control character U+{cp:04X} in string"
+        raise self._error(msg)
 
     def _parse_ml_literal_string(self) -> StringNode:
         assert self._starts_with("'''")
@@ -715,6 +781,12 @@ class _Parser:
             if self._eof():
                 msg = "unterminated multi-line literal string"
                 raise self._error(msg)
+            m = _RE_ML_LITERAL_BODY.match(self._src, self._pos)
+            if m is not None:
+                out.append(m.group(0))
+                self._pos = m.end()
+                if self._eof():
+                    continue
             if self._starts_with("'''"):
                 self._advance(3)
                 extras = 0
@@ -724,6 +796,15 @@ class _Parser:
                     extras += 1
                 return StringNode(raw="", value="".join(out), style="ml-literal")
             ch = self._peek()
+            if ch == "'":
+                # Single quote, not the closing triple — emit and continue.
+                out.append("'")
+                self._pos += 1
+                continue
+            if ch == "\n":
+                out.append("\n")
+                self._pos += 1
+                continue
             if ch == "\r":
                 if self._peek(1) != "\n":
                     msg = "stray carriage return in string"
@@ -732,14 +813,11 @@ class _Parser:
                 self._pos += 2
                 continue
             cp = ord(ch)
-            if cp <= 0x1F and cp != 0x09 and cp != 0x0A:
-                msg = f"invalid control character U+{cp:04X} in string"
-                raise self._error(msg)
             if cp == 0x7F:
                 msg = "invalid control character U+007F in string"
                 raise self._error(msg)
-            out.append(ch)
-            self._pos += 1
+            msg = f"invalid control character U+{cp:04X} in string"
+            raise self._error(msg)
 
     def _parse_escape(self, *, multiline: bool) -> str:
         del multiline  # behaviour identical for non-line-ending escapes
