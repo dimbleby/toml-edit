@@ -1,7 +1,7 @@
 [project]
 name = "toml-edit"
 version = "0.1.0"
-description = "A fast, ergonomic, format-preserving TOML parser and writer for Python."
+description = "A format-preserving TOML parser and writer for Python."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -44,15 +44,15 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.pytest]
-addopts = ["-ra", "--strict-config", "--strict-markers"]
+addopts = ["-ra"]
 testpaths = ["tests"]
+strict = true
 
 [tool.coverage.run]
 source = ["src/toml_edit"]
 branch = true
 
 [tool.coverage.report]
-show_missing = true
 skip_covered = false
 exclude_also = [
   "if TYPE_CHECKING:",
