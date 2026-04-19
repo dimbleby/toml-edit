@@ -207,31 +207,16 @@ def test_inline_promotion_then_set_comment_on_member() -> None:
     doc = toml_edit.parse(src)
     promoted = doc.promote_inline("pkg")
     promoted.comments["version"] = "calver soon"
-    assert toml_edit.dumps(doc) == (
-        '[pkg]\nname = "toml_edit"\nversion = "0.1" # calver soon\n'
-    )
+    assert toml_edit.dumps(doc) == ('[pkg]\nname = "toml_edit"\nversion = "0.1" # calver soon\n')
 
 
 def test_inline_promotion_inserts_after_parent_block() -> None:
-    src = (
-        "[parent]\n"
-        "a = 1\n"
-        "pkg = { x = 10 }\n"
-        "[other]\n"
-        "b = 2\n"
-    )
+    src = "[parent]\na = 1\npkg = { x = 10 }\n[other]\nb = 2\n"
     doc = toml_edit.parse(src)
     parent = doc["parent"]
     assert isinstance(parent, toml_edit.Table)
     parent.promote_inline("pkg")
-    assert toml_edit.dumps(doc) == (
-        "[parent]\n"
-        "a = 1\n"
-        "[parent.pkg]\n"
-        "x = 10\n"
-        "[other]\n"
-        "b = 2\n"
-    )
+    assert toml_edit.dumps(doc) == ("[parent]\na = 1\n[parent.pkg]\nx = 10\n[other]\nb = 2\n")
 
 
 def test_promote_non_inline_raises() -> None:
@@ -310,13 +295,7 @@ def test_header_comment_del() -> None:
 
 
 def test_header_leading_comments_extract_block_only() -> None:
-    src = (
-        "# old archived note\n"
-        "\n"
-        "# active 1\n"
-        "# active 2\n"
-        "[server]\nhost = 'a'\n"
-    )
+    src = "# old archived note\n\n# active 1\n# active 2\n[server]\nhost = 'a'\n"
     doc = toml_edit.parse(src)
     # Only the *contiguous* block above the header counts.
     assert doc.table("server").header_leading_comments == ("active 1", "active 2")
@@ -329,22 +308,12 @@ def test_header_leading_comments_round_trip() -> None:
 
 
 def test_header_leading_comments_set_preserves_older_block() -> None:
-    src = (
-        "# old archived note\n"
-        "\n"
-        "# active\n"
-        "[server]\nhost = 'a'\n"
-    )
+    src = "# old archived note\n\n# active\n[server]\nhost = 'a'\n"
     doc = toml_edit.parse(src)
     doc.table("server").header_leading_comments = ("brand new",)
     out = toml_edit.dumps(doc)
     # Older blank-separated comment must remain untouched.
-    assert out == (
-        "# old archived note\n"
-        "\n"
-        "# brand new\n"
-        "[server]\nhost = 'a'\n"
-    )
+    assert out == ("# old archived note\n\n# brand new\n[server]\nhost = 'a'\n")
 
 
 def test_header_leading_comments_set_on_empty() -> None:
@@ -373,10 +342,7 @@ def test_header_comment_on_aot_entry() -> None:
     items[0].header_comment = "first"
     items[1].header_leading_comments = ("about the second",)
     out = toml_edit.dumps(doc)
-    assert out == (
-        "[[items]] # first\nname = 'a'\n\n"
-        "# about the second\n[[items]]\nname = 'b'\n"
-    )
+    assert out == ("[[items]] # first\nname = 'a'\n\n# about the second\n[[items]]\nname = 'b'\n")
 
 
 def test_header_comment_on_document_raises() -> None:
@@ -416,32 +382,16 @@ def test_header_comment_on_implicit_parent_raises() -> None:
 
 
 def test_leading_comments_extract_block_only() -> None:
-    src = (
-        "# old archived note\n"
-        "\n"
-        "# active 1\n"
-        "# active 2\n"
-        "name = 'x'\n"
-    )
+    src = "# old archived note\n\n# active 1\n# active 2\nname = 'x'\n"
     doc = toml_edit.parse(src)
     assert doc.leading_comments["name"] == ("active 1", "active 2")
 
 
 def test_leading_comments_set_preserves_older_block() -> None:
-    src = (
-        "# old archived note\n"
-        "\n"
-        "# active\n"
-        "name = 'x'\n"
-    )
+    src = "# old archived note\n\n# active\nname = 'x'\n"
     doc = toml_edit.parse(src)
     doc.leading_comments["name"] = ("brand new",)
-    assert toml_edit.dumps(doc) == (
-        "# old archived note\n"
-        "\n"
-        "# brand new\n"
-        "name = 'x'\n"
-    )
+    assert toml_edit.dumps(doc) == ("# old archived note\n\n# brand new\nname = 'x'\n")
 
 
 # ---------------------------------------------------------------------------

@@ -337,10 +337,7 @@ class _Parser:
         # Intermediate prefixes become implicit tables (only mark new ones).
         for i in range(1, len(path)):
             sub = path[:i]
-            if (
-                sub not in self._explicit_table_paths
-                and sub not in self._aot_paths
-            ):
+            if sub not in self._explicit_table_paths and sub not in self._aot_paths:
                 self._implicit_table_paths.add(sub)
 
         return TableHeaderNode(
@@ -456,17 +453,11 @@ class _Parser:
                 msg = f"redefinition of table {'.'.join(path)!r}"
                 raise self._error(msg, at=at)
             if path in self._aot_paths:
-                msg = (
-                    f"cannot redefine array-of-tables {'.'.join(path)!r} "
-                    "as a normal table"
-                )
+                msg = f"cannot redefine array-of-tables {'.'.join(path)!r} as a normal table"
                 raise self._error(msg, at=at)
         else:  # array-of-tables
             if path in self._explicit_table_paths:
-                msg = (
-                    f"cannot redefine table {'.'.join(path)!r} "
-                    "as an array-of-tables"
-                )
+                msg = f"cannot redefine table {'.'.join(path)!r} as an array-of-tables"
                 raise self._error(msg, at=at)
             if path in self._implicit_table_paths and path not in self._aot_paths:
                 msg = (
@@ -520,16 +511,10 @@ class _Parser:
                 msg = f"key {'.'.join(sub)!r} already defined as a value"
                 raise self._error(msg, at=at)
             if sub in self._explicit_table_paths:
-                msg = (
-                    f"cannot extend explicitly-defined table {'.'.join(sub)!r} "
-                    "via dotted keys"
-                )
+                msg = f"cannot extend explicitly-defined table {'.'.join(sub)!r} via dotted keys"
                 raise self._error(msg, at=at)
             if sub in self._aot_paths:
-                msg = (
-                    f"cannot extend array-of-tables {'.'.join(sub)!r} "
-                    "via dotted keys"
-                )
+                msg = f"cannot extend array-of-tables {'.'.join(sub)!r} via dotted keys"
                 raise self._error(msg, at=at)
             self._dotted_paths.add(sub)
         self._value_paths.add(full)
@@ -572,10 +557,7 @@ class _Parser:
             for i in range(1, len(path)):
                 sub = path[:i]
                 if sub in local_values:
-                    msg = (
-                        f"inline-table key {'.'.join(sub)!r} already "
-                        "defined as a value"
-                    )
+                    msg = f"inline-table key {'.'.join(sub)!r} already defined as a value"
                     raise self._error(msg, at=at)
                 local_prefixes.add(sub)
             local_values.add(path)
@@ -592,7 +574,9 @@ class _Parser:
                 for item in entry.value.items:
                     if isinstance(item.value, InlineTableNode):
                         self._validate_inline_table(
-                            item.value, abs_prefix=None, at=at,
+                            item.value,
+                            abs_prefix=None,
+                            at=at,
                         )
 
     # ------------------------------------------------------------------
@@ -617,10 +601,7 @@ class _Parser:
 
     def _parse_nested_value(self, parser: Callable[[], ValueNode]) -> ValueNode:
         if self._value_depth >= self._MAX_VALUE_DEPTH:
-            msg = (
-                f"value nesting exceeds maximum depth "
-                f"({self._MAX_VALUE_DEPTH})"
-            )
+            msg = f"value nesting exceeds maximum depth ({self._MAX_VALUE_DEPTH})"
             raise self._error(msg)
         self._value_depth += 1
         try:
@@ -767,7 +748,7 @@ class _Parser:
         if allow_multiline and self._starts_with("'''"):
             return self._parse_ml_literal_string()
         if self._peek() != "'":
-            msg = "expected \"'\" to start literal string"
+            msg = 'expected "\'" to start literal string'
             raise self._error(msg)
         self._pos += 1
         src = self._src
@@ -1053,11 +1034,7 @@ class _Parser:
             if not int_part or not frac_part:
                 msg = f"invalid float {token!r}"
                 raise self._error(msg, at=at)
-            if (
-                not int_part.lstrip("0").isdigit()
-                and int_part != "0"
-                and not int_part.isdigit()
-            ):
+            if not int_part.lstrip("0").isdigit() and int_part != "0" and not int_part.isdigit():
                 msg = f"invalid float {token!r}"
                 raise self._error(msg, at=at)
             if not int_part.isdigit() or not frac_part.isdigit():

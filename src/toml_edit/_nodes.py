@@ -271,13 +271,7 @@ class InlineTableNode:
 
 
 ValueNode = (
-    StringNode
-    | IntegerNode
-    | FloatNode
-    | BoolNode
-    | DateTimeNode
-    | ArrayNode
-    | InlineTableNode
+    StringNode | IntegerNode | FloatNode | BoolNode | DateTimeNode | ArrayNode | InlineTableNode
 )
 
 

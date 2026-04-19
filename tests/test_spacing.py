@@ -70,9 +70,7 @@ def test_aot_append_to_spaced_aot_adds_blank() -> None:
     aot = doc["i"]
     assert isinstance(aot, toml_edit.AoT)
     aot.append({"x": 3})
-    assert toml_edit.dumps(doc) == (
-        "[[i]]\nx = 1\n\n[[i]]\nx = 2\n\n[[i]]\nx = 3\n"
-    )
+    assert toml_edit.dumps(doc) == ("[[i]]\nx = 1\n\n[[i]]\nx = 2\n\n[[i]]\nx = 3\n")
 
 
 def test_aot_insert_middle_uniformly_spaced_adds_blank() -> None:
@@ -81,9 +79,7 @@ def test_aot_insert_middle_uniformly_spaced_adds_blank() -> None:
     aot = doc["i"]
     assert isinstance(aot, toml_edit.AoT)
     aot.insert(1, {"x": 2})
-    assert toml_edit.dumps(doc) == (
-        "[[i]]\nx = 1\n\n[[i]]\nx = 2\n\n[[i]]\nx = 3\n"
-    )
+    assert toml_edit.dumps(doc) == ("[[i]]\nx = 1\n\n[[i]]\nx = 2\n\n[[i]]\nx = 3\n")
 
 
 def test_aot_insert_into_mixed_does_not_add_blank() -> None:
@@ -92,9 +88,7 @@ def test_aot_insert_into_mixed_does_not_add_blank() -> None:
     aot = doc["i"]
     assert isinstance(aot, toml_edit.AoT)
     aot.append({"x": 5})
-    assert toml_edit.dumps(doc) == (
-        "[[i]]\nx = 1\n[[i]]\nx = 2\n\n[[i]]\nx = 4\n[[i]]\nx = 5\n"
-    )
+    assert toml_edit.dumps(doc) == ("[[i]]\nx = 1\n[[i]]\nx = 2\n\n[[i]]\nx = 4\n[[i]]\nx = 5\n")
 
 
 def test_aot_append_to_single_entry_does_not_add_blank() -> None:

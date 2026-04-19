@@ -209,7 +209,8 @@ def _set_eol_comment(node: _HasEolComment, value: str | None) -> None:
     if value is None or value == "":
         node.trailing_comment = None
         while node.trailing.pieces and isinstance(
-            node.trailing.pieces[-1], WhitespaceNode,
+            node.trailing.pieces[-1],
+            WhitespaceNode,
         ):
             node.trailing.pieces.pop()
         return
@@ -248,7 +249,9 @@ def _extract_trailing_comment_block(trivia: Trivia) -> tuple[str, ...]:
 
 
 def _replace_trailing_comment_block(
-    trivia: Trivia, lines: Sequence[str], indent: str,
+    trivia: Trivia,
+    lines: Sequence[str],
+    indent: str,
 ) -> None:
     """Replace the trailing comment block in ``trivia`` with ``lines``.
 
@@ -297,7 +300,10 @@ def _extract_eol_comment(trivia: Trivia) -> str | None:
 
 
 def _replace_eol_comment(
-    trivia: Trivia, value: str | None, *, force_newline: bool,
+    trivia: Trivia,
+    value: str | None,
+    *,
+    force_newline: bool,
 ) -> None:
     """Set or clear the EOL comment at the *start* of ``trivia``.
 
@@ -333,7 +339,8 @@ def _array_indent(arr: ArrayNode) -> str:
             return cand
     for item in arr.items[:-1]:
         cand = _indent_after_last_newline(
-            item.post_comma_trivia, require_newline=True,
+            item.post_comma_trivia,
+            require_newline=True,
         )
         if cand:
             return cand
@@ -462,9 +469,7 @@ class Table(MutableMapping[str, TomlValue]):
         """
         value = self[key]
         if not isinstance(value, Table):
-            msg = (
-                f"{key!r} is a {type(value).__name__}, not a Table"
-            )
+            msg = f"{key!r} is a {type(value).__name__}, not a Table"
             raise TypeError(msg)
         return value
 
@@ -475,9 +480,7 @@ class Table(MutableMapping[str, TomlValue]):
         """
         value = self[key]
         if not isinstance(value, Array):
-            msg = (
-                f"{key!r} is a {type(value).__name__}, not an Array"
-            )
+            msg = f"{key!r} is a {type(value).__name__}, not an Array"
             raise TypeError(msg)
         return value
 
@@ -488,9 +491,7 @@ class Table(MutableMapping[str, TomlValue]):
         """
         value = self[key]
         if not isinstance(value, AoT):
-            msg = (
-                f"{key!r} is a {type(value).__name__}, not an AoT"
-            )
+            msg = f"{key!r} is a {type(value).__name__}, not an AoT"
             raise TypeError(msg)
         return value
 
@@ -651,10 +652,7 @@ class _InlineTable(Table):
             # might be dotted-only → unsupported / KeyError per semantics
             for entry in self._node.entries:
                 if entry.key.path[0] == key:
-                    msg = (
-                        f"cannot delete dotted-key entry {key!r} from "
-                        "inline table"
-                    )
+                    msg = f"cannot delete dotted-key entry {key!r} from inline table"
                     raise TOMLEditError(msg)
             raise KeyError(key)
         idx = self._node.entries.index(existing)
@@ -749,9 +747,7 @@ class _StdTable(Table):
             return [
                 s
                 for s in self._owned_scope
-                if s.header is not None
-                and s.header.kind == "table"
-                and s.header.key.path == path
+                if s.header is not None and s.header.kind == "table" and s.header.key.path == path
             ]
         return self._doc_view._direct_sections(self._path)  # noqa: SLF001
 
@@ -886,11 +882,7 @@ class _StdTable(Table):
         """
         for sec in self._direct_sections():
             for kv in sec.entries:
-                if (
-                    kv.key.path
-                    and len(kv.key.path) == 1
-                    and kv.key.path[0] == key
-                ):
+                if kv.key.path and len(kv.key.path) == 1 and kv.key.path[0] == key:
                     return sec, kv
         raise KeyError(key)
 
@@ -941,14 +933,18 @@ class _StdTable(Table):
     def header_leading_comments(self, value: Sequence[str]) -> None:
         header = self._first_header()
         _replace_trailing_comment_block(
-            header.leading, value, _indent_after_last_newline(header.leading),
+            header.leading,
+            value,
+            _indent_after_last_newline(header.leading),
         )
 
     @header_leading_comments.deleter
     def header_leading_comments(self) -> None:
         header = self._first_header()
         _replace_trailing_comment_block(
-            header.leading, (), _indent_after_last_newline(header.leading),
+            header.leading,
+            (),
+            _indent_after_last_newline(header.leading),
         )
 
     @override
@@ -966,10 +962,7 @@ class _StdTable(Table):
         for existing in self._doc_view._node.sections:  # noqa: SLF001
             hdr = existing.header
             if hdr is not None and hdr.key.path == child_path:  # pragma: no cover
-                msg = (
-                    f"cannot promote {key!r}: a "
-                    f"[{'.'.join(child_path)}] section already exists"
-                )
+                msg = f"cannot promote {key!r}: a [{'.'.join(child_path)}] section already exists"
                 raise TOMLEditError(msg)
         new_sec = _build_promoted_section(child_path, inline, kv)
         # Remove the inline KV from its host section.
@@ -1030,11 +1023,7 @@ class _TableCommentsView(MutableMapping[str, str]):
     def _commented_kvs(self) -> Iterator[tuple[str, KeyValueNode]]:
         for sec in self._table._direct_sections():  # noqa: SLF001
             for kv in sec.entries:
-                if (
-                    kv.trailing_comment is not None
-                    and kv.key.path
-                    and len(kv.key.path) == 1
-                ):
+                if kv.trailing_comment is not None and kv.key.path and len(kv.key.path) == 1:
                     yield kv.key.path[0], kv
 
     @override
@@ -1107,7 +1096,9 @@ class _TableLeadingCommentsView(MutableMapping[str, "tuple[str, ...]"]):
     def __setitem__(self, key: str, value: Sequence[str]) -> None:
         _, kv = self._table._find_direct_kv(key)  # noqa: SLF001
         _replace_trailing_comment_block(
-            kv.leading, value, _indent_after_last_newline(kv.leading),
+            kv.leading,
+            value,
+            _indent_after_last_newline(kv.leading),
         )
 
     @override
@@ -1227,11 +1218,10 @@ class _ArrayCommentsView(MutableMapping[int, str]):
             return
         last = node.items[-1] if node.items else None
         if last is not None:
-            preceding = (
-                last.post_comma_trivia if last.has_comma else last.trailing
-            )
+            preceding = last.post_comma_trivia if last.has_comma else last.trailing
             if preceding.pieces and isinstance(
-                preceding.pieces[-1], NewlineNode,
+                preceding.pieces[-1],
+                NewlineNode,
             ):
                 return
         # Strip only the leading WS so we don't render `\n   ]`.
@@ -1296,10 +1286,7 @@ class _ArrayLeadingCommentsView(MutableMapping[int, "tuple[str, ...]"]):
 
     def _check_index(self, key: object) -> int:
         if not isinstance(key, int):
-            msg = (
-                "Array.leading_comments index must be int, "
-                f"got {type(key).__name__}"
-            )
+            msg = f"Array.leading_comments index must be int, got {type(key).__name__}"
             raise TypeError(msg)
         n = len(self._array._node.items)  # noqa: SLF001
         if not 0 <= key < n:
@@ -1329,7 +1316,8 @@ class _ArrayLeadingCommentsView(MutableMapping[int, "tuple[str, ...]"]):
         # comment block lands on its own line(s) before the next value.
         if value and not any(isinstance(p, NewlineNode) for p in trivia.pieces):
             while trivia.pieces and isinstance(
-                trivia.pieces[-1], WhitespaceNode,
+                trivia.pieces[-1],
+                WhitespaceNode,
             ):
                 trivia.pieces.pop()
             trivia.pieces.append(NewlineNode("\n"))
@@ -1344,7 +1332,9 @@ class _ArrayLeadingCommentsView(MutableMapping[int, "tuple[str, ...]"]):
         if not _extract_trailing_comment_block(trivia):
             raise KeyError(key)
         _replace_trailing_comment_block(
-            trivia, (), _array_indent(self._array._node),  # noqa: SLF001
+            trivia,
+            (),
+            _array_indent(self._array._node),  # noqa: SLF001
         )
 
     @override
@@ -1410,9 +1400,7 @@ class Array(list[TomlValue]):
             value=value_to_node(value),
             trailing=Trivia(),
             has_comma=with_comma,
-            post_comma_trivia=(
-                Trivia([WhitespaceNode(" ")]) if with_comma else Trivia()
-            ),
+            post_comma_trivia=(Trivia([WhitespaceNode(" ")]) if with_comma else Trivia()),
         )
 
     def _rebuild_separators(self) -> None:
@@ -1439,7 +1427,9 @@ class Array(list[TomlValue]):
                     item.post_comma_trivia = Trivia([WhitespaceNode(" ")])
                     if eol is not None:
                         _replace_eol_comment(
-                            item.post_comma_trivia, eol, force_newline=True,
+                            item.post_comma_trivia,
+                            eol,
+                            force_newline=True,
                         )
                 elif not item.post_comma_trivia.pieces:
                     item.post_comma_trivia = Trivia([WhitespaceNode(" ")])
@@ -1635,9 +1625,7 @@ class AoT(list[Table]):
         return [
             s
             for s in self._doc_view._node.sections  # noqa: SLF001
-            if s.header is not None
-            and s.header.kind == "array"
-            and s.header.key.path == self._path
+            if s.header is not None and s.header.kind == "array" and s.header.key.path == self._path
         ]
 
     def _resync(self) -> None:
@@ -1734,9 +1722,7 @@ class AoT(list[Table]):
         py_index = max(0, min(py_index, n))
         new_sec = self._make_header_section()
         self._populate_section(new_sec, value)
-        own_header_leadings = [
-            sec.header.leading for sec in own[1:] if sec.header is not None
-        ]
+        own_header_leadings = [sec.header.leading for sec in own[1:] if sec.header is not None]
         if _gaps_uniformly_blank(own_header_leadings):
             assert new_sec.header is not None
             new_sec.header.leading.pieces.insert(0, NewlineNode("\n"))
@@ -1848,9 +1834,7 @@ class _DocumentView:
         return [
             sec
             for sec in self._node.sections
-            if sec.header is not None
-            and sec.header.kind == "array"
-            and sec.header.key.path == path
+            if sec.header is not None and sec.header.kind == "array" and sec.header.key.path == path
         ]
 
     def _child_table_paths(self, path: tuple[str, ...]) -> list[tuple[str, ...]]:
@@ -1920,24 +1904,14 @@ class _DocumentView:
         elif path == ():
             direct_secs = [
                 s
-                for s in (
-                    owned_scope
-                    if owned_scope is not None
-                    else self._node.sections
-                )
+                for s in (owned_scope if owned_scope is not None else self._node.sections)
                 if s.header is None
             ]
         else:
             direct_secs = [
                 s
-                for s in (
-                    owned_scope
-                    if owned_scope is not None
-                    else self._node.sections
-                )
-                if s.header is not None
-                and s.header.kind == "table"
-                and s.header.key.path == path
+                for s in (owned_scope if owned_scope is not None else self._node.sections)
+                if s.header is not None and s.header.kind == "table" and s.header.key.path == path
             ]
 
         name_order: list[str] = []
@@ -1949,9 +1923,7 @@ class _DocumentView:
                 name_order.append(name)
 
         direct_kvs_by_head: dict[str, list[KeyValueNode]] = {}
-        extras_by_head: dict[
-            str, list[tuple[tuple[str, ...], KeyValueNode]]
-        ] = {}
+        extras_by_head: dict[str, list[tuple[tuple[str, ...], KeyValueNode]]] = {}
         aot_by_head: dict[str, list[SectionNode]] = {}
         sub_by_head: dict[str, list[SectionNode]] = {}
 
@@ -2021,12 +1993,7 @@ class _DocumentView:
                 else:
                     nested_extras.append((rel_path, kv))
 
-            if (
-                terminal is not None
-                and not nested_kvs
-                and not nested_extras
-                and not sub_secs
-            ):
+            if terminal is not None and not nested_kvs and not nested_extras and not sub_secs:
                 yield head, _value_for(terminal.value)
                 continue
 
@@ -2052,17 +2019,23 @@ class _DocumentView:
                     and len(s.header.key.path) >= cplen
                     and s.header.key.path[:cplen] == child_path
                 ]
-                yield head, _StdTable(
-                    self,
-                    child_path,
-                    owned_scope=child_owned,
-                    extra_kvs=child_extras or None,
+                yield (
+                    head,
+                    _StdTable(
+                        self,
+                        child_path,
+                        owned_scope=child_owned,
+                        extra_kvs=child_extras or None,
+                    ),
                 )
             else:
-                yield head, _StdTable(
-                    self,
-                    (*path, head),
-                    extra_kvs=child_extras or None,
+                yield (
+                    head,
+                    _StdTable(
+                        self,
+                        (*path, head),
+                        extra_kvs=child_extras or None,
+                    ),
                 )
 
 

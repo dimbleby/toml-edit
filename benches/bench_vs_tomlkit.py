@@ -76,10 +76,12 @@ def main() -> None:
 
     for label, payload in [("synthetic", src), ("pyproject.toml", pyproject_src)]:
         for op_name, te_fn, tk_fn in [
-            ("parse", lambda p=payload: toml_edit.parse(p),
-                     lambda p=payload: tomlkit.parse(p)),
-            ("parse+dump", lambda p=payload: toml_edit.dumps(toml_edit.parse(p)),
-                          lambda p=payload: tomlkit.dumps(tomlkit.parse(p))),
+            ("parse", lambda p=payload: toml_edit.parse(p), lambda p=payload: tomlkit.parse(p)),
+            (
+                "parse+dump",
+                lambda p=payload: toml_edit.dumps(toml_edit.parse(p)),
+                lambda p=payload: tomlkit.dumps(tomlkit.parse(p)),
+            ),
         ]:
             _, t_us = _bench("toml_edit", te_fn)
             _, k_us = _bench("tomlkit", tk_fn)

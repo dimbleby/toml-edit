@@ -140,9 +140,7 @@ def _list_to_array_node(items: Iterable[TomlValue]) -> ArrayNode:
                 value=value_to_node(v),
                 trailing=Trivia(),
                 has_comma=not is_last,
-                post_comma_trivia=(
-                    Trivia([WhitespaceNode(" ")]) if not is_last else Trivia()
-                ),
+                post_comma_trivia=(Trivia([WhitespaceNode(" ")]) if not is_last else Trivia()),
             ),
         )
     final_trivia = Trivia([WhitespaceNode(" ")]) if items_list else Trivia()

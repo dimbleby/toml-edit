@@ -203,10 +203,10 @@ def test_inline_table_empty_multiline() -> None:
 
 def test_inline_table_nested_multiline_round_trip() -> None:
     src = (
-        'contact = {\n'
+        "contact = {\n"
         '    personal = { name = "Donald", email = "d@d.com" },\n'
         '    work = { name = "Cleaner", email = "d@s.com" },\n'
-        '}\n'
+        "}\n"
     )
     doc = toml_edit.parse(src)
     assert toml_edit.dumps(doc) == src

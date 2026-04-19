@@ -59,13 +59,7 @@ python_version = "3.11"
 files = ["src", "tests"]
 strict = true
 warn_unreachable = true
-warn_redundant_casts = true
-warn_unused_ignores = true
 disallow_any_unimported = true
-disallow_any_generics = true
-disallow_subclassing_any = true
-no_implicit_reexport = true
-extra_checks = true
 enable_error_code = [
   "deprecated",
   "explicit-override",

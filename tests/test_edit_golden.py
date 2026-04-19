@@ -133,30 +133,18 @@ def test_aot_modify_field_in_first_entry() -> None:
 
 
 def test_aot_modify_field_in_middle_entry() -> None:
-    src = (
-        '[[users]]\nname = "a"\n'
-        '[[users]]\nname = "b"\n'
-        '[[users]]\nname = "c"\n'
-    )
+    src = '[[users]]\nname = "a"\n[[users]]\nname = "b"\n[[users]]\nname = "c"\n'
     doc = toml_edit.parse(src)
     users = doc["users"]
     assert isinstance(users, toml_edit.AoT)
     users[1]["name"] = "B"
     out = toml_edit.dumps(doc)
-    assert (
-        out
-        == '[[users]]\nname = "a"\n[[users]]\nname = "B"\n[[users]]\nname = "c"\n'
-    )
+    assert out == '[[users]]\nname = "a"\n[[users]]\nname = "B"\n[[users]]\nname = "c"\n'
 
 
 def test_aot_entry_sub_section_read() -> None:
     """[[arr]] / [arr.sub] — sub belongs to the AoT entry."""
-    src = (
-        "[[arr]]\nx = 1\n"
-        "[arr.sub]\ny = 2\n"
-        "[[arr]]\nx = 10\n"
-        "[arr.sub]\ny = 20\n"
-    )
+    src = "[[arr]]\nx = 1\n[arr.sub]\ny = 2\n[[arr]]\nx = 10\n[arr.sub]\ny = 20\n"
     doc = toml_edit.parse(src)
     arr = doc["arr"]
     assert isinstance(arr, toml_edit.AoT)
@@ -172,12 +160,7 @@ def test_aot_entry_sub_section_read() -> None:
 
 
 def test_aot_entry_sub_section_modify_value() -> None:
-    src = (
-        "[[arr]]\nx = 1\n"
-        "[arr.sub]\ny = 2\n"
-        "[[arr]]\nx = 10\n"
-        "[arr.sub]\ny = 20\n"
-    )
+    src = "[[arr]]\nx = 1\n[arr.sub]\ny = 2\n[[arr]]\nx = 10\n[arr.sub]\ny = 20\n"
     doc = toml_edit.parse(src)
     arr = doc["arr"]
     assert isinstance(arr, toml_edit.AoT)
@@ -185,12 +168,7 @@ def test_aot_entry_sub_section_modify_value() -> None:
     assert isinstance(sub, toml_edit.Table)
     sub["y"] = 999
     out = toml_edit.dumps(doc)
-    assert out == (
-        "[[arr]]\nx = 1\n"
-        "[arr.sub]\ny = 2\n"
-        "[[arr]]\nx = 10\n"
-        "[arr.sub]\ny = 999\n"
-    )
+    assert out == ("[[arr]]\nx = 1\n[arr.sub]\ny = 2\n[[arr]]\nx = 10\n[arr.sub]\ny = 999\n")
     assert _reparses(out) == {
         "arr": [
             {"x": 1, "sub": {"y": 2}},
@@ -326,12 +304,7 @@ def test_aot_entry_owned_scope_isolates_sibling_sub_sections() -> None:
     Each entry's sub.x must be independent; mutating arr[0].sub.x must
     not affect arr[1].sub.x.
     """
-    src = (
-        "[[arr]]\n"
-        "[arr.sub]\nx = 1\n"
-        "[[arr]]\n"
-        "[arr.sub]\nx = 2\n"
-    )
+    src = "[[arr]]\n[arr.sub]\nx = 1\n[[arr]]\n[arr.sub]\nx = 2\n"
     doc = toml_edit.parse(src)
     arr = doc["arr"]
     assert isinstance(arr, toml_edit.AoT)
@@ -344,6 +317,4 @@ def test_aot_entry_owned_scope_isolates_sibling_sub_sections() -> None:
     s0["x"] = 100
     assert s1["x"] == 2  # unchanged
     out = toml_edit.dumps(doc)
-    assert _reparses(out) == {
-        "arr": [{"sub": {"x": 100}}, {"sub": {"x": 2}}]
-    }
+    assert _reparses(out) == {"arr": [{"sub": {"x": 100}}, {"sub": {"x": 2}}]}
