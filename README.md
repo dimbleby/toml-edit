@@ -21,7 +21,22 @@ The Python ecosystem already has:
   navigable.
 - **Pure Python**, fully type-annotated (`mypy --strict`), no native
   build step.
-- **TOML 1.0.0 + 1.1.0** compliant.
+- **TOML 1.0.0** today; **1.1.0** support is on the roadmap.
+
+## Performance
+
+`toml-edit` is a hand-written recursive-descent parser; on a typical
+`pyproject.toml` it parses **~8× faster than `tomlkit`** and round-trips
+**~7× faster** while still preserving every byte of formatting:
+
+```
+Workload                              tomle (us)   tomlkit (us)    speedup
+------------------------------------------------------------------------
+pyproject.toml      parse                 1041.3         8456.6      8.12x
+pyproject.toml      parse+dump            1275.4         8598.1      6.74x
+```
+
+Run `python benches/bench_vs_tomlkit.py` to reproduce on your machine.
 
 ## Install
 
@@ -42,6 +57,25 @@ doc["project"]["dependencies"].append("requests>=2")
 
 print(tomle.dumps(doc))   # comments and layout are preserved
 ```
+
+## Status
+
+Implemented:
+
+- TOML 1.0.0 parser (every value type, dotted keys, AoT, inline tables, …)
+- Byte-exact round-trip writer
+- Dict-like read API on `Document` / `Table`
+- Mutation API: replace/insert/delete scalars; full `list` mutator set on
+  `Array`; insert/replace/delete on inline tables
+- Strict `mypy` and `ruff ALL` clean
+- Hypothesis-based round-trip tests
+
+Roadmap:
+
+- Comment manipulation API
+- Creating new `[sub.tables]` / `[[arrays.of.tables]]` via assignment
+- TOML 1.1.0 deltas (unicode bare keys, trailing commas in inline tables, …)
+- The official `toml-test` compliance suite
 
 ## License
 
