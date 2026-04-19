@@ -40,6 +40,20 @@ include = ["src/tomle", "README.md", "LICENSE", "pyproject.toml"]
 addopts = ["-ra", "--strict-config", "--strict-markers"]
 testpaths = ["tests"]
 
+[tool.coverage.run]
+source = ["src/tomle"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+exclude_also = [
+  "if TYPE_CHECKING:",
+  "raise NotImplementedError",
+  "@overload",
+  "pragma: no cover",
+]
+
 [tool.mypy]
 python_version = "3.11"
 files = ["src", "tests"]
