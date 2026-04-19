@@ -38,8 +38,9 @@ _SCALARS = st.one_of(_STRINGS, _INTS, _BOOLS, _FLOATS)
 
 
 @st.composite
-def _kv_lines(draw: st.DrawFn) -> str:
-    keys = draw(st.lists(_BARE_KEY, max_size=4, unique=True))
+def _kv_lines(draw: st.DrawFn, keys: list[str] | None = None) -> str:
+    if keys is None:
+        keys = draw(st.lists(_BARE_KEY, max_size=4, unique=True))
     out: list[str] = []
     for k in keys:
         v = draw(_SCALARS)
@@ -67,20 +68,46 @@ def _section(draw: st.DrawFn) -> str:
 
 @st.composite
 def _document(draw: st.DrawFn) -> str:
-    pre = draw(_kv_lines())
-    sec_paths = draw(
-        st.lists(
-            st.lists(_BARE_KEY, min_size=1, max_size=2, unique=True).map(tuple),
-            max_size=3,
-            unique=True,
-        ),
-    )
+    # Reserve a pool of names; partition them between pre-section keys
+    # and section first-name components so a key like ``a = 1`` never
+    # collides with a later ``[a]`` (which is invalid TOML).
+    pool = draw(st.lists(_BARE_KEY, min_size=0, max_size=8, unique=True))
+    cut = draw(st.integers(min_value=0, max_value=len(pool)))
+    pre_keys = pool[:cut]
+    section_roots = pool[cut:]
+
+    pre = draw(_kv_lines(keys=pre_keys))
+    # Build unique section paths from the available roots; each root
+    # gets a unique single- or two-part path.
+    sec_paths: list[tuple[str, ...]] = []
+    seen: set[tuple[str, ...]] = set()
+    for root in section_roots:
+        depth = draw(st.integers(min_value=1, max_value=2))
+        if depth == 1:
+            path: tuple[str, ...] = (root,)
+        else:
+            sub = draw(_BARE_KEY)
+            path = (root, sub)
+        if path in seen:
+            continue
+        seen.add(path)
+        sec_paths.append(path)
+
     parts: list[str] = []
     if pre:
         parts.append(pre)
     for path in sec_paths:
         header = "[" + ".".join(path) + "]\n"
-        body = draw(_kv_lines())
+        # KVs inside a section must not collide with the section's own
+        # first-part name reserved at root level.
+        body_keys = draw(
+            st.lists(
+                _BARE_KEY.filter(lambda k: k not in section_roots),
+                max_size=4,
+                unique=True,
+            ),
+        )
+        body = draw(_kv_lines(keys=body_keys))
         parts.append(header + body)
     return "".join(parts) or "\n"
 

@@ -40,7 +40,6 @@ from tomle._nodes import (
 if TYPE_CHECKING:
     from tomle._nodes import HeaderKind, IntStyle, ValueNode
 
-
 _BARE_KEY_CHARS: Final[frozenset[str]] = frozenset(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-",
 )
@@ -53,20 +52,26 @@ _BIN_DIGITS: Final[frozenset[str]] = frozenset("01")
 class _Parser:
     __slots__ = (
         "_aot_paths",
-        "_current_table_prefixes",
-        "_current_value_paths",
+        "_current_section",
+        "_dotted_paths",
         "_explicit_table_paths",
+        "_implicit_table_paths",
         "_pos",
         "_src",
+        "_value_paths",
     )
 
     def __init__(self, src: str) -> None:
         self._src = src
         self._pos = 0
+        # Persistent structural facts (not cleared when re-entering an AoT).
         self._explicit_table_paths: set[tuple[str, ...]] = set()
+        self._implicit_table_paths: set[tuple[str, ...]] = set()
         self._aot_paths: set[tuple[str, ...]] = set()
-        self._current_value_paths: set[tuple[str, ...]] = set()
-        self._current_table_prefixes: set[tuple[str, ...]] = set()
+        # Per-AoT-entry: cleared (for paths under H) when [[H]] opens a new entry.
+        self._value_paths: set[tuple[str, ...]] = set()
+        self._dotted_paths: set[tuple[str, ...]] = set()
+        self._current_section: tuple[str, ...] = ()
 
     # ------------------------------------------------------------------
     # Cursor helpers
@@ -125,11 +130,10 @@ class _Parser:
                 header = self._parse_header(leading)
                 current = SectionNode(header=header)
                 doc.sections.append(current)
-                self._current_value_paths = set()
-                self._current_table_prefixes = set()
+                self._current_section = header.key.path
             else:
                 kv = self._parse_key_value(leading)
-                self._record_keyvalue_path(kv.key)
+                self._record_keyvalue(kv)
                 current.entries.append(kv)
 
         return doc
@@ -263,23 +267,22 @@ class _Parser:
         trailing, comment, newline = self._consume_eol()
 
         path = key.path
+        self._validate_header(path, kind, at=self._pos)
         if kind == "table":
-            if path in self._explicit_table_paths:
-                msg = f"redefinition of table {'.'.join(path)!r}"
-                raise self._error(msg)
-            if path in self._aot_paths:
-                msg = f"cannot redefine array-of-tables {'.'.join(path)!r} as a normal table"
-                raise self._error(
-                    msg,
-                )
             self._explicit_table_paths.add(path)
         else:
-            if path in self._explicit_table_paths:
-                msg = f"cannot redefine table {'.'.join(path)!r} as an array-of-tables"
-                raise self._error(
-                    msg,
-                )
+            # Opening a new AoT entry at `path` invalidates any per-entry
+            # tracking that was scoped to the previous entry.
+            self._reset_scope_under(path)
             self._aot_paths.add(path)
+        # Intermediate prefixes become implicit tables (only mark new ones).
+        for i in range(1, len(path)):
+            sub = path[:i]
+            if (
+                sub not in self._explicit_table_paths
+                and sub not in self._aot_paths
+            ):
+                self._implicit_table_paths.add(sub)
 
         return TableHeaderNode(
             leading=leading,
@@ -364,29 +367,172 @@ class _Parser:
             newline=newline,
         )
 
-    def _record_keyvalue_path(self, key: Key) -> None:
-        path = key.path
-        if path in self._current_value_paths:
-            msg = f"duplicate key {'.'.join(path)!r}"
-            raise self._error(msg, at=self._pos)
-        if path in self._current_table_prefixes:
-            msg = f"key {'.'.join(path)!r} already used as a dotted-key prefix"
-            raise self._error(
-                msg,
-                at=self._pos,
-            )
-        # Each proper prefix of ``path`` becomes an implicit dotted-key
-        # subtable; that path must not already have a scalar value.
+    def _validate_header(
+        self,
+        path: tuple[str, ...],
+        kind: HeaderKind,
+        *,
+        at: int,
+    ) -> None:
+        # Prefix overlaps with a bound value would mean overwriting a scalar
+        # (or an inline-table value) with a table — always invalid.
         for i in range(1, len(path)):
-            sub = path[:i]
-            if sub in self._current_value_paths:
-                msg = f"key {'.'.join(sub)!r} already defined as a value"
-                raise self._error(
-                    msg,
-                    at=self._pos,
+            prefix = path[:i]
+            if prefix in self._value_paths:
+                joined = ".".join(prefix)
+                msg = f"cannot use {joined!r} as a table: already defined as a value"
+                raise self._error(msg, at=at)
+        if path in self._value_paths:
+            joined = ".".join(path)
+            msg = f"cannot define {joined!r} as a table: already defined as a value"
+            raise self._error(msg, at=at)
+        if path in self._dotted_paths:
+            joined = ".".join(path)
+            msg = f"cannot define {joined!r} as a table: already created via dotted keys"
+            raise self._error(msg, at=at)
+        if kind == "table":
+            if path in self._explicit_table_paths:
+                msg = f"redefinition of table {'.'.join(path)!r}"
+                raise self._error(msg, at=at)
+            if path in self._aot_paths:
+                msg = (
+                    f"cannot redefine array-of-tables {'.'.join(path)!r} "
+                    "as a normal table"
                 )
-            self._current_table_prefixes.add(sub)
-        self._current_value_paths.add(path)
+                raise self._error(msg, at=at)
+        else:  # array-of-tables
+            if path in self._explicit_table_paths:
+                msg = (
+                    f"cannot redefine table {'.'.join(path)!r} "
+                    "as an array-of-tables"
+                )
+                raise self._error(msg, at=at)
+            if path in self._implicit_table_paths and path not in self._aot_paths:
+                msg = (
+                    f"cannot define {'.'.join(path)!r} as an array-of-tables: "
+                    "already used as an implicit table"
+                )
+                raise self._error(msg, at=at)
+
+    def _reset_scope_under(self, path: tuple[str, ...]) -> None:
+        """Forget per-entry tracking for paths strictly under ``path``.
+
+        Called when a new AoT entry at ``path`` is opened: prior entries'
+        keys, dotted-prefix paths and explicit sub-table headers are
+        replaced by the fresh entry's own.
+        """
+        n = len(path)
+
+        def strict_descendant(p: tuple[str, ...]) -> bool:
+            return len(p) > n and p[:n] == path
+
+        for s in (
+            self._value_paths,
+            self._dotted_paths,
+            self._explicit_table_paths,
+            self._implicit_table_paths,
+            self._aot_paths,
+        ):
+            for p in [p for p in s if strict_descendant(p)]:
+                s.discard(p)
+
+    def _record_keyvalue(self, kv: KeyValueNode) -> None:
+        section = self._current_section
+        full = section + kv.key.path
+        at = self._pos
+        # Final-path conflicts.
+        if full in self._value_paths:
+            msg = f"duplicate key {'.'.join(full)!r}"
+            raise self._error(msg, at=at)
+        if (
+            full in self._explicit_table_paths
+            or full in self._aot_paths
+            or full in self._implicit_table_paths
+            or full in self._dotted_paths
+        ):
+            msg = f"key {'.'.join(full)!r} already defined as a table"
+            raise self._error(msg, at=at)
+        # Intermediate-prefix conflicts (paths between section and full).
+        for i in range(len(section) + 1, len(full)):
+            sub = full[:i]
+            if sub in self._value_paths:
+                msg = f"key {'.'.join(sub)!r} already defined as a value"
+                raise self._error(msg, at=at)
+            if sub in self._explicit_table_paths:
+                msg = (
+                    f"cannot extend explicitly-defined table {'.'.join(sub)!r} "
+                    "via dotted keys"
+                )
+                raise self._error(msg, at=at)
+            if sub in self._aot_paths:
+                msg = (
+                    f"cannot extend array-of-tables {'.'.join(sub)!r} "
+                    "via dotted keys"
+                )
+                raise self._error(msg, at=at)
+            self._dotted_paths.add(sub)
+        self._value_paths.add(full)
+        # Inline-table values: validate within-table dups and register their
+        # nested key paths so cross-section headers/keys see the conflicts.
+        if isinstance(kv.value, InlineTableNode):
+            self._validate_inline_table(kv.value, abs_prefix=full, at=at)
+        elif isinstance(kv.value, ArrayNode):
+            for item in kv.value.items:
+                if isinstance(item.value, InlineTableNode):
+                    self._validate_inline_table(item.value, abs_prefix=None, at=at)
+
+    def _validate_inline_table(
+        self,
+        table: InlineTableNode,
+        *,
+        abs_prefix: tuple[str, ...] | None,
+        at: int,
+    ) -> None:
+        """Reject duplicate / conflicting keys inside one inline table.
+
+        If ``abs_prefix`` is given, also register the inline table's keys
+        under that prefix in the document-wide tracking sets so later
+        section headers or dotted keys can detect conflicts with paths
+        owned by this inline table.
+        """
+        local_values: set[tuple[str, ...]] = set()
+        local_prefixes: set[tuple[str, ...]] = set()
+        for entry in table.entries:
+            path = entry.key.path
+            if path in local_values:
+                msg = f"duplicate key {'.'.join(path)!r} in inline table"
+                raise self._error(msg, at=at)
+            if path in local_prefixes:
+                msg = (
+                    f"key {'.'.join(path)!r} in inline table conflicts with "
+                    "an existing dotted-key prefix"
+                )
+                raise self._error(msg, at=at)
+            for i in range(1, len(path)):
+                sub = path[:i]
+                if sub in local_values:
+                    msg = (
+                        f"inline-table key {'.'.join(sub)!r} already "
+                        "defined as a value"
+                    )
+                    raise self._error(msg, at=at)
+                local_prefixes.add(sub)
+            local_values.add(path)
+            if abs_prefix is not None:
+                full = abs_prefix + path
+                self._value_paths.add(full)
+                for i in range(1, len(path)):
+                    self._dotted_paths.add(abs_prefix + path[:i])
+            sub_abs: tuple[str, ...] | None
+            if isinstance(entry.value, InlineTableNode):
+                sub_abs = (abs_prefix + path) if abs_prefix is not None else None
+                self._validate_inline_table(entry.value, abs_prefix=sub_abs, at=at)
+            elif isinstance(entry.value, ArrayNode):
+                for item in entry.value.items:
+                    if isinstance(item.value, InlineTableNode):
+                        self._validate_inline_table(
+                            item.value, abs_prefix=None, at=at,
+                        )
 
     # ------------------------------------------------------------------
     # Values
