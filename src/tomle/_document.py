@@ -168,13 +168,15 @@ class Table(MutableMapping[str, TomlValue]):
 
     # Subclasses override these.
     def _set_value(self, key: str, value: object) -> None:  # noqa: ARG002, pragma: no cover
+        msg = "this table flavour does not support mutation in this build"
         raise TOMLEditError(
-            "this table flavour does not support mutation in this build",
+            msg,
         )
 
     def _delete_value(self, key: str) -> None:  # noqa: ARG002, pragma: no cover
+        msg = "this table flavour does not support mutation in this build"
         raise TOMLEditError(
-            "this table flavour does not support mutation in this build",
+            msg,
         )
 
     @override

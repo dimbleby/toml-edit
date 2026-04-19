@@ -92,7 +92,7 @@ def _string_to_node(value: str) -> StringNode:
     )
 
 
-def _bool_to_node(value: bool) -> BoolNode:
+def _bool_to_node(*, value: bool) -> BoolNode:
     return BoolNode(raw="true" if value else "false", value=value)
 
 
@@ -195,7 +195,7 @@ def value_to_node(value: object) -> ValueNode:
             return deepcopy(node)
         return _mapping_to_inline_table_node(dict(value))
     if isinstance(value, bool):
-        return _bool_to_node(value)
+        return _bool_to_node(value=value)
     if isinstance(value, int):
         return _int_to_node(value)
     if isinstance(value, float):

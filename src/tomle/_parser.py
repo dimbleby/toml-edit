@@ -160,7 +160,8 @@ class _Parser:
                 trivia.pieces.append(NewlineNode("\n"))
             elif ch == "\r":
                 if self._peek(1) != "\n":
-                    raise self._error("stray carriage return")
+                    msg = "stray carriage return"
+                    raise self._error(msg)
                 self._pos += 2
                 trivia.pieces.append(NewlineNode("\r\n"))
             else:
@@ -176,7 +177,8 @@ class _Parser:
             # Per TOML, control chars other than tab are not allowed in
             # comments.
             if cp != 0x09 and (cp <= 0x1F or cp == 0x7F):
-                raise self._error(f"invalid control character U+{cp:04X} in comment")
+                msg = f"invalid control character U+{cp:04X} in comment"
+                raise self._error(msg)
             self._pos += 1
         return CommentNode(self._src[start : self._pos])
 
@@ -225,7 +227,8 @@ class _Parser:
             self._pos += 2
             newline = NewlineNode("\r\n")
         elif not self._eof():
-            raise self._error(f"expected newline or end of file, got {self._peek()!r}")
+            msg = f"expected newline or end of file, got {self._peek()!r}"
+            raise self._error(msg)
         return trailing, comment, newline
 
     # ------------------------------------------------------------------
@@ -248,11 +251,13 @@ class _Parser:
 
         if kind == "array":
             if not self._starts_with("]]"):
-                raise self._error("expected ']]' to close array-of-tables header")
+                msg = "expected ']]' to close array-of-tables header"
+                raise self._error(msg)
             self._advance(2)
         else:
             if self._peek() != "]":
-                raise self._error("expected ']' to close table header")
+                msg = "expected ']' to close table header"
+                raise self._error(msg)
             self._advance(1)
 
         trailing, comment, newline = self._consume_eol()
@@ -260,16 +265,19 @@ class _Parser:
         path = key.path
         if kind == "table":
             if path in self._explicit_table_paths:
-                raise self._error(f"redefinition of table {'.'.join(path)!r}")
+                msg = f"redefinition of table {'.'.join(path)!r}"
+                raise self._error(msg)
             if path in self._aot_paths:
+                msg = f"cannot redefine array-of-tables {'.'.join(path)!r} as a normal table"
                 raise self._error(
-                    f"cannot redefine array-of-tables {'.'.join(path)!r} as a normal table",
+                    msg,
                 )
             self._explicit_table_paths.add(path)
         else:
             if path in self._explicit_table_paths:
+                msg = f"cannot redefine table {'.'.join(path)!r} as an array-of-tables"
                 raise self._error(
-                    f"cannot redefine table {'.'.join(path)!r} as an array-of-tables",
+                    msg,
                 )
             self._aot_paths.add(path)
 
@@ -316,7 +324,8 @@ class _Parser:
                 self._pos += 1
             raw = self._src[start : self._pos]
             return KeyPart(raw=raw, value=raw, kind="bare")
-        raise self._error(f"expected key, got {ch!r}")
+        msg = f"expected key, got {ch!r}"
+        raise self._error(msg)
 
     def _parse_basic_key(self) -> KeyPart:
         start = self._pos
@@ -338,7 +347,8 @@ class _Parser:
         key = self._parse_key()
         pre_eq = self._consume_inline_ws()
         if self._peek() != "=":
-            raise self._error(f"expected '=' after key, got {self._peek()!r}")
+            msg = f"expected '=' after key, got {self._peek()!r}"
+            raise self._error(msg)
         self._advance(1)
         post_eq = self._consume_inline_ws()
         value = self._parse_value()
@@ -357,10 +367,12 @@ class _Parser:
     def _record_keyvalue_path(self, key: Key) -> None:
         path = key.path
         if path in self._current_value_paths:
-            raise self._error(f"duplicate key {'.'.join(path)!r}", at=self._pos)
+            msg = f"duplicate key {'.'.join(path)!r}"
+            raise self._error(msg, at=self._pos)
         if path in self._current_table_prefixes:
+            msg = f"key {'.'.join(path)!r} already used as a dotted-key prefix"
             raise self._error(
-                f"key {'.'.join(path)!r} already used as a dotted-key prefix",
+                msg,
                 at=self._pos,
             )
         # Each proper prefix of ``path`` becomes an implicit dotted-key
@@ -368,8 +380,9 @@ class _Parser:
         for i in range(1, len(path)):
             sub = path[:i]
             if sub in self._current_value_paths:
+                msg = f"key {'.'.join(sub)!r} already defined as a value"
                 raise self._error(
-                    f"key {'.'.join(sub)!r} already defined as a value",
+                    msg,
                     at=self._pos,
                 )
             self._current_table_prefixes.add(sub)
@@ -418,26 +431,31 @@ class _Parser:
         if allow_multiline and self._starts_with('"""'):
             return self._parse_ml_basic_string()
         if self._peek() != '"':
-            raise self._error("expected '\"' to start basic string")
+            msg = "expected '\"' to start basic string"
+            raise self._error(msg)
         self._advance(1)
         out: list[str] = []
         while True:
             if self._eof():
-                raise self._error("unterminated basic string")
+                msg = "unterminated basic string"
+                raise self._error(msg)
             ch = self._peek()
             if ch == '"':
                 self._advance(1)
                 return StringNode(raw="", value="".join(out), style="basic")
             if ch == "\n" or (ch == "\r" and self._peek(1) == "\n"):
-                raise self._error("newline in basic string")
+                msg = "newline in basic string"
+                raise self._error(msg)
             if ch == "\\":
                 out.append(self._parse_escape(multiline=False))
                 continue
             cp = ord(ch)
             if cp <= 0x1F and cp != 0x09:
-                raise self._error(f"invalid control character U+{cp:04X} in string")
+                msg = f"invalid control character U+{cp:04X} in string"
+                raise self._error(msg)
             if cp == 0x7F:
-                raise self._error("invalid control character U+007F in string")
+                msg = "invalid control character U+007F in string"
+                raise self._error(msg)
             out.append(ch)
             self._pos += 1
 
@@ -452,7 +470,8 @@ class _Parser:
         out: list[str] = []
         while True:
             if self._eof():
-                raise self._error("unterminated multi-line basic string")
+                msg = "unterminated multi-line basic string"
+                raise self._error(msg)
             if self._starts_with('"""'):
                 # Up to two extra trailing quotes are allowed inside.
                 self._advance(3)
@@ -490,7 +509,8 @@ class _Parser:
                 continue
             if ch == "\r":
                 if self._peek(1) != "\n":
-                    raise self._error("stray carriage return in string")
+                    msg = "stray carriage return in string"
+                    raise self._error(msg)
                 out.append("\r\n")
                 self._pos += 2
                 continue
@@ -500,9 +520,11 @@ class _Parser:
                 continue
             cp = ord(ch)
             if cp <= 0x1F and cp != 0x09:
-                raise self._error(f"invalid control character U+{cp:04X} in string")
+                msg = f"invalid control character U+{cp:04X} in string"
+                raise self._error(msg)
             if cp == 0x7F:
-                raise self._error("invalid control character U+007F in string")
+                msg = "invalid control character U+007F in string"
+                raise self._error(msg)
             out.append(ch)
             self._pos += 1
 
@@ -510,24 +532,29 @@ class _Parser:
         if allow_multiline and self._starts_with("'''"):
             return self._parse_ml_literal_string()
         if self._peek() != "'":
-            raise self._error("expected \"'\" to start literal string")
+            msg = "expected \"'\" to start literal string"
+            raise self._error(msg)
         self._advance(1)
         start = self._pos
         while True:
             if self._eof():
-                raise self._error("unterminated literal string")
+                msg = "unterminated literal string"
+                raise self._error(msg)
             ch = self._peek()
             if ch == "'":
                 value = self._src[start : self._pos]
                 self._advance(1)
                 return StringNode(raw="", value=value, style="literal")
             if ch == "\n" or (ch == "\r" and self._peek(1) == "\n"):
-                raise self._error("newline in literal string")
+                msg = "newline in literal string"
+                raise self._error(msg)
             cp = ord(ch)
             if cp <= 0x1F and cp != 0x09:
-                raise self._error(f"invalid control character U+{cp:04X} in string")
+                msg = f"invalid control character U+{cp:04X} in string"
+                raise self._error(msg)
             if cp == 0x7F:
-                raise self._error("invalid control character U+007F in string")
+                msg = "invalid control character U+007F in string"
+                raise self._error(msg)
             self._pos += 1
 
     def _parse_ml_literal_string(self) -> StringNode:
@@ -540,7 +567,8 @@ class _Parser:
         out: list[str] = []
         while True:
             if self._eof():
-                raise self._error("unterminated multi-line literal string")
+                msg = "unterminated multi-line literal string"
+                raise self._error(msg)
             if self._starts_with("'''"):
                 self._advance(3)
                 extras = 0
@@ -552,15 +580,18 @@ class _Parser:
             ch = self._peek()
             if ch == "\r":
                 if self._peek(1) != "\n":
-                    raise self._error("stray carriage return in string")
+                    msg = "stray carriage return in string"
+                    raise self._error(msg)
                 out.append("\r\n")
                 self._pos += 2
                 continue
             cp = ord(ch)
             if cp <= 0x1F and cp != 0x09 and cp != 0x0A:
-                raise self._error(f"invalid control character U+{cp:04X} in string")
+                msg = f"invalid control character U+{cp:04X} in string"
+                raise self._error(msg)
             if cp == 0x7F:
-                raise self._error("invalid control character U+007F in string")
+                msg = "invalid control character U+007F in string"
+                raise self._error(msg)
             out.append(ch)
             self._pos += 1
 
@@ -585,19 +616,23 @@ class _Parser:
             return self._parse_unicode_escape(4)
         if ch == "U":
             return self._parse_unicode_escape(8)
-        raise self._error(f"invalid escape sequence: \\{ch}", at=self._pos - 2)
+        msg = f"invalid escape sequence: \\{ch}"
+        raise self._error(msg, at=self._pos - 2)
 
     def _parse_unicode_escape(self, n: int) -> str:
         if self._pos + n > len(self._src):
-            raise self._error(f"truncated unicode escape; expected {n} hex digits")
+            msg = f"truncated unicode escape; expected {n} hex digits"
+            raise self._error(msg)
         hex_str = self._src[self._pos : self._pos + n]
         for c in hex_str:
             if c not in _HEX_DIGITS:
-                raise self._error(f"invalid hex digit {c!r} in unicode escape")
+                msg = f"invalid hex digit {c!r} in unicode escape"
+                raise self._error(msg)
         self._pos += n
         cp = int(hex_str, 16)
         if cp > 0x10FFFF or 0xD800 <= cp <= 0xDFFF:
-            raise self._error(f"invalid unicode scalar U+{cp:04X}")
+            msg = f"invalid unicode scalar U+{cp:04X}"
+            raise self._error(msg)
         return chr(cp)
 
     # --- bool ---------------------------------------------------------
@@ -609,7 +644,8 @@ class _Parser:
         if self._starts_with("false"):
             self._advance(5)
             return BoolNode(raw="false", value=False)
-        raise self._error("expected boolean")
+        msg = "expected boolean"
+        raise self._error(msg)
 
     # --- numbers and date-times --------------------------------------
 
@@ -619,13 +655,14 @@ class _Parser:
         end = self._scan_value_end(start)
         token = self._src[start:end]
         if not token:
-            raise self._error(f"expected value, got {self._peek()!r}")
+            msg = f"expected value, got {self._peek()!r}"
+            raise self._error(msg)
 
         # Special floats.
         if token in ("inf", "+inf"):
             self._pos = end
             return FloatNode(raw=token, value=float("inf"))
-        if token == "-inf":
+        if token == "-inf":  # noqa: S105 - "token" here is a lexical token, not a credential
             self._pos = end
             return FloatNode(raw=token, value=float("-inf"))
         if token in ("nan", "+nan", "-nan"):
@@ -679,15 +716,18 @@ class _Parser:
             prefix = body[:2]
             digits = body[2:]
             if not digits or digits.startswith("_") or digits.endswith("_"):
-                raise self._error(f"invalid integer {token!r}", at=at)
+                msg = f"invalid integer {token!r}"
+                raise self._error(msg, at=at)
             allowed = {"0x": _HEX_DIGITS, "0o": _OCT_DIGITS, "0b": _BIN_DIGITS}[prefix]
             for c in digits:
                 if c == "_":
                     continue
                 if c not in allowed:
-                    raise self._error(f"invalid digit {c!r} in {token!r}", at=at)
+                    msg = f"invalid digit {c!r} in {token!r}"
+                    raise self._error(msg, at=at)
             if "__" in digits:
-                raise self._error(f"consecutive underscores in {token!r}", at=at)
+                msg = f"consecutive underscores in {token!r}"
+                raise self._error(msg, at=at)
             base = {"0x": 16, "0o": 8, "0b": 2}[prefix]
             value = int(digits.replace("_", ""), base)
             style_map: dict[str, IntStyle] = {"0x": "hex", "0o": "oct", "0b": "bin"}
@@ -699,17 +739,22 @@ class _Parser:
             sign = body[0]
             body = body[1:]
         if not body:
-            raise self._error(f"invalid integer {token!r}", at=at)
+            msg = f"invalid integer {token!r}"
+            raise self._error(msg, at=at)
         if body.startswith("_") or body.endswith("_"):
-            raise self._error(f"invalid integer {token!r}", at=at)
+            msg = f"invalid integer {token!r}"
+            raise self._error(msg, at=at)
         if "__" in body:
-            raise self._error(f"consecutive underscores in {token!r}", at=at)
+            msg = f"consecutive underscores in {token!r}"
+            raise self._error(msg, at=at)
         # Leading zero rule: no leading zeros except for the value 0 itself.
         digits_only = body.replace("_", "")
         if not digits_only.isdigit():
-            raise self._error(f"invalid integer {token!r}", at=at)
+            msg = f"invalid integer {token!r}"
+            raise self._error(msg, at=at)
         if len(digits_only) > 1 and digits_only.startswith("0"):
-            raise self._error(f"leading zeros are not allowed in {token!r}", at=at)
+            msg = f"leading zeros are not allowed in {token!r}"
+            raise self._error(msg, at=at)
         value = int(sign + digits_only)
         return IntegerNode(raw=token, value=value, style="dec")
 
@@ -720,9 +765,11 @@ class _Parser:
             sign = body[0]
             body = body[1:]
         if "__" in body:
-            raise self._error(f"consecutive underscores in {token!r}", at=at)
+            msg = f"consecutive underscores in {token!r}"
+            raise self._error(msg, at=at)
         if body.startswith("_") or body.endswith("_") or "._" in body or "_." in body:
-            raise self._error(f"misplaced underscore in {token!r}", at=at)
+            msg = f"misplaced underscore in {token!r}"
+            raise self._error(msg, at=at)
 
         # Validate structure manually; ``float`` accepts forms TOML doesn't.
         norm = body.replace("_", "")
@@ -736,36 +783,45 @@ class _Parser:
             mantissa = norm[:exp_pos]
             exponent = norm[exp_pos + 1 :]
             if not exponent or (exponent[0] in "+-" and len(exponent) == 1):
-                raise self._error(f"invalid float exponent in {token!r}", at=at)
+                msg = f"invalid float exponent in {token!r}"
+                raise self._error(msg, at=at)
             if exponent[0] in "+-":
                 exponent = exponent[1:]
             if not exponent.isdigit():
-                raise self._error(f"invalid float exponent in {token!r}", at=at)
+                msg = f"invalid float exponent in {token!r}"
+                raise self._error(msg, at=at)
         else:
             mantissa = norm
 
         if "." in mantissa:
             int_part, _, frac_part = mantissa.partition(".")
             if not int_part or not frac_part:
-                raise self._error(f"invalid float {token!r}", at=at)
+                msg = f"invalid float {token!r}"
+                raise self._error(msg, at=at)
             if (
                 not int_part.lstrip("0").isdigit()
                 and int_part != "0"
                 and not int_part.isdigit()
             ):
-                raise self._error(f"invalid float {token!r}", at=at)
+                msg = f"invalid float {token!r}"
+                raise self._error(msg, at=at)
             if not int_part.isdigit() or not frac_part.isdigit():
-                raise self._error(f"invalid float {token!r}", at=at)
+                msg = f"invalid float {token!r}"
+                raise self._error(msg, at=at)
             if len(int_part) > 1 and int_part.startswith("0"):
-                raise self._error(f"leading zeros not allowed in float {token!r}", at=at)
+                msg = f"leading zeros not allowed in float {token!r}"
+                raise self._error(msg, at=at)
         else:
             if not mantissa.isdigit():
-                raise self._error(f"invalid float {token!r}", at=at)
+                msg = f"invalid float {token!r}"
+                raise self._error(msg, at=at)
             if len(mantissa) > 1 and mantissa.startswith("0"):
-                raise self._error(f"leading zeros not allowed in float {token!r}", at=at)
+                msg = f"leading zeros not allowed in float {token!r}"
+                raise self._error(msg, at=at)
             if exp_pos == -1:
                 # No '.' and no 'e': not a float.
-                raise self._error(f"invalid float {token!r}", at=at)
+                msg = f"invalid float {token!r}"
+                raise self._error(msg, at=at)
 
         value = float(sign + norm)
         return FloatNode(raw=token, value=value)
@@ -806,12 +862,14 @@ class _Parser:
             try:
                 value = self._parse_time_text(text)
             except ValueError as exc:
-                raise self._error(f"invalid time {text!r}: {exc}", at=at) from exc
+                msg = f"invalid time {text!r}: {exc}"
+                raise self._error(msg, at=at) from exc
             return DateTimeNode(raw=raw, value=value, kind="local-time")
 
         # Date or datetime.
         if len(text) < 10 or text[4] != "-" or text[7] != "-":
-            raise self._error(f"invalid date/datetime {text!r}", at=at)
+            msg = f"invalid date/datetime {text!r}"
+            raise self._error(msg, at=at)
         date_part = text[:10]
         try:
             year = int(date_part[:4])
@@ -819,13 +877,15 @@ class _Parser:
             day = int(date_part[8:10])
             d = date(year, month, day)
         except ValueError as exc:
-            raise self._error(f"invalid date {date_part!r}: {exc}", at=at) from exc
+            msg = f"invalid date {date_part!r}: {exc}"
+            raise self._error(msg, at=at) from exc
 
         rest = text[10:]
         if not rest:
             return DateTimeNode(raw=raw, value=d, kind="local-date")
         if rest[0] not in ("T", "t", " "):
-            raise self._error(f"expected date/time separator, got {rest[0]!r}", at=at)
+            msg = f"expected date/time separator, got {rest[0]!r}"
+            raise self._error(msg, at=at)
         time_part = rest[1:]
         # Split off optional offset.
         offset_pos = -1
@@ -837,7 +897,8 @@ class _Parser:
             try:
                 t = self._parse_time_text(time_part)
             except ValueError as exc:
-                raise self._error(f"invalid time {time_part!r}: {exc}", at=at) from exc
+                msg = f"invalid time {time_part!r}: {exc}"
+                raise self._error(msg, at=at) from exc
             return DateTimeNode(
                 raw=raw,
                 value=datetime.combine(d, t),
@@ -847,13 +908,15 @@ class _Parser:
             t = self._parse_time_text(time_part[:offset_pos])
             tz = self._parse_offset(time_part[offset_pos:])
         except ValueError as exc:
-            raise self._error(f"invalid datetime {text!r}: {exc}", at=at) from exc
+            msg = f"invalid datetime {text!r}: {exc}"
+            raise self._error(msg, at=at) from exc
         dt = datetime.combine(d, t).replace(tzinfo=tz)
         return DateTimeNode(raw=raw, value=dt, kind="offset-datetime")
 
     def _parse_time_text(self, text: str) -> time:
         if len(text) < 8 or text[2] != ":" or text[5] != ":":
-            raise ValueError(f"bad time format: {text!r}")
+            msg = f"bad time format: {text!r}"
+            raise ValueError(msg)
         hh = int(text[:2])
         mm = int(text[3:5])
         ss = int(text[6:8])
@@ -861,10 +924,12 @@ class _Parser:
         usec = 0
         if rest:
             if rest[0] != ".":
-                raise ValueError(f"bad fractional seconds in {text!r}")
+                msg = f"bad fractional seconds in {text!r}"
+                raise ValueError(msg)
             frac = rest[1:]
             if not frac or not frac.isdigit():
-                raise ValueError(f"bad fractional seconds in {text!r}")
+                msg = f"bad fractional seconds in {text!r}"
+                raise ValueError(msg)
             # Truncate to 6 digits (microsecond precision) per TOML 1.0.
             digits = (frac + "000000")[:6]
             usec = int(digits)
@@ -874,12 +939,14 @@ class _Parser:
         if text in ("Z", "z"):
             return UTC
         if len(text) != 6 or text[0] not in "+-" or text[3] != ":":
-            raise ValueError(f"bad timezone offset: {text!r}")
+            msg = f"bad timezone offset: {text!r}"
+            raise ValueError(msg)
         sign = 1 if text[0] == "+" else -1
         hh = int(text[1:3])
         mm = int(text[4:6])
         if hh > 23 or mm > 59:
-            raise ValueError(f"timezone offset out of range: {text!r}")
+            msg = f"timezone offset out of range: {text!r}"
+            raise ValueError(msg)
         delta = timedelta(hours=hh, minutes=mm) * sign
         return timezone(delta)
 
@@ -904,7 +971,8 @@ class _Parser:
                 has_comma = True
                 post_comma = self._consume_array_trivia()
             elif self._peek() != "]":
-                raise self._error(f"expected ',' or ']' in array, got {self._peek()!r}")
+                msg = f"expected ',' or ']' in array, got {self._peek()!r}"
+                raise self._error(msg)
             node.items.append(
                 ArrayItem(
                     leading=leading,
@@ -942,12 +1010,14 @@ class _Parser:
         while True:
             key = self._parse_key()
             if key.path in seen:
-                raise self._error(f"duplicate key {'.'.join(key.path)!r} in inline table")
+                msg = f"duplicate key {'.'.join(key.path)!r} in inline table"
+                raise self._error(msg)
             for i in range(1, len(key.path) + 1):
                 seen.add(key.path[:i])
             pre_eq = self._consume_inline_ws()
             if self._peek() != "=":
-                raise self._error(f"expected '=' in inline table, got {self._peek()!r}")
+                msg = f"expected '=' in inline table, got {self._peek()!r}"
+                raise self._error(msg)
             self._advance(1)
             post_eq = self._consume_inline_ws()
             value = self._parse_value()
@@ -959,8 +1029,9 @@ class _Parser:
                 has_comma = True
                 post_comma = self._consume_inline_ws()
             elif self._peek() != "}":
+                msg = f"expected ',' or '}}' in inline table, got {self._peek()!r}"
                 raise self._error(
-                    f"expected ',' or '}}' in inline table, got {self._peek()!r}",
+                    msg,
                 )
             node.entries.append(
                 InlineTableEntry(
@@ -981,7 +1052,8 @@ class _Parser:
             leading = Trivia()
             # consumed as post_comma; following key starts after ws.
             if self._peek() == "}":
-                raise self._error("trailing comma not allowed in inline table (TOML 1.0)")
+                msg = "trailing comma not allowed in inline table (TOML 1.0)"
+                raise self._error(msg)
 
 
 # Re-export convenience.
