@@ -7,13 +7,13 @@ A fast, ergonomic, format-preserving TOML parser and writer for Python.
 
 ## Why?
 
-The Python ecosystem already has:
+The standard library's `tomllib` (and its backport `tomli`) is fast but
+read-only — round-tripping through it discards comments, whitespace,
+string style, and number formatting. That makes it unsuitable for any
+tool that wants to *edit* a TOML file in place: linters, formatters,
+package managers bumping a dependency, codemods, and so on.
 
-- `tomllib` / `tomli` — read-only, fast, but discards comments/formatting.
-- `tomlkit` — preserves formatting, but is slow and its wrapper-object API
-  surprises callers who expect plain dict semantics.
-
-`toml-edit` aims for the best of both:
+`toml-edit` fills that gap:
 
 - **Format-preserving** round-trips (whitespace, comments, string style,
   number formatting) — byte-exact for unmodified input.
@@ -25,21 +25,6 @@ The Python ecosystem already has:
 - **Pure Python**, fully type-annotated (`mypy --strict`, `py.typed`),
   no native build step, zero runtime dependencies.
 - **TOML 1.0.0** and **TOML 1.1.0** supported.
-
-## Performance
-
-`toml-edit` is a hand-written recursive-descent parser; on a typical
-`pyproject.toml` it parses **~8× faster than `tomlkit`** and round-trips
-**~7× faster** while still preserving every byte of formatting:
-
-```
-Workload                              toml_edit (us)   tomlkit (us)    speedup
-------------------------------------------------------------------------
-pyproject.toml      parse                 1041.3         8456.6      8.12x
-pyproject.toml      parse+dump            1275.4         8598.1      6.74x
-```
-
-Run `python benches/bench_vs_tomlkit.py` to reproduce on your machine.
 
 ## Install
 

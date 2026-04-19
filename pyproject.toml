@@ -48,7 +48,6 @@ dev = [
   "pytest-cov>=5",
   "hypothesis>=6",
   "mypy>=1.11",
-  "tomlkit>=0.13",  # for differential/benchmark tests only
 ]
 
 [build-system]
@@ -96,10 +95,6 @@ enable_error_code = [
   "truthy-iterable",
   "unused-awaitable",
 ]
-
-[[tool.mypy.overrides]]
-module = ["tomlkit.*"]
-ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 100
