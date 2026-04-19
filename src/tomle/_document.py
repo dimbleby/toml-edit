@@ -301,7 +301,7 @@ class _DottedInlineSubTable(Table):
         order: list[str] = []
         terminals: dict[str, ValueNode] = {}
         for path, value in self._entries:
-            if len(path) <= self._depth:
+            if len(path) <= self._depth + 1:
                 terminals[path[-1]] = value
                 if path[-1] not in order:
                     order.append(path[-1])
@@ -750,7 +750,7 @@ class _DottedKvSubTable(Table):
         terminals: dict[str, KeyValueNode] = {}
         for entry in self._entries:
             path = entry.key.path
-            if len(path) == self._depth:
+            if len(path) == self._depth + 1:
                 terminals[path[-1]] = entry
                 if path[-1] not in order:
                     order.append(path[-1])

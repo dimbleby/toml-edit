@@ -770,6 +770,9 @@ class _Parser:
         if body.startswith("_") or body.endswith("_") or "._" in body or "_." in body:
             msg = f"misplaced underscore in {token!r}"
             raise self._error(msg, at=at)
+        if "_e" in body or "e_" in body or "_E" in body or "E_" in body:
+            msg = f"misplaced underscore in {token!r}"
+            raise self._error(msg, at=at)
 
         # Validate structure manually; ``float`` accepts forms TOML doesn't.
         norm = body.replace("_", "")
