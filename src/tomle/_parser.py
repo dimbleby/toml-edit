@@ -1169,13 +1169,23 @@ class _Parser:
         return DateTimeNode(raw=raw, value=dt, kind="offset-datetime")
 
     def _parse_time_text(self, text: str) -> time:
-        if len(text) < 8 or text[2] != ":" or text[5] != ":":
+        # TOML 1.1: seconds are optional; "HH:MM" defaults to ":00".
+        if len(text) < 5 or text[2] != ":":
             msg = f"bad time format: {text!r}"
             raise ValueError(msg)
         hh = int(text[:2])
         mm = int(text[3:5])
-        ss = int(text[6:8])
-        rest = text[8:]
+        rest = text[5:]
+        if not rest:
+            return time(hh, mm, 0, 0)
+        if rest[0] != ":":
+            msg = f"bad time format: {text!r}"
+            raise ValueError(msg)
+        if len(rest) < 3:
+            msg = f"bad seconds in {text!r}"
+            raise ValueError(msg)
+        ss = int(rest[1:3])
+        rest = rest[3:]
         usec = 0
         if rest:
             if rest[0] != ".":
@@ -1185,7 +1195,7 @@ class _Parser:
             if not frac or not frac.isdigit():
                 msg = f"bad fractional seconds in {text!r}"
                 raise ValueError(msg)
-            # Truncate to 6 digits (microsecond precision) per TOML 1.0.
+            # Truncate to 6 digits (microsecond precision).
             digits = (frac + "000000")[:6]
             usec = int(digits)
         return time(hh, mm, ss, usec)

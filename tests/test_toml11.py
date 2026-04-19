@@ -7,6 +7,8 @@ explicitly because that is the whole point of this library.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, time, timedelta
+
 import pytest
 
 import tomle
@@ -92,3 +94,58 @@ def test_e_does_not_apply_to_literal_strings() -> None:
     doc = tomle.parse(src)
     assert doc["a"] == "\\e"
     assert tomle.dumps(doc) == src
+
+
+# ---------------------------------------------------------------------------
+# Optional seconds in datetime / time
+# ---------------------------------------------------------------------------
+
+
+def test_local_time_no_seconds_decodes() -> None:
+    doc = tomle.parse("t = 07:32\n")
+    assert doc["t"] == time(7, 32, 0)
+
+
+def test_local_time_no_seconds_round_trips() -> None:
+    src = "t = 07:32\n"
+    assert tomle.dumps(tomle.parse(src)) == src
+
+
+def test_local_datetime_no_seconds() -> None:
+    src = "ldt = 1979-05-27T07:32\n"
+    doc = tomle.parse(src)
+    # Local datetime carries no tz — equality with a naive datetime is fine.
+    assert doc["ldt"] == datetime(1979, 5, 27, 7, 32, 0)  # noqa: DTZ001
+    assert tomle.dumps(doc) == src
+
+
+def test_offset_datetime_no_seconds_z() -> None:
+    src = "odt = 1979-05-27 07:32Z\n"
+    doc = tomle.parse(src)
+    assert doc["odt"] == datetime(1979, 5, 27, 7, 32, 0, tzinfo=UTC)
+    assert tomle.dumps(doc) == src
+
+
+def test_offset_datetime_no_seconds_explicit_offset() -> None:
+    src = "odt = 1979-05-27 07:32-07:00\n"
+    doc = tomle.parse(src)
+    assert tomle.dumps(doc) == src
+    val = doc["odt"]
+    assert isinstance(val, datetime)
+    assert val.utcoffset() == timedelta(hours=-7)
+
+
+def test_legacy_full_seconds_still_parse() -> None:
+    src = "t = 07:32:15\n"
+    assert tomle.dumps(tomle.parse(src)) == src
+
+
+def test_partial_seconds_form_rejected() -> None:
+    # "07:32:" (trailing colon, missing seconds digits) is malformed.
+    with pytest.raises(tomle.TOMLParseError):
+        tomle.parse("t = 07:32:\n")
+
+
+def test_too_short_time_rejected() -> None:
+    with pytest.raises(tomle.TOMLParseError):
+        tomle.parse("t = 07:3\n")

@@ -144,6 +144,10 @@ def _materialise(value: object) -> object:
 _TOML_1_1_VALID_NOW: frozenset[str] = frozenset({
     # \xHH is now a valid basic-string escape (was rejected in 1.0).
     "invalid/string/basic-byte-escapes.toml",
+    # Seconds are now optional in time / datetime values.
+    "invalid/datetime/no-secs.toml",
+    "invalid/local-datetime/no-secs.toml",
+    "invalid/local-time/no-secs.toml",
 })
 
 
