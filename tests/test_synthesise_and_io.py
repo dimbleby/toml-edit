@@ -34,12 +34,6 @@ def test_loads_is_alias_for_parse() -> None:
     assert tomle.dumps(a) == tomle.dumps(b) == src
 
 
-def test_load_from_text_stream() -> None:
-    fp = io.StringIO("port = 8080\n")
-    doc = tomle.load(fp)
-    assert doc["port"] == 8080
-
-
 def test_load_from_binary_stream() -> None:
     fp = io.BytesIO(b"name = 'ada'\n")
     doc = tomle.load(fp)
@@ -49,16 +43,39 @@ def test_load_from_binary_stream() -> None:
 def test_load_from_real_file_path(tmp_path: Path) -> None:
     p = tmp_path / "doc.toml"
     p.write_text("k = 42\n", encoding="utf-8")
-    with p.open("r", encoding="utf-8") as fp:
+    with p.open("rb") as fp:
         doc = tomle.load(fp)
     assert doc["k"] == 42
 
 
-def test_dump_writes_to_text_stream() -> None:
-    doc = tomle.parse("x = 1\n")
-    out = io.StringIO()
+def test_load_rejects_text_stream() -> None:
+    fp = io.StringIO("port = 8080\n")
+    with pytest.raises(TypeError, match="binary"):
+        tomle.load(fp)  # type: ignore[arg-type]
+
+
+def test_load_preserves_crlf_line_endings(tmp_path: Path) -> None:
+    p = tmp_path / "win.toml"
+    p.write_bytes(b"a = 1\r\nb = 2\r\n")
+    with p.open("rb") as fp:
+        doc = tomle.load(fp)
+    out = io.BytesIO()
     tomle.dump(doc, out)
-    assert out.getvalue() == "x = 1\n"
+    assert out.getvalue() == b"a = 1\r\nb = 2\r\n"
+
+
+def test_dump_writes_to_binary_stream() -> None:
+    doc = tomle.parse("x = 1\n")
+    out = io.BytesIO()
+    tomle.dump(doc, out)
+    assert out.getvalue() == b"x = 1\n"
+
+
+def test_dump_emits_utf8_for_non_ascii() -> None:
+    doc = tomle.parse("name = 'café'\n")
+    out = io.BytesIO()
+    tomle.dump(doc, out)
+    assert out.getvalue() == "name = 'café'\n".encode()
 
 
 # ---------------------------------------------------------------------------
