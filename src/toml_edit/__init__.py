@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from tomle._document import AoT, Array, Document, Table
-from tomle._errors import TOMLEditError, TOMLParseError
-from tomle._public import dump, dumps, load, loads, parse
+from toml_edit._document import AoT, Array, Document, Table
+from toml_edit._errors import TOMLEditError, TOMLParseError
+from toml_edit._public import dump, dumps, load, loads, parse
 
 __all__ = [
     "AoT",

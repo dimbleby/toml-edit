@@ -7,7 +7,7 @@ from textwrap import dedent
 
 import pytest
 
-import tomle
+import toml_edit
 
 # ---------------------------------------------------------------------------
 # Round-trip corpus: dumps(parse(s)) == s, byte-for-byte.
@@ -111,8 +111,8 @@ ROUND_TRIP_CORPUS: list[str] = [
 
 @pytest.mark.parametrize("src", ROUND_TRIP_CORPUS)
 def test_round_trip(src: str) -> None:
-    doc = tomle.parse(src)
-    assert tomle.dumps(doc) == src
+    doc = toml_edit.parse(src)
+    assert toml_edit.dumps(doc) == src
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +121,7 @@ def test_round_trip(src: str) -> None:
 
 
 def test_basic_value_access() -> None:
-    doc = tomle.parse(
+    doc = toml_edit.parse(
         dedent(
             """\
             title = "Example"
@@ -139,21 +139,21 @@ def test_basic_value_access() -> None:
     assert doc["ratio"] == 0.75
     assert doc["on"] is True
     owner = doc["owner"]
-    assert isinstance(owner, tomle.Table)
+    assert isinstance(owner, toml_edit.Table)
     assert owner["name"] == "Tom"
 
 
 def test_arrays_are_real_lists() -> None:
-    doc = tomle.parse("xs = [1, 2, 3]\n")
+    doc = toml_edit.parse("xs = [1, 2, 3]\n")
     xs = doc["xs"]
     assert isinstance(xs, list)
     assert xs == [1, 2, 3]
 
 
 def test_inline_table_access() -> None:
-    doc = tomle.parse("p = { x = 1, y = 2 }\n")
+    doc = toml_edit.parse("p = { x = 1, y = 2 }\n")
     p = doc["p"]
-    assert isinstance(p, tomle.Table)
+    assert isinstance(p, toml_edit.Table)
     assert dict(p) == {"x": 1, "y": 2}
 
 
@@ -167,14 +167,14 @@ def test_nested_tables_and_dotted_keys() -> None:
         x = 2
         """,
     )
-    doc = tomle.parse(src)
+    doc = toml_edit.parse(src)
     a = doc["a"]
-    assert isinstance(a, tomle.Table)
+    assert isinstance(a, toml_edit.Table)
     assert a["x"] == 2
     b = a["b"]
-    assert isinstance(b, tomle.Table)
+    assert isinstance(b, toml_edit.Table)
     c = b["c"]
-    assert isinstance(c, tomle.Table)
+    assert isinstance(c, toml_edit.Table)
     assert c["v"] == 1
 
 
@@ -188,20 +188,20 @@ def test_array_of_tables() -> None:
         name = "Nail"
         """,
     )
-    doc = tomle.parse(src)
+    doc = toml_edit.parse(src)
     products = doc["products"]
     assert isinstance(products, list)
     assert len(products) == 2
     p0 = products[0]
     p1 = products[1]
-    assert isinstance(p0, tomle.Table)
-    assert isinstance(p1, tomle.Table)
+    assert isinstance(p0, toml_edit.Table)
+    assert isinstance(p1, toml_edit.Table)
     assert p0["name"] == "Hammer"
     assert p1["name"] == "Nail"
 
 
 def test_datetime_values() -> None:
-    doc = tomle.parse(
+    doc = toml_edit.parse(
         dedent(
             """\
             odt = 1979-05-27T07:32:00Z
@@ -237,23 +237,23 @@ def test_datetime_values() -> None:
     ],
 )
 def test_parse_errors(src: str) -> None:
-    with pytest.raises(tomle.TOMLParseError):
-        tomle.parse(src)
+    with pytest.raises(toml_edit.TOMLParseError):
+        toml_edit.parse(src)
 
 
 def test_deep_array_nesting_raises_parse_error_not_recursionerror() -> None:
     payload = "x = " + "[" * 500 + "1" + "]" * 500 + "\n"
-    with pytest.raises(tomle.TOMLParseError, match="nesting exceeds"):
-        tomle.parse(payload)
+    with pytest.raises(toml_edit.TOMLParseError, match="nesting exceeds"):
+        toml_edit.parse(payload)
 
 
 def test_deep_inline_table_nesting_raises_parse_error() -> None:
     payload = "x = " + "{a=" * 500 + "1" + "}" * 500 + "\n"
-    with pytest.raises(tomle.TOMLParseError, match="nesting exceeds"):
-        tomle.parse(payload)
+    with pytest.raises(toml_edit.TOMLParseError, match="nesting exceeds"):
+        toml_edit.parse(payload)
 
 
 def test_moderate_array_nesting_still_parses() -> None:
     payload = "x = " + "[" * 50 + "1" + "]" * 50 + "\n"
-    doc = tomle.parse(payload)
-    assert tomle.dumps(doc) == payload
+    doc = toml_edit.parse(payload)
+    assert toml_edit.dumps(doc) == payload

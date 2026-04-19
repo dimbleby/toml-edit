@@ -2,7 +2,7 @@
 
 This module exposes the public mapping/sequence types that users
 interact with. It implements both the read path and the structural
-mutation API on top of the physical CST defined in :mod:`tomle._nodes`.
+mutation API on top of the physical CST defined in :mod:`toml_edit._nodes`.
 """
 
 from __future__ import annotations
@@ -15,8 +15,8 @@ from typing import TYPE_CHECKING, Protocol, SupportsIndex, TypeAlias, overload
 
 from typing_extensions import override
 
-from tomle._errors import TOMLEditError
-from tomle._nodes import (
+from toml_edit._errors import TOMLEditError
+from toml_edit._nodes import (
     ArrayNode,
     BoolNode,
     CommentNode,
@@ -34,13 +34,13 @@ from tomle._nodes import (
     Trivia,
     WhitespaceNode,
 )
-from tomle._synthesise import make_key_part, make_keyvalue_node, value_to_node
+from toml_edit._synthesise import make_key_part, make_keyvalue_node, value_to_node
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Sequence
     from typing import Self
 
-    from tomle._nodes import (
+    from toml_edit._nodes import (
         ArrayItem,
         DocumentNode,
         TriviaPiece,
@@ -396,7 +396,7 @@ class Table(MutableMapping[str, TomlValue]):
 
     Subclasses provide ``_items()`` which yields ``(key, value)`` pairs
     in document order. The read path is wired up; mutation raises
-    :class:`tomle.TOMLEditError` until the next implementation phase.
+    :class:`toml_edit.TOMLEditError` until the next implementation phase.
     """
 
     __slots__ = ()
@@ -669,7 +669,7 @@ class _InlineTable(Table):
 
 
 def _make_simple_key_for_inline(name: str) -> Key:
-    from tomle._synthesise import make_simple_key  # noqa: PLC0415
+    from toml_edit._synthesise import make_simple_key  # noqa: PLC0415
 
     return make_simple_key(name)
 
@@ -1403,7 +1403,7 @@ class Array(list[TomlValue]):
 
     @staticmethod
     def _make_item(value: TomlValue, *, with_comma: bool) -> ArrayItem:
-        from tomle._nodes import ArrayItem  # noqa: PLC0415
+        from toml_edit._nodes import ArrayItem  # noqa: PLC0415
 
         return ArrayItem(
             leading=Trivia([WhitespaceNode(" ")]),

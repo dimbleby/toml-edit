@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Quick benchmark: tomle vs tomlkit on parse/dump round-trips.
+"""Quick benchmark: toml_edit vs tomlkit on parse/dump round-trips.
 
 Run as a script: ``python benches/bench_vs_tomlkit.py``.
 Not part of the test suite; not required to be installed in CI.
@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 import tomlkit
 
-import tomle
+import toml_edit
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -71,17 +71,17 @@ def main() -> None:
 
     print(f"Corpus size: synthetic={len(src):,} bytes, pyproject={len(pyproject_src):,} bytes")
     print()
-    print(f"{'Workload':<35} {'tomle (us)':>12} {'tomlkit (us)':>14} {'speedup':>10}")
+    print(f"{'Workload':<35} {'toml_edit (us)':>12} {'tomlkit (us)':>14} {'speedup':>10}")
     print("-" * 72)
 
     for label, payload in [("synthetic", src), ("pyproject.toml", pyproject_src)]:
-        for op_name, tomle_fn, tk_fn in [
-            ("parse", lambda p=payload: tomle.parse(p),
+        for op_name, te_fn, tk_fn in [
+            ("parse", lambda p=payload: toml_edit.parse(p),
                      lambda p=payload: tomlkit.parse(p)),
-            ("parse+dump", lambda p=payload: tomle.dumps(tomle.parse(p)),
+            ("parse+dump", lambda p=payload: toml_edit.dumps(toml_edit.parse(p)),
                           lambda p=payload: tomlkit.dumps(tomlkit.parse(p))),
         ]:
-            _, t_us = _bench("tomle", tomle_fn)
+            _, t_us = _bench("toml_edit", te_fn)
             _, k_us = _bench("tomlkit", tk_fn)
             speedup = k_us / t_us if t_us > 0 else float("inf")
             print(f"{label:<20}{op_name:<15} {t_us:>12.1f} {k_us:>14.1f} {speedup:>9.2f}x")

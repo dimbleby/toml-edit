@@ -15,8 +15,8 @@ from copy import deepcopy
 from datetime import date, datetime, time
 from typing import TYPE_CHECKING
 
-from tomle._errors import TOMLEditError
-from tomle._nodes import (
+from toml_edit._errors import TOMLEditError
+from toml_edit._nodes import (
     ArrayItem,
     ArrayNode,
     BoolNode,
@@ -37,8 +37,8 @@ from tomle._nodes import (
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
-    from tomle._document import TomlValue
-    from tomle._nodes import DateLikeKind, ValueNode
+    from toml_edit._document import TomlValue
+    from toml_edit._nodes import DateLikeKind, ValueNode
 
 
 _BARE_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -180,7 +180,7 @@ def value_to_node(value: object) -> ValueNode:
     union.
     """
     # Local imports avoid a circular dependency.
-    from tomle._document import AoT, Array, Table  # noqa: PLC0415
+    from toml_edit._document import AoT, Array, Table  # noqa: PLC0415
 
     if isinstance(value, Array):
         return deepcopy(value._node)  # noqa: SLF001

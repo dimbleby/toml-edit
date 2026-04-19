@@ -1,4 +1,4 @@
-"""TOML 1.0.0 parser producing a :mod:`tomle._nodes` CST.
+"""TOML 1.0.0 parser producing a :mod:`toml_edit._nodes` CST.
 
 Hand-written recursive-descent over a ``str`` plus an integer cursor.
 Bulk character runs (whitespace, bare keys, string bodies, comment
@@ -8,7 +8,7 @@ a single C call rather than a Python-level character loop.
 The parser is responsible *only* for producing the physical CST. Logical
 table semantics (duplicate-key detection across discontiguous headers,
 dotted-key conflicts, etc.) are enforced here; the read-side wrappers
-in :mod:`tomle._document` rely on this validation having happened.
+in :mod:`toml_edit._document` rely on this validation having happened.
 """
 
 from __future__ import annotations
@@ -17,8 +17,8 @@ import re
 from datetime import UTC, date, datetime, time, timedelta, timezone
 from typing import TYPE_CHECKING, Final
 
-from tomle._errors import TOMLParseError
-from tomle._nodes import (
+from toml_edit._errors import TOMLParseError
+from toml_edit._nodes import (
     ArrayItem,
     ArrayNode,
     BoolNode,
@@ -43,7 +43,7 @@ from tomle._nodes import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from tomle._nodes import HeaderKind, IntStyle, ValueNode
+    from toml_edit._nodes import HeaderKind, IntStyle, ValueNode
 
 _BARE_KEY_CHARS: Final[frozenset[str]] = frozenset(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-",

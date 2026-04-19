@@ -18,8 +18,8 @@ import tomllib
 
 import pytest
 
-import tomle
-from tomle import TOMLEditError
+import toml_edit
+from toml_edit import TOMLEditError
 
 
 def _reparses(src: str) -> dict[str, object]:
@@ -35,34 +35,34 @@ def _reparses(src: str) -> dict[str, object]:
 
 def test_table_with_sub_section_iter_includes_subtable() -> None:
     src = "[a]\nx = 1\n[a.sub]\ny = 2\n"
-    doc = tomle.parse(src)
+    doc = toml_edit.parse(src)
     a = doc["a"]
-    assert isinstance(a, tomle.Table)
+    assert isinstance(a, toml_edit.Table)
     assert a["x"] == 1
     sub = a["sub"]
-    assert isinstance(sub, tomle.Table)
+    assert isinstance(sub, toml_edit.Table)
     assert sub["y"] == 2
 
 
 def test_table_with_sub_section_modify_subtable_value() -> None:
     src = "[a]\nx = 1\n[a.sub]\ny = 2\n"
-    doc = tomle.parse(src)
+    doc = toml_edit.parse(src)
     a = doc["a"]
-    assert isinstance(a, tomle.Table)
+    assert isinstance(a, toml_edit.Table)
     sub = a["sub"]
-    assert isinstance(sub, tomle.Table)
+    assert isinstance(sub, toml_edit.Table)
     sub["y"] = 99
-    out = tomle.dumps(doc)
+    out = toml_edit.dumps(doc)
     assert out == "[a]\nx = 1\n[a.sub]\ny = 99\n"
 
 
 def test_table_with_sub_section_add_to_parent_appends_in_parent_block() -> None:
     src = "[a]\nx = 1\n[a.sub]\ny = 2\n"
-    doc = tomle.parse(src)
+    doc = toml_edit.parse(src)
     a = doc["a"]
-    assert isinstance(a, tomle.Table)
+    assert isinstance(a, toml_edit.Table)
     a["z"] = 3
-    out = tomle.dumps(doc)
+    out = toml_edit.dumps(doc)
     # New parent-level key must land in the [a] block, BEFORE [a.sub] —
     # putting it after would make it semantically belong to [a.sub] under
     # TOML's "headers terminate a section" rule.
@@ -77,9 +77,9 @@ def test_table_with_sub_section_add_to_parent_appends_in_parent_block() -> None:
 
 def test_dotted_key_table_read() -> None:
     src = "a.b = 1\na.c = 2\n"
-    doc = tomle.parse(src)
+    doc = toml_edit.parse(src)
     a = doc["a"]
-    assert isinstance(a, tomle.Table)
+    assert isinstance(a, toml_edit.Table)
     assert dict(a) == {"b": 1, "c": 2}
 
 
@@ -92,9 +92,9 @@ def test_dotted_key_table_set_via_subtable_raises() -> None:
     work lands.
     """
     src = "a.b = 1\na.c = 2\n"
-    doc = tomle.parse(src)
+    doc = toml_edit.parse(src)
     a = doc["a"]
-    assert isinstance(a, tomle.Table)
+    assert isinstance(a, toml_edit.Table)
     with pytest.raises(TOMLEditError):
         a["d"] = 3
 
@@ -106,29 +106,29 @@ def test_dotted_key_table_set_via_subtable_raises() -> None:
 
 def test_aot_basic_iteration() -> None:
     src = '[[users]]\nname = "alice"\n[[users]]\nname = "bob"\n'
-    doc = tomle.parse(src)
+    doc = toml_edit.parse(src)
     users = doc["users"]
-    assert isinstance(users, tomle.AoT)
+    assert isinstance(users, toml_edit.AoT)
     assert [u["name"] for u in users] == ["alice", "bob"]
 
 
 def test_aot_append_entry_via_dict() -> None:
     src = '[[users]]\nname = "alice"\n'
-    doc = tomle.parse(src)
+    doc = toml_edit.parse(src)
     users = doc["users"]
-    assert isinstance(users, tomle.AoT)
+    assert isinstance(users, toml_edit.AoT)
     users.append({"name": "bob"})
-    out = tomle.dumps(doc)
+    out = toml_edit.dumps(doc)
     assert _reparses(out) == {"users": [{"name": "alice"}, {"name": "bob"}]}
 
 
 def test_aot_modify_field_in_first_entry() -> None:
     src = '[[users]]\nname = "alice"\n[[users]]\nname = "bob"\n'
-    doc = tomle.parse(src)
+    doc = toml_edit.parse(src)
     users = doc["users"]
-    assert isinstance(users, tomle.AoT)
+    assert isinstance(users, toml_edit.AoT)
     users[0]["name"] = "ALICE"
-    out = tomle.dumps(doc)
+    out = toml_edit.dumps(doc)
     assert out == '[[users]]\nname = "ALICE"\n[[users]]\nname = "bob"\n'
 
 
@@ -138,11 +138,11 @@ def test_aot_modify_field_in_middle_entry() -> None:
         '[[users]]\nname = "b"\n'
         '[[users]]\nname = "c"\n'
     )
-    doc = tomle.parse(src)
+    doc = toml_edit.parse(src)
     users = doc["users"]
-    assert isinstance(users, tomle.AoT)
+    assert isinstance(users, toml_edit.AoT)
     users[1]["name"] = "B"
-    out = tomle.dumps(doc)
+    out = toml_edit.dumps(doc)
     assert (
         out
         == '[[users]]\nname = "a"\n[[users]]\nname = "B"\n[[users]]\nname = "c"\n'
@@ -157,17 +157,17 @@ def test_aot_entry_sub_section_read() -> None:
         "[[arr]]\nx = 10\n"
         "[arr.sub]\ny = 20\n"
     )
-    doc = tomle.parse(src)
+    doc = toml_edit.parse(src)
     arr = doc["arr"]
-    assert isinstance(arr, tomle.AoT)
+    assert isinstance(arr, toml_edit.AoT)
     assert len(arr) == 2
     assert arr[0]["x"] == 1
     sub0 = arr[0]["sub"]
-    assert isinstance(sub0, tomle.Table)
+    assert isinstance(sub0, toml_edit.Table)
     assert sub0["y"] == 2
     assert arr[1]["x"] == 10
     sub1 = arr[1]["sub"]
-    assert isinstance(sub1, tomle.Table)
+    assert isinstance(sub1, toml_edit.Table)
     assert sub1["y"] == 20
 
 
@@ -178,13 +178,13 @@ def test_aot_entry_sub_section_modify_value() -> None:
         "[[arr]]\nx = 10\n"
         "[arr.sub]\ny = 20\n"
     )
-    doc = tomle.parse(src)
+    doc = toml_edit.parse(src)
     arr = doc["arr"]
-    assert isinstance(arr, tomle.AoT)
+    assert isinstance(arr, toml_edit.AoT)
     sub = arr[1]["sub"]
-    assert isinstance(sub, tomle.Table)
+    assert isinstance(sub, toml_edit.Table)
     sub["y"] = 999
-    out = tomle.dumps(doc)
+    out = toml_edit.dumps(doc)
     assert out == (
         "[[arr]]\nx = 1\n"
         "[arr.sub]\ny = 2\n"
@@ -206,11 +206,11 @@ def test_aot_entry_sub_section_modify_value() -> None:
 
 def test_inline_table_modify_preserves_spacing() -> None:
     src = "owner = { name = 'tom', dob = 1979 }\n"
-    doc = tomle.parse(src)
+    doc = toml_edit.parse(src)
     owner = doc["owner"]
-    assert isinstance(owner, tomle.Table)
+    assert isinstance(owner, toml_edit.Table)
     owner["name"] = "tim"
-    out = tomle.dumps(doc)
+    out = toml_edit.dumps(doc)
     # Style of the replaced scalar regenerates as basic-quoted (default),
     # but surrounding spacing/comma trivia is preserved.
     assert out == 'owner = { name = "tim", dob = 1979 }\n'
@@ -218,23 +218,23 @@ def test_inline_table_modify_preserves_spacing() -> None:
 
 def test_inline_array_modify_preserves_brackets() -> None:
     src = "ports = [ 80, 443, 8080 ]\n"
-    doc = tomle.parse(src)
+    doc = toml_edit.parse(src)
     ports = doc["ports"]
-    assert isinstance(ports, tomle.Array)
+    assert isinstance(ports, toml_edit.Array)
     ports[1] = 444
-    out = tomle.dumps(doc)
+    out = toml_edit.dumps(doc)
     assert out == "ports = [ 80, 444, 8080 ]\n"
 
 
 def test_array_insert_then_pop_round_trips() -> None:
     src = "ports = [80, 443]\n"
-    doc = tomle.parse(src)
+    doc = toml_edit.parse(src)
     ports = doc["ports"]
-    assert isinstance(ports, tomle.Array)
+    assert isinstance(ports, toml_edit.Array)
     ports.insert(1, 8080)
     assert list(ports) == [80, 8080, 443]
     ports.pop(1)
-    out = tomle.dumps(doc)
+    out = toml_edit.dumps(doc)
     assert out == "ports = [80, 443]\n"
 
 
@@ -246,15 +246,15 @@ def test_array_insert_then_pop_round_trips() -> None:
 def test_cross_doc_table_assign_deep_clones() -> None:
     src1 = '[srv]\nhost = "a.example"\nport = 80\n'
     src2 = ""
-    a = tomle.parse(src1)
-    b = tomle.parse(src2)
+    a = toml_edit.parse(src1)
+    b = toml_edit.parse(src2)
     b["srv"] = a["srv"]
     # Mutating `a` must not affect `b`.
     a_srv = a["srv"]
-    assert isinstance(a_srv, tomle.Table)
+    assert isinstance(a_srv, toml_edit.Table)
     a_srv["port"] = 9999
-    out_a = tomle.dumps(a)
-    out_b = tomle.dumps(b)
+    out_a = toml_edit.dumps(a)
+    out_b = toml_edit.dumps(b)
     assert _reparses(out_a) == {"srv": {"host": "a.example", "port": 9999}}
     assert _reparses(out_b) == {"srv": {"host": "a.example", "port": 80}}
 
@@ -262,27 +262,27 @@ def test_cross_doc_table_assign_deep_clones() -> None:
 def test_cross_doc_aot_assign_deep_clones() -> None:
     src1 = '[[users]]\nname = "alice"\n[[users]]\nname = "bob"\n'
     src2 = ""
-    a = tomle.parse(src1)
-    b = tomle.parse(src2)
+    a = toml_edit.parse(src1)
+    b = toml_edit.parse(src2)
     b["users"] = a["users"]
     a_users = a["users"]
-    assert isinstance(a_users, tomle.AoT)
+    assert isinstance(a_users, toml_edit.AoT)
     a_users[0]["name"] = "MUT"
-    assert _reparses(tomle.dumps(a))["users"][0]["name"] == "MUT"  # type: ignore[index]
-    assert _reparses(tomle.dumps(b))["users"][0]["name"] == "alice"  # type: ignore[index]
+    assert _reparses(toml_edit.dumps(a))["users"][0]["name"] == "MUT"  # type: ignore[index]
+    assert _reparses(toml_edit.dumps(b))["users"][0]["name"] == "alice"  # type: ignore[index]
 
 
 def test_cross_doc_array_assign_deep_clones() -> None:
     src1 = "ports = [80, 443]\n"
     src2 = ""
-    a = tomle.parse(src1)
-    b = tomle.parse(src2)
+    a = toml_edit.parse(src1)
+    b = toml_edit.parse(src2)
     b["ports"] = a["ports"]
     a_ports = a["ports"]
-    assert isinstance(a_ports, tomle.Array)
+    assert isinstance(a_ports, toml_edit.Array)
     a_ports.append(8080)
-    assert _reparses(tomle.dumps(a))["ports"] == [80, 443, 8080]
-    assert _reparses(tomle.dumps(b))["ports"] == [80, 443]
+    assert _reparses(toml_edit.dumps(a))["ports"] == [80, 443, 8080]
+    assert _reparses(toml_edit.dumps(b))["ports"] == [80, 443]
 
 
 # ---------------------------------------------------------------------------
@@ -299,18 +299,18 @@ def test_set_value_conflicting_with_existing_subsection_raises() -> None:
     here and refuse.
     """
     src = "[a]\nx = 1\n[a.b]\ny = 2\n"
-    doc = tomle.parse(src)
+    doc = toml_edit.parse(src)
     a = doc["a"]
-    assert isinstance(a, tomle.Table)
+    assert isinstance(a, toml_edit.Table)
     with pytest.raises(TOMLEditError):
         a["b"] = 99
 
 
 def test_set_value_conflicting_with_existing_aot_raises() -> None:
     src = '[a]\nx = 1\n[[a.items]]\nname = "first"\n'
-    doc = tomle.parse(src)
+    doc = toml_edit.parse(src)
     a = doc["a"]
-    assert isinstance(a, tomle.Table)
+    assert isinstance(a, toml_edit.Table)
     with pytest.raises(TOMLEditError):
         a["items"] = 5
 
@@ -332,18 +332,18 @@ def test_aot_entry_owned_scope_isolates_sibling_sub_sections() -> None:
         "[[arr]]\n"
         "[arr.sub]\nx = 2\n"
     )
-    doc = tomle.parse(src)
+    doc = toml_edit.parse(src)
     arr = doc["arr"]
-    assert isinstance(arr, tomle.AoT)
+    assert isinstance(arr, toml_edit.AoT)
     s0 = arr[0]["sub"]
     s1 = arr[1]["sub"]
-    assert isinstance(s0, tomle.Table)
-    assert isinstance(s1, tomle.Table)
+    assert isinstance(s0, toml_edit.Table)
+    assert isinstance(s1, toml_edit.Table)
     assert s0["x"] == 1
     assert s1["x"] == 2
     s0["x"] = 100
     assert s1["x"] == 2  # unchanged
-    out = tomle.dumps(doc)
+    out = toml_edit.dumps(doc)
     assert _reparses(out) == {
         "arr": [{"sub": {"x": 100}}, {"sub": {"x": 2}}]
     }

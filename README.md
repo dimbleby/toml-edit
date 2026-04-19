@@ -30,7 +30,7 @@ The Python ecosystem already has:
 **~7× faster** while still preserving every byte of formatting:
 
 ```
-Workload                              tomle (us)   tomlkit (us)    speedup
+Workload                              toml_edit (us)   tomlkit (us)    speedup
 ------------------------------------------------------------------------
 pyproject.toml      parse                 1041.3         8456.6      8.12x
 pyproject.toml      parse+dump            1275.4         8598.1      6.74x
@@ -47,15 +47,15 @@ pip install toml-edit
 ## Usage
 
 ```python
-import tomle
+import toml_edit
 
 with open("pyproject.toml") as f:
-    doc = tomle.load(f)
+    doc = toml_edit.load(f)
 
 doc["project"]["version"] = "0.2.0"
 doc["project"]["dependencies"].append("requests>=2")
 
-print(tomle.dumps(doc))   # comments and layout are preserved
+print(toml_edit.dumps(doc))   # comments and layout are preserved
 ```
 
 ## Status

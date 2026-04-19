@@ -7,7 +7,7 @@ import string
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-import tomle
+import toml_edit
 
 # ---------------------------------------------------------------------------
 # Strategies for safe TOML fragments (we generate values whose canonical
@@ -120,18 +120,18 @@ def _document(draw: st.DrawFn) -> str:
 @given(src=_document())
 def test_roundtrip_exact(src: str) -> None:
     """Parsing then dumping must reproduce the original source byte-for-byte."""
-    doc = tomle.parse(src)
-    assert tomle.dumps(doc) == src
+    doc = toml_edit.parse(src)
+    assert toml_edit.dumps(doc) == src
 
 
 @settings(max_examples=100, deadline=None)
 @given(src=_document())
 def test_roundtrip_idempotent(src: str) -> None:
     """A second parse/dump pass produces the same output as the first."""
-    doc1 = tomle.parse(src)
-    out1 = tomle.dumps(doc1)
-    doc2 = tomle.parse(out1)
-    out2 = tomle.dumps(doc2)
+    doc1 = toml_edit.parse(src)
+    out1 = toml_edit.dumps(doc1)
+    doc2 = toml_edit.parse(out1)
+    out2 = toml_edit.dumps(doc2)
     assert out1 == out2
 
 
@@ -156,4 +156,4 @@ _EDGE_CASES = [
 @given(src=st.sampled_from(_EDGE_CASES))
 @settings(max_examples=len(_EDGE_CASES), database=None)
 def test_edge_cases_roundtrip(src: str) -> None:
-    assert tomle.dumps(tomle.parse(src)) == src
+    assert toml_edit.dumps(toml_edit.parse(src)) == src

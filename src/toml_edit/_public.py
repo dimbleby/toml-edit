@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import IO
 
-from tomle._document import Document
-from tomle._parser import parse as _parse_to_cst
+from toml_edit._document import Document
+from toml_edit._parser import parse as _parse_to_cst
 
 
 def parse(text: str) -> Document:
@@ -37,7 +37,7 @@ def load(fp: IO[bytes]) -> Document:
     data = fp.read()
     if not isinstance(data, (bytes, bytearray)):
         msg = (  # type: ignore[unreachable]
-            "tomle.load expects a binary file (open with mode='rb'); "
+            "toml_edit.load expects a binary file (open with mode='rb'); "
             f"got a text stream returning {type(data).__name__}"
         )
         raise TypeError(msg)
