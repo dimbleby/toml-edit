@@ -132,33 +132,12 @@ def _materialise(value: object) -> object:
 
 
 # ---------------------------------------------------------------------------
-# Known limitations - mark as xfail until each is addressed.
-# ---------------------------------------------------------------------------
-
-
-# These TOML 1.0 fixtures are not in the 1.1 manifest because their
-# behaviour changed in 1.1.0; left here as documentation of the deltas
-# we adopted. The set is empty because the 1.1 manifest already drops
-# them, but we keep the wiring in case future fixtures need it.
-_TOML_1_1_VALID_NOW: frozenset[str] = frozenset()
-
-
-_KNOWN_INVALID_FAILURES: frozenset[str] = _TOML_1_1_VALID_NOW
-
-_KNOWN_VALID_FAILURES: frozenset[str] = frozenset({
-    # Filled in lazily below if/when we discover them.
-})
-
-
-# ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("relpath", _VALID, ids=lambda p: p)
 def test_valid(relpath: str) -> None:
-    if relpath in _KNOWN_VALID_FAILURES:
-        pytest.xfail(f"known-failing valid case: {relpath}")
     toml_path = _TOML_TEST_ROOT / "tests" / relpath
     json_path = toml_path.with_suffix(".json")
     src = toml_path.read_bytes().decode("utf-8")
@@ -179,8 +158,6 @@ def test_valid(relpath: str) -> None:
 
 @pytest.mark.parametrize("relpath", _INVALID, ids=lambda p: p)
 def test_invalid(relpath: str) -> None:
-    if relpath in _KNOWN_INVALID_FAILURES:
-        pytest.xfail(f"known-failing invalid case: {relpath}")
     toml_path = _TOML_TEST_ROOT / "tests" / relpath
     raw = toml_path.read_bytes()
     try:
