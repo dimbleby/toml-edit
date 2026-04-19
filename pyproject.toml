@@ -59,7 +59,14 @@ build-backend = "hatchling.build"
 packages = ["src/toml_edit"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/toml_edit", "README.md", "LICENSE", "pyproject.toml"]
+include = [
+  "src/toml_edit",
+  "tests",
+  "README.md",
+  "CHANGELOG.md",
+  "LICENSE",
+  "pyproject.toml",
+]
 
 [tool.pytest]
 addopts = ["-ra", "--strict-config", "--strict-markers"]
