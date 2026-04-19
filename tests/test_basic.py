@@ -239,3 +239,21 @@ def test_datetime_values() -> None:
 def test_parse_errors(src: str) -> None:
     with pytest.raises(tomle.TOMLParseError):
         tomle.parse(src)
+
+
+def test_deep_array_nesting_raises_parse_error_not_recursionerror() -> None:
+    payload = "x = " + "[" * 500 + "1" + "]" * 500 + "\n"
+    with pytest.raises(tomle.TOMLParseError, match="nesting exceeds"):
+        tomle.parse(payload)
+
+
+def test_deep_inline_table_nesting_raises_parse_error() -> None:
+    payload = "x = " + "{a=" * 500 + "1" + "}" * 500 + "\n"
+    with pytest.raises(tomle.TOMLParseError, match="nesting exceeds"):
+        tomle.parse(payload)
+
+
+def test_moderate_array_nesting_still_parses() -> None:
+    payload = "x = " + "[" * 50 + "1" + "]" * 50 + "\n"
+    doc = tomle.parse(payload)
+    assert tomle.dumps(doc) == payload

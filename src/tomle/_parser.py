@@ -41,6 +41,8 @@ from tomle._nodes import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from tomle._nodes import HeaderKind, IntStyle, ValueNode
 
 _BARE_KEY_CHARS: Final[frozenset[str]] = frozenset(
@@ -84,8 +86,15 @@ class _Parser:
         "_implicit_table_paths",
         "_pos",
         "_src",
+        "_value_depth",
         "_value_paths",
     )
+
+    # Hard cap on nested array / inline-table depth. Well above any
+    # realistic data (tomllib, for reference, accepts whatever Python's
+    # recursion limit allows; we pick a friendlier ceiling so the user
+    # gets a TOMLParseError instead of a RecursionError).
+    _MAX_VALUE_DEPTH = 100
 
     def __init__(self, src: str) -> None:
         self._src = src
@@ -99,6 +108,7 @@ class _Parser:
         self._value_paths: set[tuple[str, ...]] = set()
         self._dotted_paths: set[tuple[str, ...]] = set()
         self._current_section: tuple[str, ...] = ()
+        self._value_depth = 0
 
     # ------------------------------------------------------------------
     # Cursor helpers
@@ -596,14 +606,27 @@ class _Parser:
         if ch == "'":
             return self._parse_string("'")
         if ch == "[":
-            return self._parse_array()
+            return self._parse_nested_value(self._parse_array)
         if ch == "{":
-            return self._parse_inline_table()
+            return self._parse_nested_value(self._parse_inline_table)
         if ch in ("t", "f"):
             return self._parse_bool()
         # Everything else: a number or date/time. They share a leading
         # ambiguous prefix; sniff a window then dispatch.
         return self._parse_number_or_datetime()
+
+    def _parse_nested_value(self, parser: Callable[[], ValueNode]) -> ValueNode:
+        if self._value_depth >= self._MAX_VALUE_DEPTH:
+            msg = (
+                f"value nesting exceeds maximum depth "
+                f"({self._MAX_VALUE_DEPTH})"
+            )
+            raise self._error(msg)
+        self._value_depth += 1
+        try:
+            return parser()
+        finally:
+            self._value_depth -= 1
 
     # --- strings ------------------------------------------------------
 
