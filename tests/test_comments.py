@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
 import tomle
@@ -257,3 +259,185 @@ def test_round_trip_after_set_and_clear() -> None:
     again = tomle.parse(out)
     assert again.comments["x"] == "trailing"
     assert again.leading_comments["x"] == ("above",)
+
+
+# ---------------------------------------------------------------------------
+# Header comment API
+# ---------------------------------------------------------------------------
+
+
+def test_header_comment_present() -> None:
+    src = "[server] # in DC1\nhost = 'a'\n"
+    doc = tomle.parse(src)
+    assert cast("tomle.Table", doc["server"]).header_comment == "in DC1"
+
+
+def test_header_comment_absent() -> None:
+    src = "[server]\nhost = 'a'\n"
+    doc = tomle.parse(src)
+    assert cast("tomle.Table", doc["server"]).header_comment is None
+
+
+def test_header_comment_set_round_trips() -> None:
+    doc = tomle.parse("[server]\nhost = 'a'\n")
+    cast("tomle.Table", doc["server"]).header_comment = "in DC1"
+    assert tomle.dumps(doc) == "[server] # in DC1\nhost = 'a'\n"
+
+
+def test_header_comment_replace_existing() -> None:
+    doc = tomle.parse("[server] # old\nhost = 'a'\n")
+    cast("tomle.Table", doc["server"]).header_comment = "new"
+    assert tomle.dumps(doc) == "[server] # new\nhost = 'a'\n"
+
+
+def test_header_comment_clear_with_empty_string() -> None:
+    doc = tomle.parse("[server] # old\nhost = 'a'\n")
+    cast("tomle.Table", doc["server"]).header_comment = ""
+    assert tomle.dumps(doc) == "[server]\nhost = 'a'\n"
+
+
+def test_header_comment_clear_with_none() -> None:
+    doc = tomle.parse("[server] # old\nhost = 'a'\n")
+    cast("tomle.Table", doc["server"]).header_comment = None
+    assert tomle.dumps(doc) == "[server]\nhost = 'a'\n"
+
+
+def test_header_comment_del() -> None:
+    doc = tomle.parse("[server] # old\nhost = 'a'\n")
+    del cast("tomle.Table", doc["server"]).header_comment
+    assert cast("tomle.Table", doc["server"]).header_comment is None
+
+
+def test_header_leading_comments_extract_block_only() -> None:
+    src = (
+        "# old archived note\n"
+        "\n"
+        "# active 1\n"
+        "# active 2\n"
+        "[server]\nhost = 'a'\n"
+    )
+    doc = tomle.parse(src)
+    # Only the *contiguous* block above the header counts.
+    assert cast("tomle.Table", doc["server"]).header_leading_comments == ("active 1", "active 2")
+
+
+def test_header_leading_comments_round_trip() -> None:
+    src = "# above\n[server]\nhost = 'a'\n"
+    doc = tomle.parse(src)
+    assert tomle.dumps(doc) == src
+
+
+def test_header_leading_comments_set_preserves_older_block() -> None:
+    src = (
+        "# old archived note\n"
+        "\n"
+        "# active\n"
+        "[server]\nhost = 'a'\n"
+    )
+    doc = tomle.parse(src)
+    cast("tomle.Table", doc["server"]).header_leading_comments = ("brand new",)
+    out = tomle.dumps(doc)
+    # Older blank-separated comment must remain untouched.
+    assert out == (
+        "# old archived note\n"
+        "\n"
+        "# brand new\n"
+        "[server]\nhost = 'a'\n"
+    )
+
+
+def test_header_leading_comments_set_on_empty() -> None:
+    doc = tomle.parse("[server]\nhost = 'a'\n")
+    cast("tomle.Table", doc["server"]).header_leading_comments = ("hello", "world")
+    assert tomle.dumps(doc) == "# hello\n# world\n[server]\nhost = 'a'\n"
+
+
+def test_header_leading_comments_clear_with_empty_tuple() -> None:
+    doc = tomle.parse("# above\n[server]\nhost = 'a'\n")
+    cast("tomle.Table", doc["server"]).header_leading_comments = ()
+    assert tomle.dumps(doc) == "[server]\nhost = 'a'\n"
+
+
+def test_header_leading_comments_del() -> None:
+    doc = tomle.parse("# above\n[server]\nhost = 'a'\n")
+    del cast("tomle.Table", doc["server"]).header_leading_comments
+    assert tomle.dumps(doc) == "[server]\nhost = 'a'\n"
+
+
+def test_header_comment_on_aot_entry() -> None:
+    src = "[[items]]\nname = 'a'\n\n[[items]]\nname = 'b'\n"
+    doc = tomle.parse(src)
+    items = doc["items"]
+    assert isinstance(items, tomle.AoT)
+    items[0].header_comment = "first"
+    items[1].header_leading_comments = ("about the second",)
+    out = tomle.dumps(doc)
+    assert out == (
+        "[[items]] # first\nname = 'a'\n\n"
+        "# about the second\n[[items]]\nname = 'b'\n"
+    )
+
+
+def test_header_comment_on_document_raises() -> None:
+    doc = tomle.parse("a = 1\n")
+    with pytest.raises(tomle.TOMLEditError):
+        _ = doc.header_comment
+    with pytest.raises(tomle.TOMLEditError):
+        doc.header_comment = "x"
+    with pytest.raises(tomle.TOMLEditError):
+        _ = doc.header_leading_comments
+
+
+def test_header_comment_on_inline_table_raises() -> None:
+    doc = tomle.parse("a = { x = 1, y = 2 }\n")
+    a = doc["a"]
+    assert isinstance(a, tomle.Table)
+    with pytest.raises(tomle.TOMLEditError):
+        _ = a.header_comment
+    with pytest.raises(tomle.TOMLEditError):
+        _ = a.header_leading_comments
+
+
+def test_header_comment_on_implicit_parent_raises() -> None:
+    # `parent` exists logically but has no `[parent]` section in source.
+    doc = tomle.parse("[parent.child]\nx = 1\n")
+    parent = doc["parent"]
+    assert isinstance(parent, tomle.Table)
+    with pytest.raises(tomle.TOMLEditError):
+        _ = parent.header_comment
+    with pytest.raises(tomle.TOMLEditError):
+        _ = parent.header_leading_comments
+
+
+# ---------------------------------------------------------------------------
+# Pre-existing leading_comments bug fix: only the trailing block counts
+# ---------------------------------------------------------------------------
+
+
+def test_leading_comments_extract_block_only() -> None:
+    src = (
+        "# old archived note\n"
+        "\n"
+        "# active 1\n"
+        "# active 2\n"
+        "name = 'x'\n"
+    )
+    doc = tomle.parse(src)
+    assert doc.leading_comments["name"] == ("active 1", "active 2")
+
+
+def test_leading_comments_set_preserves_older_block() -> None:
+    src = (
+        "# old archived note\n"
+        "\n"
+        "# active\n"
+        "name = 'x'\n"
+    )
+    doc = tomle.parse(src)
+    doc.leading_comments["name"] = ("brand new",)
+    assert tomle.dumps(doc) == (
+        "# old archived note\n"
+        "\n"
+        "# brand new\n"
+        "name = 'x'\n"
+    )

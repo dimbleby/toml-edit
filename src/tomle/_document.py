@@ -185,6 +185,77 @@ def _kv_indent(kv: KeyValueNode) -> str:
     return ""
 
 
+def _header_indent(header: TableHeaderNode) -> str:
+    """Indent (run of spaces/tabs) the header's source line started with."""
+    text = header.leading.render()
+    nl = text.rfind("\n")
+    candidate = text[nl + 1 :] if nl >= 0 else text
+    if all(c in " \t" for c in candidate):
+        return candidate
+    return ""
+
+
+def _extract_trailing_comment_block(trivia: Trivia) -> tuple[str, ...]:
+    """Return the contiguous run of comment lines at the *end* of ``trivia``.
+
+    A "comment line" is ``[WS] CommentNode NewlineNode``. The trailing
+    block ends immediately before the trivia's anchoring whitespace
+    (the indent of the line that follows). Earlier comment lines that
+    are separated from the run by a blank line are *not* included.
+    """
+    pieces = trivia.pieces
+    end = len(pieces)
+    while end > 0 and isinstance(pieces[end - 1], WhitespaceNode):
+        end -= 1
+    comments: list[str] = []
+    i = end
+    while i >= 2:
+        nl = pieces[i - 1]
+        cm = pieces[i - 2]
+        if not (isinstance(nl, NewlineNode) and isinstance(cm, CommentNode)):
+            break
+        comments.append(cm.text)
+        i -= 2
+        if i > 0 and isinstance(pieces[i - 1], WhitespaceNode):
+            i -= 1
+    comments.reverse()
+    return tuple(_strip_comment_marker(c) for c in comments)
+
+
+def _replace_trailing_comment_block(
+    trivia: Trivia, lines: Sequence[str], indent: str,
+) -> None:
+    """Replace the trailing comment block in ``trivia`` with ``lines``.
+
+    Earlier trivia (older blank-separated comments, leading whitespace)
+    and the trailing whitespace anchor are preserved.
+    """
+    pieces = trivia.pieces
+    end = len(pieces)
+    tail_ws: list[TriviaPiece] = []
+    while end > 0 and isinstance(pieces[end - 1], WhitespaceNode):
+        tail_ws.insert(0, pieces[end - 1])
+        end -= 1
+    start = end
+    i = end
+    while i >= 2:
+        nl = pieces[i - 1]
+        cm = pieces[i - 2]
+        if not (isinstance(nl, NewlineNode) and isinstance(cm, CommentNode)):
+            break
+        i -= 2
+        if i > 0 and isinstance(pieces[i - 1], WhitespaceNode):
+            i -= 1
+        start = i
+    new_pieces: list[TriviaPiece] = []
+    for line in lines:
+        if indent:
+            new_pieces.append(WhitespaceNode(indent))
+        new_pieces.append(CommentNode(text=_format_comment(line)))
+        new_pieces.append(NewlineNode("\n"))
+    trivia.pieces = list(pieces[:start]) + new_pieces + tail_ws
+
+
 def _build_promoted_section(
     path: tuple[str, ...],
     inline: InlineTableNode,
@@ -316,6 +387,54 @@ class Table(MutableMapping[str, TomlValue]):
         Assigning an empty tuple or deleting a key removes the block.
         """
         msg = "this table flavour does not support the comment API"
+        raise TOMLEditError(msg)
+
+    @property
+    def header_comment(self) -> str | None:
+        """End-of-line comment on this table's ``[name]`` / ``[[name]]`` line.
+
+        ``None`` means the header has no trailing comment. Setting
+        ``None`` or ``""`` removes any existing comment. Raises
+        :class:`TOMLEditError` for the top-level :class:`Document`,
+        for inline tables, and for any logical table that exists only
+        through implicit parents (no physical header in source).
+
+        For tables declared via multiple discontiguous ``[name]``
+        sections, this refers to the *first* such header.
+        """
+        msg = "this table flavour does not support the header comment API"
+        raise TOMLEditError(msg)
+
+    @header_comment.setter
+    def header_comment(self, value: str | None) -> None:  # noqa: ARG002
+        msg = "this table flavour does not support the header comment API"
+        raise TOMLEditError(msg)
+
+    @header_comment.deleter
+    def header_comment(self) -> None:
+        msg = "this table flavour does not support the header comment API"
+        raise TOMLEditError(msg)
+
+    @property
+    def header_leading_comments(self) -> tuple[str, ...]:
+        """Comment lines immediately above this table's header.
+
+        Returns the contiguous block of ``# ...`` lines ending right
+        above the ``[name]`` / ``[[name]]`` line. Earlier blank-line
+        separated comments are *not* included. Assigning an empty
+        tuple removes the block. Raises like :attr:`header_comment`.
+        """
+        msg = "this table flavour does not support the header comment API"
+        raise TOMLEditError(msg)
+
+    @header_leading_comments.setter
+    def header_leading_comments(self, value: Sequence[str]) -> None:  # noqa: ARG002
+        msg = "this table flavour does not support the header comment API"
+        raise TOMLEditError(msg)
+
+    @header_leading_comments.deleter
+    def header_leading_comments(self) -> None:
+        msg = "this table flavour does not support the header comment API"
         raise TOMLEditError(msg)
 
     def promote_inline(self, key: str) -> Table:  # noqa: ARG002
@@ -663,6 +782,70 @@ class _StdTable(Table):
     def leading_comments(self) -> MutableMapping[str, tuple[str, ...]]:
         return _TableLeadingCommentsView(self)
 
+    def _first_header(self) -> TableHeaderNode:
+        for sec in self._direct_sections():
+            if sec.header is not None:
+                return sec.header
+        msg = (
+            f"table {'.'.join(self._path) or '<root>'!r} has no physical "
+            "header (it exists only through implicit parents); the "
+            "header comment API is unavailable"
+        )
+        raise TOMLEditError(msg)
+
+    @property  # type: ignore[explicit-override]
+    @override
+    def header_comment(self) -> str | None:
+        header = self._first_header()
+        if header.trailing_comment is None:
+            return None
+        return _strip_comment_marker(header.trailing_comment.text)
+
+    @header_comment.setter
+    def header_comment(self, value: str | None) -> None:
+        header = self._first_header()
+        if value is None or value == "":
+            header.trailing_comment = None
+            # Drop the trailing whitespace we (or the parser) added to
+            # separate ']' from '#'; otherwise we render `[server] \n`.
+            while header.trailing.pieces and isinstance(
+                header.trailing.pieces[-1], WhitespaceNode,
+            ):
+                header.trailing.pieces.pop()
+            return
+        if not _trivia_ends_with_space(header.trailing):
+            header.trailing.pieces.append(WhitespaceNode(" "))
+        header.trailing_comment = CommentNode(text=_format_comment(value))
+        if header.newline is None:
+            header.newline = NewlineNode("\n")
+
+    @header_comment.deleter
+    def header_comment(self) -> None:
+        header = self._first_header()
+        header.trailing_comment = None
+        while header.trailing.pieces and isinstance(
+            header.trailing.pieces[-1], WhitespaceNode,
+        ):
+            header.trailing.pieces.pop()
+
+    @property  # type: ignore[explicit-override]
+    @override
+    def header_leading_comments(self) -> tuple[str, ...]:
+        header = self._first_header()
+        return _extract_trailing_comment_block(header.leading)
+
+    @header_leading_comments.setter
+    def header_leading_comments(self, value: Sequence[str]) -> None:
+        header = self._first_header()
+        _replace_trailing_comment_block(
+            header.leading, value, _header_indent(header),
+        )
+
+    @header_leading_comments.deleter
+    def header_leading_comments(self) -> None:
+        header = self._first_header()
+        _replace_trailing_comment_block(header.leading, (), _header_indent(header))
+
     @override
     def promote_inline(self, key: str) -> Table:
         sec, kv = self._find_direct_kv(key)
@@ -813,11 +996,7 @@ class _TableLeadingCommentsView(MutableMapping[str, "tuple[str, ...]"]):
 
     @staticmethod
     def _extract_block(kv: KeyValueNode) -> tuple[str, ...]:
-        return tuple(
-            _strip_comment_marker(p.text)
-            for p in kv.leading.pieces
-            if isinstance(p, CommentNode)
-        )
+        return _extract_trailing_comment_block(kv.leading)
 
     @override
     def __getitem__(self, key: str) -> tuple[str, ...]:
@@ -830,23 +1009,7 @@ class _TableLeadingCommentsView(MutableMapping[str, "tuple[str, ...]"]):
     @override
     def __setitem__(self, key: str, value: Sequence[str]) -> None:
         _, kv = self._table._find_direct_kv(key)  # noqa: SLF001
-        # Preserve the trailing whitespace run that anchored the key
-        # to its column, then rewrite the comment block in front of it.
-        tail: list[TriviaPiece] = []
-        for piece in reversed(kv.leading.pieces):
-            if isinstance(piece, WhitespaceNode):
-                tail.insert(0, piece)
-            else:
-                break
-        new_pieces: list[TriviaPiece] = []
-        if value:
-            indent = _kv_indent(kv)
-            for line in value:
-                if indent:
-                    new_pieces.append(WhitespaceNode(indent))
-                new_pieces.append(CommentNode(text=_format_comment(line)))
-                new_pieces.append(NewlineNode("\n"))
-        kv.leading.pieces = new_pieces + tail
+        _replace_trailing_comment_block(kv.leading, value, _kv_indent(kv))
 
     @override
     def __delitem__(self, key: str) -> None:
