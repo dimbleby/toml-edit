@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import cast
-
 import pytest
 
 import tomle
@@ -272,43 +270,43 @@ def test_round_trip_after_set_and_clear() -> None:
 def test_header_comment_present() -> None:
     src = "[server] # in DC1\nhost = 'a'\n"
     doc = tomle.parse(src)
-    assert cast("tomle.Table", doc["server"]).header_comment == "in DC1"
+    assert doc.table("server").header_comment == "in DC1"
 
 
 def test_header_comment_absent() -> None:
     src = "[server]\nhost = 'a'\n"
     doc = tomle.parse(src)
-    assert cast("tomle.Table", doc["server"]).header_comment is None
+    assert doc.table("server").header_comment is None
 
 
 def test_header_comment_set_round_trips() -> None:
     doc = tomle.parse("[server]\nhost = 'a'\n")
-    cast("tomle.Table", doc["server"]).header_comment = "in DC1"
+    doc.table("server").header_comment = "in DC1"
     assert tomle.dumps(doc) == "[server] # in DC1\nhost = 'a'\n"
 
 
 def test_header_comment_replace_existing() -> None:
     doc = tomle.parse("[server] # old\nhost = 'a'\n")
-    cast("tomle.Table", doc["server"]).header_comment = "new"
+    doc.table("server").header_comment = "new"
     assert tomle.dumps(doc) == "[server] # new\nhost = 'a'\n"
 
 
 def test_header_comment_clear_with_empty_string() -> None:
     doc = tomle.parse("[server] # old\nhost = 'a'\n")
-    cast("tomle.Table", doc["server"]).header_comment = ""
+    doc.table("server").header_comment = ""
     assert tomle.dumps(doc) == "[server]\nhost = 'a'\n"
 
 
 def test_header_comment_clear_with_none() -> None:
     doc = tomle.parse("[server] # old\nhost = 'a'\n")
-    cast("tomle.Table", doc["server"]).header_comment = None
+    doc.table("server").header_comment = None
     assert tomle.dumps(doc) == "[server]\nhost = 'a'\n"
 
 
 def test_header_comment_del() -> None:
     doc = tomle.parse("[server] # old\nhost = 'a'\n")
-    del cast("tomle.Table", doc["server"]).header_comment
-    assert cast("tomle.Table", doc["server"]).header_comment is None
+    del doc.table("server").header_comment
+    assert doc.table("server").header_comment is None
 
 
 def test_header_leading_comments_extract_block_only() -> None:
@@ -321,7 +319,7 @@ def test_header_leading_comments_extract_block_only() -> None:
     )
     doc = tomle.parse(src)
     # Only the *contiguous* block above the header counts.
-    assert cast("tomle.Table", doc["server"]).header_leading_comments == ("active 1", "active 2")
+    assert doc.table("server").header_leading_comments == ("active 1", "active 2")
 
 
 def test_header_leading_comments_round_trip() -> None:
@@ -338,7 +336,7 @@ def test_header_leading_comments_set_preserves_older_block() -> None:
         "[server]\nhost = 'a'\n"
     )
     doc = tomle.parse(src)
-    cast("tomle.Table", doc["server"]).header_leading_comments = ("brand new",)
+    doc.table("server").header_leading_comments = ("brand new",)
     out = tomle.dumps(doc)
     # Older blank-separated comment must remain untouched.
     assert out == (
@@ -351,19 +349,19 @@ def test_header_leading_comments_set_preserves_older_block() -> None:
 
 def test_header_leading_comments_set_on_empty() -> None:
     doc = tomle.parse("[server]\nhost = 'a'\n")
-    cast("tomle.Table", doc["server"]).header_leading_comments = ("hello", "world")
+    doc.table("server").header_leading_comments = ("hello", "world")
     assert tomle.dumps(doc) == "# hello\n# world\n[server]\nhost = 'a'\n"
 
 
 def test_header_leading_comments_clear_with_empty_tuple() -> None:
     doc = tomle.parse("# above\n[server]\nhost = 'a'\n")
-    cast("tomle.Table", doc["server"]).header_leading_comments = ()
+    doc.table("server").header_leading_comments = ()
     assert tomle.dumps(doc) == "[server]\nhost = 'a'\n"
 
 
 def test_header_leading_comments_del() -> None:
     doc = tomle.parse("# above\n[server]\nhost = 'a'\n")
-    del cast("tomle.Table", doc["server"]).header_leading_comments
+    del doc.table("server").header_leading_comments
     assert tomle.dumps(doc) == "[server]\nhost = 'a'\n"
 
 
@@ -454,21 +452,21 @@ def test_leading_comments_set_preserves_older_block() -> None:
 def test_array_eol_comments_read_multiline() -> None:
     src = "arr = [\n  1, # one\n  2, # two\n  3, # three\n]\n"
     doc = tomle.parse(src)
-    arr = cast("tomle.Array", doc["arr"])
+    arr = doc.array("arr")
     assert dict(arr.comments) == {0: "one", 1: "two", 2: "three"}
 
 
 def test_array_eol_comment_read_last_no_trailing_comma() -> None:
     src = "arr = [\n  1,\n  2 # last\n]\n"
     doc = tomle.parse(src)
-    arr = cast("tomle.Array", doc["arr"])
+    arr = doc.array("arr")
     assert dict(arr.comments) == {1: "last"}
 
 
 def test_array_leading_comments_read() -> None:
     src = "arr = [\n  # before 0\n  1,\n  # before 1a\n  # before 1b\n  2,\n]\n"
     doc = tomle.parse(src)
-    arr = cast("tomle.Array", doc["arr"])
+    arr = doc.array("arr")
     assert dict(arr.leading_comments) == {0: ("before 0",), 1: ("before 1a", "before 1b")}
 
 
@@ -480,43 +478,43 @@ def test_array_round_trip_with_comments() -> None:
 
 def test_array_set_eol_on_single_line_promotes_to_multiline() -> None:
     doc = tomle.parse("arr = [1, 2, 3]\n")
-    arr = cast("tomle.Array", doc["arr"])
+    arr = doc.array("arr")
     arr.comments[1] = "two"
     out = tomle.dumps(doc)
     re = tomle.parse(out)
-    re_arr = cast("tomle.Array", re["arr"])
+    re_arr = re.array("arr")
     assert list(re_arr) == [1, 2, 3]
     assert dict(re_arr.comments) == {1: "two"}
 
 
 def test_array_set_eol_on_last_item_no_comma_breaks_before_close() -> None:
     doc = tomle.parse("arr = [1, 2, 3]\n")
-    arr = cast("tomle.Array", doc["arr"])
+    arr = doc.array("arr")
     arr.comments[2] = "last"
     out = tomle.dumps(doc)
     # `]` must not be on the same line as the comment.
     assert "# last\n" in out
     assert out.rstrip().endswith("]")
     re = tomle.parse(out)
-    re_arr = cast("tomle.Array", re["arr"])
+    re_arr = re.array("arr")
     assert list(re_arr) == [1, 2, 3]
     assert dict(re_arr.comments) == {2: "last"}
 
 
 def test_array_set_eol_on_last_item_with_trailing_comma() -> None:
     doc = tomle.parse("arr = [\n  1,\n  2,\n]\n")
-    arr = cast("tomle.Array", doc["arr"])
+    arr = doc.array("arr")
     arr.comments[1] = "second"
     out = tomle.dumps(doc)
     re = tomle.parse(out)
-    re_arr = cast("tomle.Array", re["arr"])
+    re_arr = re.array("arr")
     assert list(re_arr) == [1, 2]
     assert dict(re_arr.comments) == {1: "second"}
 
 
 def test_array_replace_existing_eol_comment() -> None:
     doc = tomle.parse("arr = [\n  1, # old\n  2,\n]\n")
-    arr = cast("tomle.Array", doc["arr"])
+    arr = doc.array("arr")
     arr.comments[0] = "new"
     out = tomle.dumps(doc)
     assert "# new" in out
@@ -525,65 +523,65 @@ def test_array_replace_existing_eol_comment() -> None:
 
 def test_array_delete_eol_comment() -> None:
     doc = tomle.parse("arr = [\n  1, # one\n  2,\n]\n")
-    arr = cast("tomle.Array", doc["arr"])
+    arr = doc.array("arr")
     del arr.comments[0]
     out = tomle.dumps(doc)
     assert "# one" not in out
     re = tomle.parse(out)
-    assert list(cast("tomle.Array", re["arr"])) == [1, 2]
+    assert list(re.array("arr")) == [1, 2]
 
 
 def test_array_set_leading_on_single_line_promotes_to_multiline() -> None:
     doc = tomle.parse("arr = [1, 2, 3]\n")
-    arr = cast("tomle.Array", doc["arr"])
+    arr = doc.array("arr")
     arr.leading_comments[1] = ("before two",)
     out = tomle.dumps(doc)
     re = tomle.parse(out)
-    re_arr = cast("tomle.Array", re["arr"])
+    re_arr = re.array("arr")
     assert list(re_arr) == [1, 2, 3]
     assert dict(re_arr.leading_comments) == {1: ("before two",)}
 
 
 def test_array_set_leading_on_first_item() -> None:
     doc = tomle.parse("arr = [1, 2, 3]\n")
-    arr = cast("tomle.Array", doc["arr"])
+    arr = doc.array("arr")
     arr.leading_comments[0] = ("first",)
     out = tomle.dumps(doc)
     re = tomle.parse(out)
-    re_arr = cast("tomle.Array", re["arr"])
+    re_arr = re.array("arr")
     assert list(re_arr) == [1, 2, 3]
     assert dict(re_arr.leading_comments) == {0: ("first",)}
 
 
 def test_array_set_multiple_leading_lines() -> None:
     doc = tomle.parse("arr = [\n  1,\n  2,\n]\n")
-    arr = cast("tomle.Array", doc["arr"])
+    arr = doc.array("arr")
     arr.leading_comments[1] = ("line one", "line two")
     out = tomle.dumps(doc)
     re = tomle.parse(out)
-    re_arr = cast("tomle.Array", re["arr"])
+    re_arr = re.array("arr")
     assert dict(re_arr.leading_comments) == {1: ("line one", "line two")}
 
 
 def test_array_delete_leading_comments() -> None:
     src = "arr = [\n  # before\n  1,\n  2,\n]\n"
     doc = tomle.parse(src)
-    arr = cast("tomle.Array", doc["arr"])
+    arr = doc.array("arr")
     del arr.leading_comments[0]
     out = tomle.dumps(doc)
     assert "# before" not in out
     re = tomle.parse(out)
-    assert list(cast("tomle.Array", re["arr"])) == [1, 2]
+    assert list(re.array("arr")) == [1, 2]
 
 
 def test_array_append_migrates_last_eol_comment() -> None:
     doc = tomle.parse("arr = [\n  1,\n  2 # last\n]\n")
-    arr = cast("tomle.Array", doc["arr"])
+    arr = doc.array("arr")
     assert dict(arr.comments) == {1: "last"}
     arr.append(3)
     out = tomle.dumps(doc)
     re = tomle.parse(out)
-    re_arr = cast("tomle.Array", re["arr"])
+    re_arr = re.array("arr")
     assert list(re_arr) == [1, 2, 3]
     # The EOL must still belong to item 1, not item 2.
     assert dict(re_arr.comments) == {1: "last"}
@@ -592,7 +590,7 @@ def test_array_append_migrates_last_eol_comment() -> None:
 def test_array_comments_view_contains_iter_len() -> None:
     src = "arr = [\n  1, # one\n  2,\n  3, # three\n]\n"
     doc = tomle.parse(src)
-    arr = cast("tomle.Array", doc["arr"])
+    arr = doc.array("arr")
     assert 0 in arr.comments
     assert 1 not in arr.comments
     assert 2 in arr.comments
@@ -603,7 +601,7 @@ def test_array_comments_view_contains_iter_len() -> None:
 
 def test_array_comments_view_empty_array() -> None:
     doc = tomle.parse("arr = []\n")
-    arr = cast("tomle.Array", doc["arr"])
+    arr = doc.array("arr")
     assert len(arr.comments) == 0
     assert list(arr.comments) == []
     assert len(arr.leading_comments) == 0
@@ -615,7 +613,7 @@ def test_array_comments_view_empty_array() -> None:
 
 def test_array_comments_non_int_key_raises() -> None:
     doc = tomle.parse("arr = [1, 2]\n")
-    arr = cast("tomle.Array", doc["arr"])
+    arr = doc.array("arr")
     with pytest.raises(TypeError):
         _ = arr.comments["x"]  # type: ignore[index]
     with pytest.raises(TypeError):
@@ -624,7 +622,7 @@ def test_array_comments_non_int_key_raises() -> None:
 
 def test_array_comments_out_of_range_raises() -> None:
     doc = tomle.parse("arr = [1, 2]\n")
-    arr = cast("tomle.Array", doc["arr"])
+    arr = doc.array("arr")
     with pytest.raises(KeyError):
         arr.comments[5] = "nope"
     with pytest.raises(KeyError):
@@ -635,20 +633,96 @@ def test_array_comments_out_of_range_raises() -> None:
 
 def test_array_comment_with_hash_prefix_normalised() -> None:
     doc = tomle.parse("arr = [1, 2]\n")
-    arr = cast("tomle.Array", doc["arr"])
+    arr = doc.array("arr")
     arr.comments[0] = "# already-prefixed"
     re = tomle.parse(tomle.dumps(doc))
     # We don't double-up the `#`.
-    assert dict(cast("tomle.Array", re["arr"]).comments) == {0: "already-prefixed"}
+    assert dict(re.array("arr").comments) == {0: "already-prefixed"}
 
 
 def test_array_set_value_via_indexing_preserves_eol_comment() -> None:
     src = "arr = [\n  1, # one\n  2, # two\n]\n"
     doc = tomle.parse(src)
-    arr = cast("tomle.Array", doc["arr"])
+    arr = doc.array("arr")
     arr[0] = 99
     re = tomle.parse(tomle.dumps(doc))
-    re_arr = cast("tomle.Array", re["arr"])
+    re_arr = re.array("arr")
     assert list(re_arr) == [99, 2]
     # Comment ownership shouldn't change.
     assert dict(re_arr.comments) == {0: "one", 1: "two"}
+
+
+# ---------------------------------------------------------------------------
+# Typed accessors: Table.array / .table / .aot, Array.array / .table
+# ---------------------------------------------------------------------------
+
+
+def test_table_array_returns_array() -> None:
+    doc = tomle.parse("xs = [1, 2]\n")
+    arr = doc.array("xs")
+    assert isinstance(arr, tomle.Array)
+    arr.comments[0] = "first"
+    assert "# first" in tomle.dumps(doc)
+
+
+def test_table_table_returns_table() -> None:
+    doc = tomle.parse("[server]\nport = 80\n")
+    tbl = doc.table("server")
+    assert isinstance(tbl, tomle.Table)
+    tbl.header_comment = "production"
+    assert "# production" in tomle.dumps(doc)
+
+
+def test_table_aot_returns_aot() -> None:
+    doc = tomle.parse("[[products]]\nname = 'a'\n[[products]]\nname = 'b'\n")
+    aot = doc.aot("products")
+    assert isinstance(aot, tomle.AoT)
+    assert len(aot) == 2
+
+
+def test_table_array_wrong_kind_raises_typeerror() -> None:
+    doc = tomle.parse("x = 1\n")
+    with pytest.raises(TypeError, match="not an Array"):
+        doc.array("x")
+
+
+def test_table_table_wrong_kind_raises_typeerror() -> None:
+    doc = tomle.parse("x = 1\n")
+    with pytest.raises(TypeError, match="not a Table"):
+        doc.table("x")
+
+
+def test_table_aot_wrong_kind_raises_typeerror() -> None:
+    doc = tomle.parse("x = 1\n")
+    with pytest.raises(TypeError, match="not an AoT"):
+        doc.aot("x")
+
+
+def test_table_typed_accessors_propagate_keyerror() -> None:
+    doc = tomle.parse("x = 1\n")
+    with pytest.raises(KeyError):
+        doc.array("missing")
+    with pytest.raises(KeyError):
+        doc.table("missing")
+    with pytest.raises(KeyError):
+        doc.aot("missing")
+
+
+def test_array_array_returns_nested_array() -> None:
+    doc = tomle.parse("xs = [[1, 2], [3, 4]]\n")
+    inner = doc.array("xs").array(0)
+    assert isinstance(inner, tomle.Array)
+    assert list(inner) == [1, 2]
+
+
+def test_array_table_returns_nested_inline_table() -> None:
+    doc = tomle.parse("xs = [{a = 1}, {a = 2}]\n")
+    tbl = doc.array("xs").table(0)
+    assert isinstance(tbl, tomle.Table)
+    assert tbl["a"] == 1
+
+
+def test_array_array_wrong_kind_raises_typeerror() -> None:
+    doc = tomle.parse("xs = [1, 2]\n")
+    with pytest.raises(TypeError, match="not an Array"):
+        doc.array("xs").array(0)

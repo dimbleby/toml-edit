@@ -449,6 +449,52 @@ class Table(MutableMapping[str, TomlValue]):
         return f"{type(self).__name__}({{{body}}})"
 
     # ------------------------------------------------------------------
+    # Typed accessors. These are convenience views over ``__getitem__``
+    # that narrow the return type so callers can chain into the
+    # comment/header API without writing ``cast`` or ``isinstance``.
+    # ------------------------------------------------------------------
+
+    def table(self, key: str) -> Table:
+        """Return ``self[key]`` typed as a :class:`Table`.
+
+        Raises :class:`TypeError` if the value is not a table (inline or
+        standard).
+        """
+        value = self[key]
+        if not isinstance(value, Table):
+            msg = (
+                f"{key!r} is a {type(value).__name__}, not a Table"
+            )
+            raise TypeError(msg)
+        return value
+
+    def array(self, key: str) -> Array:
+        """Return ``self[key]`` typed as an :class:`Array`.
+
+        Raises :class:`TypeError` if the value is not an inline array.
+        """
+        value = self[key]
+        if not isinstance(value, Array):
+            msg = (
+                f"{key!r} is a {type(value).__name__}, not an Array"
+            )
+            raise TypeError(msg)
+        return value
+
+    def aot(self, key: str) -> AoT:
+        """Return ``self[key]`` typed as an :class:`AoT` (array of tables).
+
+        Raises :class:`TypeError` if the value is not an array of tables.
+        """
+        value = self[key]
+        if not isinstance(value, AoT):
+            msg = (
+                f"{key!r} is a {type(value).__name__}, not an AoT"
+            )
+            raise TypeError(msg)
+        return value
+
+    # ------------------------------------------------------------------
     # Metadata side-channels (default raises; concrete subclasses override).
     # ------------------------------------------------------------------
 
@@ -1538,6 +1584,26 @@ class Array(list[TomlValue]):
             self._rebuild_separators()
             self._resync()
         return self
+
+    # ------------------------------------------------------------------
+    # Typed accessors for nested values. Mirror Table.array/.table.
+    # ------------------------------------------------------------------
+
+    def array(self, index: SupportsIndex) -> Array:
+        """Return ``self[index]`` typed as a nested :class:`Array`."""
+        value = self[index]
+        if not isinstance(value, Array):
+            msg = f"item {operator.index(index)} is a {type(value).__name__}, not an Array"
+            raise TypeError(msg)
+        return value
+
+    def table(self, index: SupportsIndex) -> Table:
+        """Return ``self[index]`` typed as a nested :class:`Table`."""
+        value = self[index]
+        if not isinstance(value, Table):
+            msg = f"item {operator.index(index)} is a {type(value).__name__}, not a Table"
+            raise TypeError(msg)
+        return value
 
 
 class AoT(list[Table]):
