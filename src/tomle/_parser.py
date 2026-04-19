@@ -1,0 +1,992 @@
+"""TOML 1.0.0 parser producing a :mod:`tomle._nodes` CST.
+
+Hand-written recursive-descent over a ``str`` plus an integer cursor.
+Allocates only the node objects themselves; no regex in hot paths.
+
+The parser is responsible *only* for producing the physical CST. Logical
+table semantics (duplicate-key detection across discontiguous headers,
+dotted-key conflicts, etc.) are enforced here; the read-side wrappers
+in :mod:`tomle._document` rely on this validation having happened.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, date, datetime, time, timedelta, timezone
+from typing import TYPE_CHECKING, Final
+
+from tomle._errors import TOMLParseError
+from tomle._nodes import (
+    ArrayItem,
+    ArrayNode,
+    BoolNode,
+    CommentNode,
+    DateTimeNode,
+    DocumentNode,
+    FloatNode,
+    InlineTableEntry,
+    InlineTableNode,
+    IntegerNode,
+    Key,
+    KeyPart,
+    KeyValueNode,
+    NewlineNode,
+    SectionNode,
+    StringNode,
+    TableHeaderNode,
+    Trivia,
+    WhitespaceNode,
+)
+
+if TYPE_CHECKING:
+    from tomle._nodes import HeaderKind, IntStyle, ValueNode
+
+
+_BARE_KEY_CHARS: Final[frozenset[str]] = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-",
+)
+_HEX_DIGITS: Final[frozenset[str]] = frozenset("0123456789abcdefABCDEF")
+_DEC_DIGITS: Final[frozenset[str]] = frozenset("0123456789")
+_OCT_DIGITS: Final[frozenset[str]] = frozenset("01234567")
+_BIN_DIGITS: Final[frozenset[str]] = frozenset("01")
+
+
+class _Parser:
+    __slots__ = (
+        "_aot_paths",
+        "_current_table_prefixes",
+        "_current_value_paths",
+        "_explicit_table_paths",
+        "_pos",
+        "_src",
+    )
+
+    def __init__(self, src: str) -> None:
+        self._src = src
+        self._pos = 0
+        self._explicit_table_paths: set[tuple[str, ...]] = set()
+        self._aot_paths: set[tuple[str, ...]] = set()
+        self._current_value_paths: set[tuple[str, ...]] = set()
+        self._current_table_prefixes: set[tuple[str, ...]] = set()
+
+    # ------------------------------------------------------------------
+    # Cursor helpers
+    # ------------------------------------------------------------------
+
+    def _peek(self, offset: int = 0) -> str:
+        i = self._pos + offset
+        if i >= len(self._src):
+            return ""
+        return self._src[i]
+
+    def _starts_with(self, s: str) -> bool:
+        return self._src.startswith(s, self._pos)
+
+    def _eof(self) -> bool:
+        return self._pos >= len(self._src)
+
+    def _advance(self, n: int = 1) -> str:
+        s = self._src[self._pos : self._pos + n]
+        self._pos += n
+        return s
+
+    def _line_col(self, pos: int) -> tuple[int, int]:
+        line = 1
+        last_nl = -1
+        for i in range(pos):
+            if self._src[i] == "\n":
+                line += 1
+                last_nl = i
+        col = pos - last_nl
+        return line, col
+
+    def _error(self, message: str, *, at: int | None = None) -> TOMLParseError:
+        offset = self._pos if at is None else at
+        line, col = self._line_col(offset)
+        return TOMLParseError(message, line=line, col=col, offset=offset)
+
+    # ------------------------------------------------------------------
+    # Entry point
+    # ------------------------------------------------------------------
+
+    def parse(self) -> DocumentNode:
+        doc = DocumentNode()
+        current = SectionNode(header=None)
+        doc.sections.append(current)
+
+        while not self._eof():
+            leading = self._collect_trivia_block()
+            if self._eof():
+                # leading is purely trailing trivia for the document.
+                doc.trailing_trivia.pieces.extend(leading.pieces)
+                break
+
+            ch = self._peek()
+            if ch == "[":
+                header = self._parse_header(leading)
+                current = SectionNode(header=header)
+                doc.sections.append(current)
+                self._current_value_paths = set()
+                self._current_table_prefixes = set()
+            else:
+                kv = self._parse_key_value(leading)
+                self._record_keyvalue_path(kv.key)
+                current.entries.append(kv)
+
+        return doc
+
+    # ------------------------------------------------------------------
+    # Trivia
+    # ------------------------------------------------------------------
+
+    def _collect_trivia_block(self) -> Trivia:
+        """Collect whitespace, blank lines and comment lines.
+
+        Stops *before* the next non-trivia character on a line (i.e. the
+        leading whitespace of that line **is** consumed as part of the
+        block; the structural token starts at ``self._pos``).
+        """
+        trivia = Trivia()
+        while not self._eof():
+            ch = self._peek()
+            if ch in (" ", "\t"):
+                start = self._pos
+                while self._peek() in (" ", "\t"):
+                    self._pos += 1
+                trivia.pieces.append(WhitespaceNode(self._src[start : self._pos]))
+            elif ch == "#":
+                trivia.pieces.append(self._consume_comment())
+            elif ch == "\n":
+                self._pos += 1
+                trivia.pieces.append(NewlineNode("\n"))
+            elif ch == "\r":
+                if self._peek(1) != "\n":
+                    raise self._error("stray carriage return")
+                self._pos += 2
+                trivia.pieces.append(NewlineNode("\r\n"))
+            else:
+                break
+        return trivia
+
+    def _consume_comment(self) -> CommentNode:
+        start = self._pos
+        # Comment runs until newline or EOF; we do not include the newline.
+        while not self._eof() and self._peek() not in ("\n", "\r"):
+            ch = self._peek()
+            cp = ord(ch)
+            # Per TOML, control chars other than tab are not allowed in
+            # comments.
+            if cp != 0x09 and (cp <= 0x1F or cp == 0x7F):
+                raise self._error(f"invalid control character U+{cp:04X} in comment")
+            self._pos += 1
+        return CommentNode(self._src[start : self._pos])
+
+    def _consume_inline_ws(self) -> Trivia:
+        """Whitespace (no newlines, no comments)."""
+        trivia = Trivia()
+        if self._peek() in (" ", "\t"):
+            start = self._pos
+            while self._peek() in (" ", "\t"):
+                self._pos += 1
+            trivia.pieces.append(WhitespaceNode(self._src[start : self._pos]))
+        return trivia
+
+    def _consume_array_trivia(self) -> Trivia:
+        """Whitespace, newlines and comments allowed inside arrays."""
+        trivia = Trivia()
+        while not self._eof():
+            ch = self._peek()
+            if ch in (" ", "\t"):
+                start = self._pos
+                while self._peek() in (" ", "\t"):
+                    self._pos += 1
+                trivia.pieces.append(WhitespaceNode(self._src[start : self._pos]))
+            elif ch == "\n":
+                self._pos += 1
+                trivia.pieces.append(NewlineNode("\n"))
+            elif ch == "\r" and self._peek(1) == "\n":
+                self._pos += 2
+                trivia.pieces.append(NewlineNode("\r\n"))
+            elif ch == "#":
+                trivia.pieces.append(self._consume_comment())
+            else:
+                break
+        return trivia
+
+    def _consume_eol(self) -> tuple[Trivia, CommentNode | None, NewlineNode | None]:
+        trailing = self._consume_inline_ws()
+        comment: CommentNode | None = None
+        if self._peek() == "#":
+            comment = self._consume_comment()
+        newline: NewlineNode | None = None
+        if self._peek() == "\n":
+            self._pos += 1
+            newline = NewlineNode("\n")
+        elif self._peek() == "\r" and self._peek(1) == "\n":
+            self._pos += 2
+            newline = NewlineNode("\r\n")
+        elif not self._eof():
+            raise self._error(f"expected newline or end of file, got {self._peek()!r}")
+        return trailing, comment, newline
+
+    # ------------------------------------------------------------------
+    # Headers
+    # ------------------------------------------------------------------
+
+    def _parse_header(self, leading: Trivia) -> TableHeaderNode:
+        kind: HeaderKind
+        if self._starts_with("[["):
+            self._advance(2)
+            kind = "array"
+        else:
+            assert self._peek() == "["
+            self._advance(1)
+            kind = "table"
+
+        inner_pre = self._consume_inline_ws()
+        key = self._parse_key()
+        inner_post = self._consume_inline_ws()
+
+        if kind == "array":
+            if not self._starts_with("]]"):
+                raise self._error("expected ']]' to close array-of-tables header")
+            self._advance(2)
+        else:
+            if self._peek() != "]":
+                raise self._error("expected ']' to close table header")
+            self._advance(1)
+
+        trailing, comment, newline = self._consume_eol()
+
+        path = key.path
+        if kind == "table":
+            if path in self._explicit_table_paths:
+                raise self._error(f"redefinition of table {'.'.join(path)!r}")
+            if path in self._aot_paths:
+                raise self._error(
+                    f"cannot redefine array-of-tables {'.'.join(path)!r} as a normal table",
+                )
+            self._explicit_table_paths.add(path)
+        else:
+            if path in self._explicit_table_paths:
+                raise self._error(
+                    f"cannot redefine table {'.'.join(path)!r} as an array-of-tables",
+                )
+            self._aot_paths.add(path)
+
+        return TableHeaderNode(
+            leading=leading,
+            kind=kind,
+            inner_pre=inner_pre,
+            key=key,
+            inner_post=inner_post,
+            trailing=trailing,
+            trailing_comment=comment,
+            newline=newline,
+        )
+
+    # ------------------------------------------------------------------
+    # Keys
+    # ------------------------------------------------------------------
+
+    def _parse_key(self) -> Key:
+        parts: list[KeyPart] = [self._parse_key_part()]
+        separators: list[str] = []
+        while True:
+            save = self._pos
+            ws_before = self._consume_inline_ws()
+            if self._peek() != ".":
+                self._pos = save
+                break
+            self._advance(1)
+            ws_after = self._consume_inline_ws()
+            sep = ws_before.render() + "." + ws_after.render()
+            separators.append(sep)
+            parts.append(self._parse_key_part())
+        return Key(parts=parts, separators=separators)
+
+    def _parse_key_part(self) -> KeyPart:
+        ch = self._peek()
+        if ch == '"':
+            return self._parse_basic_key()
+        if ch == "'":
+            return self._parse_literal_key()
+        if ch in _BARE_KEY_CHARS:
+            start = self._pos
+            while self._peek() in _BARE_KEY_CHARS:
+                self._pos += 1
+            raw = self._src[start : self._pos]
+            return KeyPart(raw=raw, value=raw, kind="bare")
+        raise self._error(f"expected key, got {ch!r}")
+
+    def _parse_basic_key(self) -> KeyPart:
+        start = self._pos
+        s = self._parse_basic_string(allow_multiline=False)
+        raw = self._src[start : self._pos]
+        return KeyPart(raw=raw, value=s.value, kind="basic")
+
+    def _parse_literal_key(self) -> KeyPart:
+        start = self._pos
+        s = self._parse_literal_string(allow_multiline=False)
+        raw = self._src[start : self._pos]
+        return KeyPart(raw=raw, value=s.value, kind="literal")
+
+    # ------------------------------------------------------------------
+    # Key/value lines
+    # ------------------------------------------------------------------
+
+    def _parse_key_value(self, leading: Trivia) -> KeyValueNode:
+        key = self._parse_key()
+        pre_eq = self._consume_inline_ws()
+        if self._peek() != "=":
+            raise self._error(f"expected '=' after key, got {self._peek()!r}")
+        self._advance(1)
+        post_eq = self._consume_inline_ws()
+        value = self._parse_value()
+        trailing, comment, newline = self._consume_eol()
+        return KeyValueNode(
+            leading=leading,
+            key=key,
+            pre_eq=pre_eq,
+            post_eq=post_eq,
+            value=value,
+            trailing=trailing,
+            trailing_comment=comment,
+            newline=newline,
+        )
+
+    def _record_keyvalue_path(self, key: Key) -> None:
+        path = key.path
+        if path in self._current_value_paths:
+            raise self._error(f"duplicate key {'.'.join(path)!r}", at=self._pos)
+        if path in self._current_table_prefixes:
+            raise self._error(
+                f"key {'.'.join(path)!r} already used as a dotted-key prefix",
+                at=self._pos,
+            )
+        # Each proper prefix of ``path`` becomes an implicit dotted-key
+        # subtable; that path must not already have a scalar value.
+        for i in range(1, len(path)):
+            sub = path[:i]
+            if sub in self._current_value_paths:
+                raise self._error(
+                    f"key {'.'.join(sub)!r} already defined as a value",
+                    at=self._pos,
+                )
+            self._current_table_prefixes.add(sub)
+        self._current_value_paths.add(path)
+
+    # ------------------------------------------------------------------
+    # Values
+    # ------------------------------------------------------------------
+
+    def _parse_value(self) -> ValueNode:
+        ch = self._peek()
+        if ch == '"':
+            return self._parse_string('"')
+        if ch == "'":
+            return self._parse_string("'")
+        if ch == "[":
+            return self._parse_array()
+        if ch == "{":
+            return self._parse_inline_table()
+        if ch in ("t", "f"):
+            return self._parse_bool()
+        # Everything else: a number or date/time. They share a leading
+        # ambiguous prefix; sniff a window then dispatch.
+        return self._parse_number_or_datetime()
+
+    # --- strings ------------------------------------------------------
+
+    def _parse_string(self, quote: str) -> StringNode:
+        start = self._pos
+        if quote == '"':
+            multiline = self._starts_with('"""')
+            if multiline:
+                node = self._parse_basic_string(allow_multiline=True)
+            else:
+                node = self._parse_basic_string(allow_multiline=False)
+        else:
+            multiline = self._starts_with("'''")
+            if multiline:
+                node = self._parse_literal_string(allow_multiline=True)
+            else:
+                node = self._parse_literal_string(allow_multiline=False)
+        node.raw = self._src[start : self._pos]
+        return node
+
+    def _parse_basic_string(self, *, allow_multiline: bool) -> StringNode:
+        if allow_multiline and self._starts_with('"""'):
+            return self._parse_ml_basic_string()
+        if self._peek() != '"':
+            raise self._error("expected '\"' to start basic string")
+        self._advance(1)
+        out: list[str] = []
+        while True:
+            if self._eof():
+                raise self._error("unterminated basic string")
+            ch = self._peek()
+            if ch == '"':
+                self._advance(1)
+                return StringNode(raw="", value="".join(out), style="basic")
+            if ch == "\n" or (ch == "\r" and self._peek(1) == "\n"):
+                raise self._error("newline in basic string")
+            if ch == "\\":
+                out.append(self._parse_escape(multiline=False))
+                continue
+            cp = ord(ch)
+            if cp <= 0x1F and cp != 0x09:
+                raise self._error(f"invalid control character U+{cp:04X} in string")
+            if cp == 0x7F:
+                raise self._error("invalid control character U+007F in string")
+            out.append(ch)
+            self._pos += 1
+
+    def _parse_ml_basic_string(self) -> StringNode:
+        assert self._starts_with('"""')
+        self._advance(3)
+        # A newline immediately after the opening delimiter is trimmed.
+        if self._peek() == "\n":
+            self._advance(1)
+        elif self._peek() == "\r" and self._peek(1) == "\n":
+            self._advance(2)
+        out: list[str] = []
+        while True:
+            if self._eof():
+                raise self._error("unterminated multi-line basic string")
+            if self._starts_with('"""'):
+                # Up to two extra trailing quotes are allowed inside.
+                self._advance(3)
+                extras = 0
+                while extras < 2 and self._peek() == '"':
+                    out.append('"')
+                    self._advance(1)
+                    extras += 1
+                return StringNode(raw="", value="".join(out), style="ml-basic")
+            ch = self._peek()
+            if ch == "\\":
+                # Line-ending backslash: trim trailing ws+newline+leading-ws.
+                if self._peek(1) in ("\n", " ", "\t", "\r"):
+                    save = self._pos
+                    self._pos += 1
+                    # Skip trailing inline ws on this line.
+                    while self._peek() in (" ", "\t"):
+                        self._pos += 1
+                    if self._peek() == "\n" or (self._peek() == "\r" and self._peek(1) == "\n"):
+                        # Eat one or more whitespace lines.
+                        while True:
+                            if self._peek() == "\n":
+                                self._pos += 1
+                            elif self._peek() == "\r" and self._peek(1) == "\n":
+                                self._pos += 2
+                            else:
+                                break
+                            while self._peek() in (" ", "\t"):
+                                self._pos += 1
+                        continue
+                    # Not actually a line-ending backslash; rewind and
+                    # treat as a normal escape.
+                    self._pos = save
+                out.append(self._parse_escape(multiline=True))
+                continue
+            if ch == "\r":
+                if self._peek(1) != "\n":
+                    raise self._error("stray carriage return in string")
+                out.append("\r\n")
+                self._pos += 2
+                continue
+            if ch == "\n":
+                out.append("\n")
+                self._pos += 1
+                continue
+            cp = ord(ch)
+            if cp <= 0x1F and cp != 0x09:
+                raise self._error(f"invalid control character U+{cp:04X} in string")
+            if cp == 0x7F:
+                raise self._error("invalid control character U+007F in string")
+            out.append(ch)
+            self._pos += 1
+
+    def _parse_literal_string(self, *, allow_multiline: bool) -> StringNode:
+        if allow_multiline and self._starts_with("'''"):
+            return self._parse_ml_literal_string()
+        if self._peek() != "'":
+            raise self._error("expected \"'\" to start literal string")
+        self._advance(1)
+        start = self._pos
+        while True:
+            if self._eof():
+                raise self._error("unterminated literal string")
+            ch = self._peek()
+            if ch == "'":
+                value = self._src[start : self._pos]
+                self._advance(1)
+                return StringNode(raw="", value=value, style="literal")
+            if ch == "\n" or (ch == "\r" and self._peek(1) == "\n"):
+                raise self._error("newline in literal string")
+            cp = ord(ch)
+            if cp <= 0x1F and cp != 0x09:
+                raise self._error(f"invalid control character U+{cp:04X} in string")
+            if cp == 0x7F:
+                raise self._error("invalid control character U+007F in string")
+            self._pos += 1
+
+    def _parse_ml_literal_string(self) -> StringNode:
+        assert self._starts_with("'''")
+        self._advance(3)
+        if self._peek() == "\n":
+            self._advance(1)
+        elif self._peek() == "\r" and self._peek(1) == "\n":
+            self._advance(2)
+        out: list[str] = []
+        while True:
+            if self._eof():
+                raise self._error("unterminated multi-line literal string")
+            if self._starts_with("'''"):
+                self._advance(3)
+                extras = 0
+                while extras < 2 and self._peek() == "'":
+                    out.append("'")
+                    self._advance(1)
+                    extras += 1
+                return StringNode(raw="", value="".join(out), style="ml-literal")
+            ch = self._peek()
+            if ch == "\r":
+                if self._peek(1) != "\n":
+                    raise self._error("stray carriage return in string")
+                out.append("\r\n")
+                self._pos += 2
+                continue
+            cp = ord(ch)
+            if cp <= 0x1F and cp != 0x09 and cp != 0x0A:
+                raise self._error(f"invalid control character U+{cp:04X} in string")
+            if cp == 0x7F:
+                raise self._error("invalid control character U+007F in string")
+            out.append(ch)
+            self._pos += 1
+
+    def _parse_escape(self, *, multiline: bool) -> str:
+        del multiline  # behaviour identical for non-line-ending escapes
+        assert self._peek() == "\\"
+        self._advance(1)
+        ch = self._peek()
+        self._advance(1)
+        simple: dict[str, str] = {
+            "b": "\b",
+            "t": "\t",
+            "n": "\n",
+            "f": "\f",
+            "r": "\r",
+            '"': '"',
+            "\\": "\\",
+        }
+        if ch in simple:
+            return simple[ch]
+        if ch == "u":
+            return self._parse_unicode_escape(4)
+        if ch == "U":
+            return self._parse_unicode_escape(8)
+        raise self._error(f"invalid escape sequence: \\{ch}", at=self._pos - 2)
+
+    def _parse_unicode_escape(self, n: int) -> str:
+        if self._pos + n > len(self._src):
+            raise self._error(f"truncated unicode escape; expected {n} hex digits")
+        hex_str = self._src[self._pos : self._pos + n]
+        for c in hex_str:
+            if c not in _HEX_DIGITS:
+                raise self._error(f"invalid hex digit {c!r} in unicode escape")
+        self._pos += n
+        cp = int(hex_str, 16)
+        if cp > 0x10FFFF or 0xD800 <= cp <= 0xDFFF:
+            raise self._error(f"invalid unicode scalar U+{cp:04X}")
+        return chr(cp)
+
+    # --- bool ---------------------------------------------------------
+
+    def _parse_bool(self) -> BoolNode:
+        if self._starts_with("true"):
+            self._advance(4)
+            return BoolNode(raw="true", value=True)
+        if self._starts_with("false"):
+            self._advance(5)
+            return BoolNode(raw="false", value=False)
+        raise self._error("expected boolean")
+
+    # --- numbers and date-times --------------------------------------
+
+    def _parse_number_or_datetime(self) -> ValueNode:
+        # Find the end of the token (something that ends a value).
+        start = self._pos
+        end = self._scan_value_end(start)
+        token = self._src[start:end]
+        if not token:
+            raise self._error(f"expected value, got {self._peek()!r}")
+
+        # Special floats.
+        if token in ("inf", "+inf"):
+            self._pos = end
+            return FloatNode(raw=token, value=float("inf"))
+        if token == "-inf":
+            self._pos = end
+            return FloatNode(raw=token, value=float("-inf"))
+        if token in ("nan", "+nan", "-nan"):
+            self._pos = end
+            return FloatNode(raw=token, value=float("nan"))
+
+        # Date/time: ISO-8601 forms always contain '-' (date) or ':' (time)
+        # in a position that disambiguates from an integer with underscores.
+        if self._looks_like_datetime(token):
+            self._pos = end
+            return self._parse_datetime_token(token, at=start)
+
+        # Number: integer (with possible 0x/0o/0b prefix) or float.
+        if self._looks_like_float(token):
+            self._pos = end
+            return self._parse_float_token(token, at=start)
+
+        self._pos = end
+        return self._parse_integer_token(token, at=start)
+
+    def _scan_value_end(self, start: int) -> int:
+        """Return the offset of the first char that ends the current value.
+
+        Stops at whitespace, newline, ``,``, ``]``, ``}``, ``#``, EOF.
+        """
+        i = start
+        n = len(self._src)
+        while i < n:
+            c = self._src[i]
+            if c in (" ", "\t", "\n", "\r", ",", "]", "}", "#"):
+                break
+            i += 1
+        return i
+
+    def _looks_like_datetime(self, token: str) -> bool:
+        # Date: "YYYY-MM-DD"; Local time: "HH:MM:SS"; Datetime contains both.
+        if len(token) >= 5 and token[4] == "-" and token[:4].isdigit():
+            return True
+        return bool(len(token) >= 3 and token[2] == ":" and token[:2].isdigit())
+
+    def _looks_like_float(self, token: str) -> bool:
+        body = token.lstrip("+-")
+        if body.startswith(("0x", "0o", "0b")):
+            return False
+        return any(c in body for c in (".", "e", "E"))
+
+    def _parse_integer_token(self, token: str, *, at: int) -> IntegerNode:
+        style: IntStyle
+        body = token
+        if body.startswith(("0x", "0o", "0b")):
+            prefix = body[:2]
+            digits = body[2:]
+            if not digits or digits.startswith("_") or digits.endswith("_"):
+                raise self._error(f"invalid integer {token!r}", at=at)
+            allowed = {"0x": _HEX_DIGITS, "0o": _OCT_DIGITS, "0b": _BIN_DIGITS}[prefix]
+            for c in digits:
+                if c == "_":
+                    continue
+                if c not in allowed:
+                    raise self._error(f"invalid digit {c!r} in {token!r}", at=at)
+            if "__" in digits:
+                raise self._error(f"consecutive underscores in {token!r}", at=at)
+            base = {"0x": 16, "0o": 8, "0b": 2}[prefix]
+            value = int(digits.replace("_", ""), base)
+            style_map: dict[str, IntStyle] = {"0x": "hex", "0o": "oct", "0b": "bin"}
+            style = style_map[prefix]
+            return IntegerNode(raw=token, value=value, style=style)
+        # Decimal int with optional sign and underscores.
+        sign = ""
+        if body and body[0] in "+-":
+            sign = body[0]
+            body = body[1:]
+        if not body:
+            raise self._error(f"invalid integer {token!r}", at=at)
+        if body.startswith("_") or body.endswith("_"):
+            raise self._error(f"invalid integer {token!r}", at=at)
+        if "__" in body:
+            raise self._error(f"consecutive underscores in {token!r}", at=at)
+        # Leading zero rule: no leading zeros except for the value 0 itself.
+        digits_only = body.replace("_", "")
+        if not digits_only.isdigit():
+            raise self._error(f"invalid integer {token!r}", at=at)
+        if len(digits_only) > 1 and digits_only.startswith("0"):
+            raise self._error(f"leading zeros are not allowed in {token!r}", at=at)
+        value = int(sign + digits_only)
+        return IntegerNode(raw=token, value=value, style="dec")
+
+    def _parse_float_token(self, token: str, *, at: int) -> FloatNode:
+        body = token
+        sign = ""
+        if body and body[0] in "+-":
+            sign = body[0]
+            body = body[1:]
+        if "__" in body:
+            raise self._error(f"consecutive underscores in {token!r}", at=at)
+        if body.startswith("_") or body.endswith("_") or "._" in body or "_." in body:
+            raise self._error(f"misplaced underscore in {token!r}", at=at)
+
+        # Validate structure manually; ``float`` accepts forms TOML doesn't.
+        norm = body.replace("_", "")
+        # Split off exponent.
+        exp_pos = -1
+        for i, c in enumerate(norm):
+            if c in ("e", "E"):
+                exp_pos = i
+                break
+        if exp_pos != -1:
+            mantissa = norm[:exp_pos]
+            exponent = norm[exp_pos + 1 :]
+            if not exponent or (exponent[0] in "+-" and len(exponent) == 1):
+                raise self._error(f"invalid float exponent in {token!r}", at=at)
+            if exponent[0] in "+-":
+                exponent = exponent[1:]
+            if not exponent.isdigit():
+                raise self._error(f"invalid float exponent in {token!r}", at=at)
+        else:
+            mantissa = norm
+
+        if "." in mantissa:
+            int_part, _, frac_part = mantissa.partition(".")
+            if not int_part or not frac_part:
+                raise self._error(f"invalid float {token!r}", at=at)
+            if (
+                not int_part.lstrip("0").isdigit()
+                and int_part != "0"
+                and not int_part.isdigit()
+            ):
+                raise self._error(f"invalid float {token!r}", at=at)
+            if not int_part.isdigit() or not frac_part.isdigit():
+                raise self._error(f"invalid float {token!r}", at=at)
+            if len(int_part) > 1 and int_part.startswith("0"):
+                raise self._error(f"leading zeros not allowed in float {token!r}", at=at)
+        else:
+            if not mantissa.isdigit():
+                raise self._error(f"invalid float {token!r}", at=at)
+            if len(mantissa) > 1 and mantissa.startswith("0"):
+                raise self._error(f"leading zeros not allowed in float {token!r}", at=at)
+            if exp_pos == -1:
+                # No '.' and no 'e': not a float.
+                raise self._error(f"invalid float {token!r}", at=at)
+
+        value = float(sign + norm)
+        return FloatNode(raw=token, value=value)
+
+    def _parse_datetime_token(self, token: str, *, at: int) -> DateTimeNode:
+        # If the token looks like a date with a separator and the next
+        # character is a space and what follows looks like a time, fold
+        # them into one local-datetime token (TOML allows space as the
+        # date/time separator).
+        if (
+            len(token) == 10
+            and self._peek() == " "
+            and self._pos + 1 < len(self._src)
+            and self._src[self._pos + 1].isdigit()
+            and self._pos + 3 < len(self._src)
+            and self._src[self._pos + 3] == ":"
+        ):
+            extra_start = self._pos
+            self._pos += 1  # consume the space
+            extra_end = self._scan_value_end(self._pos)
+            extra = self._src[self._pos : extra_end]
+            self._pos = extra_end
+            full = token + " " + extra
+            return self._parse_datetime_text(full, at=at, raw=full, src_space_offset=extra_start)
+        return self._parse_datetime_text(token, at=at, raw=token, src_space_offset=None)
+
+    def _parse_datetime_text(
+        self,
+        text: str,
+        *,
+        at: int,
+        raw: str,
+        src_space_offset: int | None,
+    ) -> DateTimeNode:
+        del src_space_offset  # only needed for diagnostics
+        # Local time?
+        if len(text) >= 3 and text[2] == ":":
+            try:
+                value = self._parse_time_text(text)
+            except ValueError as exc:
+                raise self._error(f"invalid time {text!r}: {exc}", at=at) from exc
+            return DateTimeNode(raw=raw, value=value, kind="local-time")
+
+        # Date or datetime.
+        if len(text) < 10 or text[4] != "-" or text[7] != "-":
+            raise self._error(f"invalid date/datetime {text!r}", at=at)
+        date_part = text[:10]
+        try:
+            year = int(date_part[:4])
+            month = int(date_part[5:7])
+            day = int(date_part[8:10])
+            d = date(year, month, day)
+        except ValueError as exc:
+            raise self._error(f"invalid date {date_part!r}: {exc}", at=at) from exc
+
+        rest = text[10:]
+        if not rest:
+            return DateTimeNode(raw=raw, value=d, kind="local-date")
+        if rest[0] not in ("T", "t", " "):
+            raise self._error(f"expected date/time separator, got {rest[0]!r}", at=at)
+        time_part = rest[1:]
+        # Split off optional offset.
+        offset_pos = -1
+        for i, c in enumerate(time_part):
+            if c in ("Z", "z", "+", "-") and i >= 1:
+                offset_pos = i
+                break
+        if offset_pos == -1:
+            try:
+                t = self._parse_time_text(time_part)
+            except ValueError as exc:
+                raise self._error(f"invalid time {time_part!r}: {exc}", at=at) from exc
+            return DateTimeNode(
+                raw=raw,
+                value=datetime.combine(d, t),
+                kind="local-datetime",
+            )
+        try:
+            t = self._parse_time_text(time_part[:offset_pos])
+            tz = self._parse_offset(time_part[offset_pos:])
+        except ValueError as exc:
+            raise self._error(f"invalid datetime {text!r}: {exc}", at=at) from exc
+        dt = datetime.combine(d, t).replace(tzinfo=tz)
+        return DateTimeNode(raw=raw, value=dt, kind="offset-datetime")
+
+    def _parse_time_text(self, text: str) -> time:
+        if len(text) < 8 or text[2] != ":" or text[5] != ":":
+            raise ValueError(f"bad time format: {text!r}")
+        hh = int(text[:2])
+        mm = int(text[3:5])
+        ss = int(text[6:8])
+        rest = text[8:]
+        usec = 0
+        if rest:
+            if rest[0] != ".":
+                raise ValueError(f"bad fractional seconds in {text!r}")
+            frac = rest[1:]
+            if not frac or not frac.isdigit():
+                raise ValueError(f"bad fractional seconds in {text!r}")
+            # Truncate to 6 digits (microsecond precision) per TOML 1.0.
+            digits = (frac + "000000")[:6]
+            usec = int(digits)
+        return time(hh, mm, ss, usec)
+
+    def _parse_offset(self, text: str) -> timezone:
+        if text in ("Z", "z"):
+            return UTC
+        if len(text) != 6 or text[0] not in "+-" or text[3] != ":":
+            raise ValueError(f"bad timezone offset: {text!r}")
+        sign = 1 if text[0] == "+" else -1
+        hh = int(text[1:3])
+        mm = int(text[4:6])
+        if hh > 23 or mm > 59:
+            raise ValueError(f"timezone offset out of range: {text!r}")
+        delta = timedelta(hours=hh, minutes=mm) * sign
+        return timezone(delta)
+
+    # --- arrays -------------------------------------------------------
+
+    def _parse_array(self) -> ArrayNode:
+        assert self._peek() == "["
+        self._advance(1)
+        node = ArrayNode()
+        leading = self._consume_array_trivia()
+        if self._peek() == "]":
+            node.final_trivia = leading
+            self._advance(1)
+            return node
+        while True:
+            value = self._parse_value()
+            trailing = self._consume_array_trivia()
+            has_comma = False
+            post_comma = Trivia()
+            if self._peek() == ",":
+                self._advance(1)
+                has_comma = True
+                post_comma = self._consume_array_trivia()
+            elif self._peek() != "]":
+                raise self._error(f"expected ',' or ']' in array, got {self._peek()!r}")
+            node.items.append(
+                ArrayItem(
+                    leading=leading,
+                    value=value,
+                    trailing=trailing,
+                    has_comma=has_comma,
+                    post_comma_trivia=post_comma,
+                ),
+            )
+            if not has_comma:
+                # We're at ']'.
+                self._advance(1)
+                return node
+            leading = Trivia()  # next item's leading is empty; trivia
+            # already attached as post_comma of previous item.
+            if self._peek() == "]":
+                # Trailing comma followed by closer.
+                self._advance(1)
+                return node
+            # Next iteration starts a new value.
+
+    # --- inline tables ------------------------------------------------
+
+    def _parse_inline_table(self) -> InlineTableNode:
+        assert self._peek() == "{"
+        self._advance(1)
+        node = InlineTableNode()
+        leading = self._consume_inline_ws()
+        if self._peek() == "}":
+            node.final_trivia = leading
+            self._advance(1)
+            return node
+        # Track inline-table-local known keys.
+        seen: set[tuple[str, ...]] = set()
+        while True:
+            key = self._parse_key()
+            if key.path in seen:
+                raise self._error(f"duplicate key {'.'.join(key.path)!r} in inline table")
+            for i in range(1, len(key.path) + 1):
+                seen.add(key.path[:i])
+            pre_eq = self._consume_inline_ws()
+            if self._peek() != "=":
+                raise self._error(f"expected '=' in inline table, got {self._peek()!r}")
+            self._advance(1)
+            post_eq = self._consume_inline_ws()
+            value = self._parse_value()
+            trailing = self._consume_inline_ws()
+            has_comma = False
+            post_comma = Trivia()
+            if self._peek() == ",":
+                self._advance(1)
+                has_comma = True
+                post_comma = self._consume_inline_ws()
+            elif self._peek() != "}":
+                raise self._error(
+                    f"expected ',' or '}}' in inline table, got {self._peek()!r}",
+                )
+            node.entries.append(
+                InlineTableEntry(
+                    leading=leading,
+                    key=key,
+                    pre_eq=pre_eq,
+                    post_eq=post_eq,
+                    value=value,
+                    trailing=trailing,
+                    has_comma=has_comma,
+                    post_comma_trivia=post_comma,
+                ),
+            )
+            if not has_comma:
+                self._advance(1)
+                return node
+            # TOML 1.0 forbids a trailing comma in inline tables.
+            leading = Trivia()
+            # consumed as post_comma; following key starts after ws.
+            if self._peek() == "}":
+                raise self._error("trailing comma not allowed in inline table (TOML 1.0)")
+
+
+# Re-export convenience.
+def parse(src: str) -> DocumentNode:
+    return _Parser(src).parse()
+
+
+__all__ = ["parse"]

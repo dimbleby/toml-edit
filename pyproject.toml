@@ -1,0 +1,119 @@
+[project]
+name = "toml-edit"
+version = "0.1.0"
+description = "A fast, ergonomic, format-preserving TOML parser and writer for Python."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = []
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Software Development :: Libraries",
+  "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/dch/toml-edit"
+Source = "https://github.com/dch/toml-edit"
+
+[dependency-groups]
+dev = [
+  "pytest>=8",
+  "pytest-cov>=5",
+  "hypothesis>=6",
+  "mypy>=1.11",
+  "ruff>=0.6",
+  "tomlkit>=0.13",  # for differential/benchmark tests only
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tomle"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/tomle", "README.md", "LICENSE", "pyproject.toml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src", "tests"]
+strict = true
+warn_unreachable = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+disallow_any_unimported = true
+disallow_any_generics = true
+disallow_subclassing_any = true
+no_implicit_reexport = true
+extra_checks = true
+enable_error_code = [
+  "deprecated",
+  "explicit-override",
+  "ignore-without-code",
+  "possibly-undefined",
+  "redundant-expr",
+  "redundant-self",
+  "truthy-bool",
+  "truthy-iterable",
+  "unused-awaitable",
+]
+
+[[tool.mypy.overrides]]
+module = ["tomlkit.*"]
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+  "C90",
+  "COM",
+  "CPY",
+  "D",
+  "DOC",
+  "ERA",
+  "PD",
+  "PLR",
+  "T20",
+  "ANN401",
+  "E203",
+  "E501",
+  "S101",
+  "TRY003",
+  "EM",
+  "FBT",
+  "S105",  # parser uses "token" for raw lexical tokens, not credentials
+]
+extend-safe-fixes = ["TC"]
+unfixable = ["F841"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "SLF001", "INP001", "PT011"]
+"benches/*" = ["INP001", "T201"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.lint.flake8-type-checking]
+strict = true
+
+[tool.ruff.lint.isort]
+required-imports = ["from __future__ import annotations"]
