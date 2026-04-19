@@ -268,34 +268,27 @@ class Table(MutableMapping[str, TomlValue]):
         return f"{type(self).__name__}({{{body}}})"
 
     # ------------------------------------------------------------------
-    # Comment API (default raises; concrete subclasses override).
+    # Metadata side-channels (default raises; concrete subclasses override).
     # ------------------------------------------------------------------
 
-    def comment(self, key: str) -> str | None:  # noqa: ARG002
-        """Return the end-of-line comment text bound to ``key``.
+    @property
+    def comments(self) -> MutableMapping[str, str]:
+        """Live mapping of ``key -> end-of-line comment text``.
 
-        The leading ``#`` and a single separating space are stripped.
-        Returns ``None`` when the key has no inline comment.
+        Only keys that currently carry a comment are present; assigning
+        ``""`` or deleting a key removes its comment. Reads return the
+        comment text without the leading ``#`` or surrounding whitespace.
         """
         msg = "this table flavour does not support the comment API"
         raise TOMLEditError(msg)
 
-    def set_comment(self, key: str, text: str | None) -> None:  # noqa: ARG002
-        """Set or remove the end-of-line comment bound to ``key``.
+    @property
+    def leading_comments(self) -> MutableMapping[str, tuple[str, ...]]:
+        """Live mapping of ``key -> tuple of comment lines above it``.
 
-        Pass ``None`` to delete the comment. The supplied ``text`` may
-        omit the leading ``#``; toml-edit will add it.
+        Only keys with a non-empty leading comment block are present.
+        Assigning an empty tuple or deleting a key removes the block.
         """
-        msg = "this table flavour does not support the comment API"
-        raise TOMLEditError(msg)
-
-    def leading_comments(self, key: str) -> list[str]:  # noqa: ARG002
-        """Return the contiguous comment block immediately above ``key``."""
-        msg = "this table flavour does not support the comment API"
-        raise TOMLEditError(msg)
-
-    def set_leading_comments(self, key: str, lines: Sequence[str]) -> None:  # noqa: ARG002
-        """Replace the contiguous comment block immediately above ``key``."""
         msg = "this table flavour does not support the comment API"
         raise TOMLEditError(msg)
 
@@ -604,7 +597,7 @@ class _StdTable(Table):
         return new_sec
 
     # ------------------------------------------------------------------
-    # Comment API
+    # Comment API (live mapping side-channels)
     # ------------------------------------------------------------------
 
     def _find_direct_kv(self, key: str) -> tuple[SectionNode, KeyValueNode]:
@@ -624,54 +617,23 @@ class _StdTable(Table):
                     return sec, kv
         raise KeyError(key)
 
-    @override
-    def comment(self, key: str) -> str | None:
-        _, kv = self._find_direct_kv(key)
-        if kv.trailing_comment is None:
+    def _find_direct_kv_optional(
+        self, key: str,
+    ) -> tuple[SectionNode, KeyValueNode] | None:
+        try:
+            return self._find_direct_kv(key)
+        except KeyError:
             return None
-        return _strip_comment_marker(kv.trailing_comment.text)
 
+    @property
     @override
-    def set_comment(self, key: str, text: str | None) -> None:
-        _, kv = self._find_direct_kv(key)
-        if text is None:
-            kv.trailing_comment = None
-            return
-        if not _trivia_ends_with_space(kv.trailing):
-            kv.trailing.pieces.append(WhitespaceNode(" "))
-        kv.trailing_comment = CommentNode(text=_format_comment(text))
-        if kv.newline is None:
-            kv.newline = NewlineNode("\n")
+    def comments(self) -> MutableMapping[str, str]:
+        return _TableCommentsView(self)
 
+    @property
     @override
-    def leading_comments(self, key: str) -> list[str]:
-        _, kv = self._find_direct_kv(key)
-        return [
-            _strip_comment_marker(p.text)
-            for p in kv.leading.pieces
-            if isinstance(p, CommentNode)
-        ]
-
-    @override
-    def set_leading_comments(self, key: str, lines: Sequence[str]) -> None:
-        _, kv = self._find_direct_kv(key)
-        indent = _kv_indent(kv)
-        # Preserve the trailing whitespace run that anchored the key
-        # to its column (everything after the last non-whitespace
-        # piece of the existing leading trivia).
-        tail: list[TriviaPiece] = []
-        for piece in reversed(kv.leading.pieces):
-            if isinstance(piece, WhitespaceNode):
-                tail.insert(0, piece)
-            else:
-                break
-        new_pieces: list[TriviaPiece] = []
-        for line in lines:
-            if indent:
-                new_pieces.append(WhitespaceNode(indent))
-            new_pieces.append(CommentNode(text=_format_comment(line)))
-            new_pieces.append(NewlineNode("\n"))
-        kv.leading.pieces = new_pieces + tail
+    def leading_comments(self) -> MutableMapping[str, tuple[str, ...]]:
+        return _TableLeadingCommentsView(self)
 
     @override
     def promote_inline(self, key: str) -> Table:
@@ -729,6 +691,168 @@ class Document(_StdTable):
 
     def render(self) -> str:
         return self._node.render()
+
+
+# ---------------------------------------------------------------------------
+# Comment views
+# ---------------------------------------------------------------------------
+
+
+class _TableCommentsView(MutableMapping[str, str]):
+    """Live mapping from key name to end-of-line comment text.
+
+    Backed by a :class:`_StdTable`; a key is "present" iff its
+    ``KeyValueNode`` currently carries a ``trailing_comment``. Setting
+    an empty string removes the comment, mirroring ``del``.
+    """
+
+    __slots__ = ("_table",)
+
+    def __init__(self, table: _StdTable) -> None:
+        self._table = table
+
+    def _commented_kvs(self) -> Iterator[tuple[str, KeyValueNode]]:
+        for sec in self._table._direct_sections():  # noqa: SLF001
+            for kv in sec.entries:
+                if (
+                    kv.trailing_comment is not None
+                    and kv.key.path
+                    and len(kv.key.path) == 1
+                ):
+                    yield kv.key.path[0], kv
+
+    @override
+    def __getitem__(self, key: str) -> str:
+        _, kv = self._table._find_direct_kv(key)  # noqa: SLF001
+        if kv.trailing_comment is None:
+            raise KeyError(key)
+        return _strip_comment_marker(kv.trailing_comment.text)
+
+    @override
+    def __setitem__(self, key: str, value: str) -> None:
+        _, kv = self._table._find_direct_kv(key)  # noqa: SLF001
+        if value == "":
+            kv.trailing_comment = None
+            return
+        if not _trivia_ends_with_space(kv.trailing):
+            kv.trailing.pieces.append(WhitespaceNode(" "))
+        kv.trailing_comment = CommentNode(text=_format_comment(value))
+        if kv.newline is None:
+            kv.newline = NewlineNode("\n")
+
+    @override
+    def __delitem__(self, key: str) -> None:
+        _, kv = self._table._find_direct_kv(key)  # noqa: SLF001
+        if kv.trailing_comment is None:
+            raise KeyError(key)
+        kv.trailing_comment = None
+
+    @override
+    def __iter__(self) -> Iterator[str]:
+        for k, _ in self._commented_kvs():
+            yield k
+
+    @override
+    def __len__(self) -> int:
+        return sum(1 for _ in self._commented_kvs())
+
+    @override
+    def __contains__(self, key: object) -> bool:
+        if not isinstance(key, str):
+            return False
+        found = self._table._find_direct_kv_optional(key)  # noqa: SLF001
+        return found is not None and found[1].trailing_comment is not None
+
+    @override
+    def __repr__(self) -> str:
+        body = ", ".join(f"{k!r}: {v!r}" for k, v in self.items())
+        return f"{type(self).__name__}({{{body}}})"
+
+
+class _TableLeadingCommentsView(MutableMapping[str, "tuple[str, ...]"]):
+    """Live mapping from key name to its leading comment block.
+
+    The block is the contiguous run of ``# ...`` lines immediately
+    above the entry's source line (with their newlines), as stored in
+    the entry's ``leading`` trivia. A key is "present" iff that run is
+    non-empty.
+    """
+
+    __slots__ = ("_table",)
+
+    def __init__(self, table: _StdTable) -> None:
+        self._table = table
+
+    @staticmethod
+    def _extract_block(kv: KeyValueNode) -> tuple[str, ...]:
+        return tuple(
+            _strip_comment_marker(p.text)
+            for p in kv.leading.pieces
+            if isinstance(p, CommentNode)
+        )
+
+    @override
+    def __getitem__(self, key: str) -> tuple[str, ...]:
+        _, kv = self._table._find_direct_kv(key)  # noqa: SLF001
+        block = self._extract_block(kv)
+        if not block:
+            raise KeyError(key)
+        return block
+
+    @override
+    def __setitem__(self, key: str, value: Sequence[str]) -> None:
+        _, kv = self._table._find_direct_kv(key)  # noqa: SLF001
+        # Preserve the trailing whitespace run that anchored the key
+        # to its column, then rewrite the comment block in front of it.
+        tail: list[TriviaPiece] = []
+        for piece in reversed(kv.leading.pieces):
+            if isinstance(piece, WhitespaceNode):
+                tail.insert(0, piece)
+            else:
+                break
+        new_pieces: list[TriviaPiece] = []
+        if value:
+            indent = _kv_indent(kv)
+            for line in value:
+                if indent:
+                    new_pieces.append(WhitespaceNode(indent))
+                new_pieces.append(CommentNode(text=_format_comment(line)))
+                new_pieces.append(NewlineNode("\n"))
+        kv.leading.pieces = new_pieces + tail
+
+    @override
+    def __delitem__(self, key: str) -> None:
+        _, kv = self._table._find_direct_kv(key)  # noqa: SLF001
+        if not self._extract_block(kv):
+            raise KeyError(key)
+        self[key] = ()
+
+    @override
+    def __iter__(self) -> Iterator[str]:
+        for sec in self._table._direct_sections():  # noqa: SLF001
+            for kv in sec.entries:
+                if (
+                    kv.key.path
+                    and len(kv.key.path) == 1
+                    and self._extract_block(kv)
+                ):
+                    yield kv.key.path[0]
+
+    @override
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
+
+    @override
+    def __contains__(self, key: object) -> bool:
+        if not isinstance(key, str):
+            return False
+        found = self._table._find_direct_kv_optional(key)  # noqa: SLF001
+        return found is not None and bool(self._extract_block(found[1]))
+
+    @override
+    def __repr__(self) -> str:
+        body = ", ".join(f"{k!r}: {list(v)!r}" for k, v in self.items())
+        return f"{type(self).__name__}({{{body}}})"
 
 
 # ---------------------------------------------------------------------------
