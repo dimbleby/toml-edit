@@ -246,9 +246,15 @@ class _Parser:
 
     def _consume_inline_ws(self) -> WhitespaceNode | None:
         """Whitespace (no newlines, no comments)."""
-        m = _RE_INLINE_WS.match(self._src, self._pos)
-        if m is None:
+        pos = self._pos
+        if pos >= self._end:
             return None
+        ch = self._src[pos]
+        if ch != " " and ch != "\t":
+            return None
+        m = _RE_INLINE_WS.match(self._src, pos)
+        # Pattern matches at least one ws char given the peek above.
+        assert m is not None
         self._pos = m.end()
         return WhitespaceNode(m.group(0))
 
