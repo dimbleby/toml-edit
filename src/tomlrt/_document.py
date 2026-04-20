@@ -752,6 +752,27 @@ def _section_insert_index(
 # ---------------------------------------------------------------------------
 
 
+class _SectionSpec(dict[str, Any]):
+    """Internal: spec object produced by :meth:`Table.section`.
+
+    When assigned into a document via ``doc[k] = Table.section({...})``,
+    ``__setitem__`` installs a ``[k]`` standard section.
+    """
+
+    __slots__ = ()
+
+
+class _InlineSpec(dict[str, Any]):
+    """Internal: spec object produced by :meth:`Table.inline`.
+
+    Indistinguishable from a plain :class:`dict` at runtime apart from
+    the class identity, which makes the "explicit inline" intent
+    visible at the assignment site.
+    """
+
+    __slots__ = ()
+
+
 class Table(dict[str, Any]):
     """A logical TOML table.
 
@@ -800,6 +821,42 @@ class Table(dict[str, Any]):
     def __init__(self) -> None:
         super().__init__()
         self._attached = True
+
+    # --- factories ---------------------------------------------------------
+
+    @classmethod
+    def section(
+        cls,
+        mapping: Mapping[str, object] | None = None,
+    ) -> _SectionSpec:
+        """Return a spec that installs as a ``[k]`` standard section.
+
+        Use from an assignment site: ``doc[k] = Table.section({...})``.
+        The spec is a dict subclass; you can build it up further before
+        assignment (``spec["sub"] = ...``). Nested dicts in the mapping
+        remain inline unless they are themselves :meth:`section` specs.
+        """
+        spec = _SectionSpec()
+        if mapping is not None:
+            spec.update(mapping)
+        return spec
+
+    @classmethod
+    def inline(
+        cls,
+        mapping: Mapping[str, object] | None = None,
+    ) -> _InlineSpec:
+        """Return a spec that installs as an inline ``k = { ... }`` table.
+
+        Use when you want to force the inline flavour explicitly; a
+        plain ``dict`` value already renders inline, so this is mostly
+        useful for readability or when a path otherwise prefers the
+        section flavour.
+        """
+        spec = _InlineSpec()
+        if mapping is not None:
+            spec.update(mapping)
+        return spec
 
     # --- subclass hooks ----------------------------------------------------
 
@@ -862,6 +919,16 @@ class Table(dict[str, Any]):
         if not self._attached:
             dict.__setitem__(self, key, value)
             return
+        # Flavour-bearing values drive structural installation rather
+        # than a raw value write. Attached Arrays/AoTs from another
+        # document fall through to the deepcopy path so their full CST
+        # (comments, formatting) survives the copy; only _SectionSpec,
+        # standalone AoTs, and standalone Arrays need structural work.
+        if isinstance(value, _SectionSpec) or (
+            isinstance(value, (AoT, Array)) and not value._attached  # noqa: SLF001
+        ):
+            self._install_flavoured(key, value)
+            return
         # If we're replacing an existing container, detach the old one
         # so any held references stop reflecting later edits.
         if super().__contains__(key):
@@ -870,6 +937,26 @@ class Table(dict[str, Any]):
                 old._detach()  # noqa: SLF001
         self._set_value(key, value)
         self._refresh_key(key)
+
+    def _install_flavoured(self, key: str, value: object) -> None:  # noqa: ARG002
+        """Route a flavour-bearing value through the structural installers.
+
+        Subclasses that support structural assignment (``_StdTable``,
+        ``Document``) override this. The base implementation rejects
+        the assignment because inline/dotted-sub tables cannot hold
+        ``[k]`` sections or ``[[k]]`` array-of-tables.
+        """
+        if isinstance(value, _SectionSpec):
+            msg = (
+                "cannot assign a Table.section() spec here: the containing "
+                "table is not section-backed"
+            )
+        else:
+            msg = (
+                "cannot assign an array-of-tables here: the containing "
+                "table is not section-backed"
+            )
+        raise TOMLError(msg)
 
     @override
     def __delitem__(self, key: str) -> None:
@@ -2094,10 +2181,38 @@ class _StdTable(Table):
         else:
             insert_at = len(sections)
         _insert_section_block(self._doc_node, insert_at, new_secs)
-        aot = AoT(self._doc_node, child_path, [])
+        aot = AoT._attached_to(self._doc_node, child_path, [])  # noqa: SLF001
         aot._resync()  # noqa: SLF001
         dict.__setitem__(self, key, aot)
         return aot
+
+    @override
+    def _install_flavoured(self, key: str, value: object) -> None:
+        parts = _parse_key_path(key)
+        if isinstance(value, _SectionSpec):
+            self._install_section(parts, value)
+            return
+        if isinstance(value, AoT):
+            # Snapshot entries as plain dicts so the target is fully
+            # independent of the source (which might be attached to a
+            # different document).
+            entries = [t.to_dict() for t in value]
+            self._install_aot(parts, entries)
+            return
+        if isinstance(value, Array) and not value._attached:  # noqa: SLF001
+            # Standalone Arrays are specs: re-synthesise at the target
+            # with the requested layout. Attached Arrays take the
+            # deepcopy path below so comments/formatting survive.
+            multiline = value.multiline
+            items = list(value)
+            self._install_array(
+                parts,
+                items,
+                multiline=multiline,
+                indent="    ",
+            )
+            return
+        super()._install_flavoured(key, value)  # pragma: no cover
 
     @override
     def set_aot(
@@ -2119,7 +2234,7 @@ class _StdTable(Table):
                 self._purge_conflicting(parts[0])
         else:
             self._doc_node.purge_path(full_path)
-        aot = AoT(self._doc_node, full_path, [])
+        aot = AoT._attached_to(self._doc_node, full_path, [])  # noqa: SLF001
         new_secs: list[SectionNode] = []
         for entry in entries:
             sec = aot._make_header_section()  # noqa: SLF001
@@ -2641,11 +2756,38 @@ class Array(list[Any]):
 
     __slots__ = ("_attached", "_node", "_style")
 
-    def __init__(self, node: ArrayNode) -> None:
-        self._node = node
-        self._style = _sample_separator_style(node.items, node.final_trivia)
-        self._attached = True
-        super().__init__(_materialise_array(node))
+    def __init__(
+        self,
+        items: Iterable[object] | ArrayNode = (),
+        *,
+        multiline: bool = False,
+        indent: str = "    ",
+    ) -> None:
+        """Construct a standalone array or wrap an existing CST node.
+
+        Public use: ``Array([1, 2, 3])`` builds an inline array;
+        ``Array([1, 2, 3], multiline=True)`` lays it out one item per
+        line with ``indent`` indentation. Such an array is *detached*
+        until assigned into a document (``doc[k] = arr``).
+
+        Passing an :class:`ArrayNode` directly is the internal
+        attached-construction path used by the parser and CST walkers.
+        """
+        if isinstance(items, ArrayNode):
+            self._node = items
+            self._attached = True
+        else:
+            from tomlrt._synthesise import _list_to_array_node  # noqa: PLC0415
+
+            self._node = _list_to_array_node(list(items))  # type: ignore[arg-type]
+            self._attached = False
+        self._style = _sample_separator_style(
+            self._node.items,
+            self._node.final_trivia,
+        )
+        super().__init__(_materialise_array(self._node))
+        if not self._attached and multiline:
+            self.set_multiline(multiline=True, indent=indent)
 
     def _detach(self) -> None:
         self._attached = False
@@ -2930,14 +3072,43 @@ class AoT(list[Table]):
 
     def __init__(
         self,
+        entries: Iterable[Mapping[str, object]] = (),
+    ) -> None:
+        """Construct a standalone array-of-tables.
+
+        Each of ``entries`` (a dict-shaped mapping or :class:`Table`)
+        is materialised into a ``[[_]]`` section in an internal orphan
+        document, so all the usual list mutators (``append``, ``insert``,
+        ``extend``, ``pop``, ``__setitem__`` of slots) keep working
+        pre-assignment. On ``doc[k] = aot``, the pending sections are
+        rewritten to ``[[k]]`` and merged into the target document.
+
+        The 3-argument internal form (``doc_node``, ``path``,
+        ``tables``) used by the parser/CST walkers remains available
+        via :meth:`_attached_to`.
+        """
+        path: tuple[str, ...] = ("_",)
+        doc_node = DocumentNode(sections=[])
+        super().__init__()
+        self._doc_node: DocumentNode = doc_node
+        self._path = path
+        self._attached = False
+        for entry in entries:
+            self._insert_at(len(self), entry)
+
+    @classmethod
+    def _attached_to(
+        cls,
         doc_node: DocumentNode,
         path: tuple[str, ...],
         tables: list[Table],
-    ) -> None:
-        super().__init__(tables)
-        self._doc_node = doc_node
-        self._path = path
-        self._attached = True
+    ) -> AoT:
+        obj = cls.__new__(cls)
+        list.__init__(obj, tables)
+        obj._doc_node = doc_node  # noqa: SLF001
+        obj._path = path  # noqa: SLF001
+        obj._attached = True  # noqa: SLF001
+        return obj
 
     def _detach(self, doc_node: DocumentNode | None = None) -> None:
         if not self._attached:
@@ -3269,7 +3440,7 @@ def _iter_table(
             tables: list[Table] = [
                 _StdTable(doc_node, (*path, head), anchor=s) for s in aot_secs
             ]
-            yield head, AoT(doc_node, (*path, head), tables)
+            yield head, AoT._attached_to(doc_node, (*path, head), tables)  # noqa: SLF001
             continue
 
         # Split into "terminal" (binds a value at this name) and
