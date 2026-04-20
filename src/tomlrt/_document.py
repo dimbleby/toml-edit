@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     from tomlrt._nodes import (
         ArrayItem,
         DocumentNode,
+        HeaderKind,
         TriviaPiece,
         ValueNode,
     )
@@ -568,6 +569,54 @@ def _array_indent(arr: ArrayNode) -> str:
     return " "
 
 
+def _new_section(
+    path: tuple[str, ...],
+    *,
+    kind: HeaderKind = "table",
+    leading: Trivia | None = None,
+    trailing: WhitespaceNode | None = None,
+    trailing_comment: CommentNode | None = None,
+) -> SectionNode:
+    """Build an empty ``[path]`` (or ``[[path]]``) section.
+
+    Trivia defaults to empty; pass ``leading`` / ``trailing`` /
+    ``trailing_comment`` to carry over comment material from a node
+    that the new section is replacing (used by the promotion paths).
+    """
+    parts = [make_key_part(p) for p in path]
+    seps = ["."] * (len(parts) - 1)
+    header = TableHeaderNode(
+        leading=leading if leading is not None else Trivia(),
+        kind=kind,
+        inner_pre=None,
+        key=Key(parts=parts, separators=seps),
+        inner_post=None,
+        trailing=trailing,
+        trailing_comment=trailing_comment,
+        newline=NewlineNode("\n"),
+    )
+    return SectionNode(header=header, entries=[])
+
+
+def _kv_from_inline_entry(entry: InlineTableEntry, *, deep: bool) -> KeyValueNode:
+    """Wrap an inline-table entry as a standalone ``key = value`` KV.
+
+    Used by the promotion paths to convert inline-table contents into
+    section entries. ``deep=True`` deep-clones the key and value (used
+    when the source might still be reachable from elsewhere).
+    """
+    return KeyValueNode(
+        leading=Trivia(),
+        key=deepcopy(entry.key) if deep else entry.key,
+        pre_eq=WhitespaceNode(" "),
+        post_eq=WhitespaceNode(" "),
+        value=deepcopy(entry.value) if deep else entry.value,
+        trailing=None,
+        trailing_comment=None,
+        newline=NewlineNode("\n"),
+    )
+
+
 def _build_promoted_section(
     path: tuple[str, ...],
     inline: InlineTableNode,
@@ -579,32 +628,13 @@ def _build_promoted_section(
     ``leading`` trivia) and any inline EOL comment are carried over to
     the new header so authoring intent is preserved.
     """
-    parts = [make_key_part(p) for p in path]
-    seps = ["."] * (len(parts) - 1)
-    header = TableHeaderNode(
+    section = _new_section(
+        path,
         leading=Trivia(list(source_kv.leading.pieces)),
-        kind="table",
-        inner_pre=None,
-        key=Key(parts=parts, separators=seps),
-        inner_post=None,
         trailing=source_kv.trailing,
         trailing_comment=source_kv.trailing_comment,
-        newline=NewlineNode("\n"),
     )
-    section = SectionNode(header=header, entries=[])
-    for entry in inline.entries:
-        section.entries.append(
-            KeyValueNode(
-                leading=Trivia(),
-                key=entry.key,
-                pre_eq=WhitespaceNode(" "),
-                post_eq=WhitespaceNode(" "),
-                value=entry.value,
-                trailing=None,
-                trailing_comment=None,
-                newline=NewlineNode("\n"),
-            ),
-        )
+    section.entries = [_kv_from_inline_entry(e, deep=False) for e in inline.entries]
     return section
 
 
@@ -617,32 +647,8 @@ def _build_promoted_aot_section(
     Used by :meth:`Table.promote_array` to convert each element of an
     inline array of inline tables into its own AoT entry.
     """
-    parts = [make_key_part(p) for p in path]
-    seps = ["."] * (len(parts) - 1)
-    header = TableHeaderNode(
-        leading=Trivia(),
-        kind="array",
-        inner_pre=None,
-        key=Key(parts=parts, separators=seps),
-        inner_post=None,
-        trailing=None,
-        trailing_comment=None,
-        newline=NewlineNode("\n"),
-    )
-    section = SectionNode(header=header, entries=[])
-    for entry in inline.entries:
-        section.entries.append(
-            KeyValueNode(
-                leading=Trivia(),
-                key=deepcopy(entry.key),
-                pre_eq=WhitespaceNode(" "),
-                post_eq=WhitespaceNode(" "),
-                value=deepcopy(entry.value),
-                trailing=None,
-                trailing_comment=None,
-                newline=NewlineNode("\n"),
-            ),
-        )
+    section = _new_section(path, kind="array")
+    section.entries = [_kv_from_inline_entry(e, deep=True) for e in inline.entries]
     return section
 
 
@@ -732,23 +738,6 @@ def _section_insert_index(
     if last_sibling < 0:
         return len(sections)
     return last_sibling + 1
-
-
-def _build_section(path: tuple[str, ...]) -> SectionNode:
-    """Build an empty ``[path]`` standard-table section."""
-    parts = [make_key_part(p) for p in path]
-    seps = ["."] * (len(parts) - 1)
-    header = TableHeaderNode(
-        leading=Trivia(),
-        kind="table",
-        inner_pre=None,
-        key=Key(parts=parts, separators=seps),
-        inner_post=None,
-        trailing=None,
-        trailing_comment=None,
-        newline=NewlineNode("\n"),
-    )
-    return SectionNode(header=header, entries=[])
 
 
 # ---------------------------------------------------------------------------
@@ -1563,19 +1552,9 @@ class _StdTable(Table):
         Falls back to appending when there is no descendant.
         """
         doc_node = self._doc_view._node  # noqa: SLF001
-        parts = [make_key_part(p) for p in self._path]
-        seps = ["."] * (len(parts) - 1)
-        header = TableHeaderNode(
-            leading=Trivia(),
-            kind="table",
-            inner_pre=None,
-            key=Key(parts=parts, separators=seps),
-            inner_post=None,
-            trailing=None,
-            trailing_comment=None,
-            newline=NewlineNode("\n"),
-        )
-        new_sec = SectionNode(header=header, entries=[])
+        new_sec = _new_section(self._path)
+        assert new_sec.header is not None
+        header = new_sec.header
         plen = len(self._path)
         for i, sec in enumerate(doc_node.sections):
             h = sec.header
@@ -1798,7 +1777,7 @@ class _StdTable(Table):
                 self._purge_conflicting(parts[0])
         else:
             _purge_path(self._doc_view, full_path)
-        new_sec = _build_section(full_path)
+        new_sec = _new_section(full_path)
         sections = self._doc_view._node.sections  # noqa: SLF001
         insert_at = _section_insert_index(sections, full_path)
         _insert_section_block(sections, insert_at, [new_sec])
@@ -2540,21 +2519,7 @@ class AoT(list[Table]):
             )
 
     def _make_header_section(self) -> SectionNode:
-        # Build a [[path]] header.
-        parts = [make_key_part(p) for p in self._path]
-        seps = ["."] * (len(parts) - 1)
-        key = Key(parts=parts, separators=seps)
-        header = TableHeaderNode(
-            leading=Trivia(),
-            kind="array",
-            inner_pre=None,
-            key=key,
-            inner_post=None,
-            trailing=None,
-            trailing_comment=None,
-            newline=NewlineNode("\n"),
-        )
-        return SectionNode(header=header, entries=[])
+        return _new_section(self._path, kind="array")
 
     def _populate_section(self, sec: SectionNode, value: object) -> None:
         """Fill ``sec`` with KV entries derived from ``value``.
