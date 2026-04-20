@@ -391,6 +391,89 @@ class DocumentNode:
             "".join(s.render() for s in self.sections) + self.trailing_trivia.render()
         )
 
+    def has_content(self) -> bool:
+        """True if the document has any header or KV entry."""
+        return any(s.header is not None or s.entries for s in self.sections)
+
+    def preamble_target(self) -> Trivia:
+        """Trivia block that holds the document's preamble comments.
+
+        That's the leading trivia of the first structural node, or the
+        trailing trivia of the document if there is no structural node.
+        """
+        for sec in self.sections:
+            if sec.header is not None:
+                return sec.header.leading
+            if sec.entries:
+                return sec.entries[0].leading
+        return self.trailing_trivia
+
+    def purge_path(self, full_path: tuple[str, ...]) -> None:
+        """Remove every node addressable as ``full_path``.
+
+        Drops sections whose header is at or under ``full_path``
+        (purging children too), and drops KV entries in ancestor
+        sections whose head key would steer descent into ``full_path``.
+        """
+        plen = len(full_path)
+        sections = self.sections
+        sections[:] = [
+            sec
+            for sec in sections
+            if not (
+                sec.header is not None
+                and len(sec.header.key.path) >= plen
+                and sec.header.key.path[:plen] == full_path
+            )
+        ]
+        for sec in sections:
+            sec_path: tuple[str, ...] = (
+                () if sec.header is None else sec.header.key.path
+            )
+            if len(sec_path) >= plen or full_path[: len(sec_path)] != sec_path:
+                continue
+            conflict_key = full_path[len(sec_path)]
+            sec.entries[:] = [
+                kv for kv in sec.entries if kv.key.path[0] != conflict_key
+            ]
+
+    def aot_owned_range(self, aot_sec: SectionNode) -> list[SectionNode]:
+        """Sections owned by this AoT entry.
+
+        Owned = sections that come *after* ``aot_sec`` in document
+        order and whose header path strictly extends this AoT's path.
+        The range ends at the next [[same-path]] header or any other
+        section that doesn't extend ``aot_sec``'s path.
+        """
+        if aot_sec.header is None:
+            return []
+        aot_path = aot_sec.header.key.path
+        sections = self.sections
+        i = -1
+        for idx, candidate in enumerate(sections):
+            if candidate is aot_sec:
+                i = idx
+                break
+        if i < 0:
+            return []
+        owned: list[SectionNode] = []
+        for j in range(i + 1, len(sections)):
+            sec = sections[j]
+            hdr = sec.header
+            if hdr is None:
+                # The synthetic root section appears only at index 0;
+                # safe to stop.
+                break
+            hpath = hdr.key.path
+            if hdr.kind == "array" and hpath == aot_path:
+                break  # next AoT entry of same path — terminate
+            if len(hpath) > len(aot_path) and hpath[: len(aot_path)] == aot_path:
+                owned.append(sec)
+            else:
+                # sibling or outer section — terminate ownership
+                break
+        return owned
+
 
 __all__ = [
     "ArrayItem",
