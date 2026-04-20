@@ -23,6 +23,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Table.get_table(key, default=None)`, `Table.get_array(...)`,
+  `Table.get_aot(...)` and the analogous `Array.get_table(index, ...)`
+  / `Array.get_array(index, ...)` are typed-but-optional accessors.
+  They mirror the strict `.table()` / `.array()` / `.aot()` accessors
+  but return ``default`` (or ``None``) when the key/index is missing,
+  rather than raising. A wrong-type entry still raises
+  :class:`TypeError`: missing is "no answer", wrong shape is a bug.
+  Overloads preserve the type of a user-supplied default.
 - `Table.to_dict()` / `Array.to_list()` / `AoT.to_list()` return a deep,
   plain-Python copy of the view, walking nested tomlrt views into real
   `dict` / `list` containers. Intended for the interop boundary with
