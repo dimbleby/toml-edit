@@ -809,13 +809,11 @@ class Table(dict[str, Any]):
     def _items(self) -> Iterator[tuple[str, TomlValue]]:  # pragma: no cover
         raise NotImplementedError
 
-    def _set_value(self, key: str, value: object) -> None:  # noqa: ARG002, pragma: no cover
-        msg = "this table flavour does not support mutation"
-        raise TOMLError(msg)
+    def _set_value(self, key: str, value: object) -> None:  # pragma: no cover
+        raise NotImplementedError
 
-    def _delete_value(self, key: str) -> None:  # noqa: ARG002, pragma: no cover
-        msg = "this table flavour does not support mutation"
-        raise TOMLError(msg)
+    def _delete_value(self, key: str) -> None:  # pragma: no cover
+        raise NotImplementedError
 
     # --- dict-storage sync helpers -----------------------------------------
 
@@ -2043,35 +2041,24 @@ class _StdTable(Table):
         return view
 
     def _install_at_path(self, parts: tuple[str, ...], obj: object) -> None:
-        """Install ``obj`` at the leaf of ``parts``, creating intermediate
-        implicit super-tables as needed in dict storage.
+        """Install ``obj`` at the leaf of ``parts``, materialising any
+        intermediate implicit super-tables in dict storage as we go.
 
         CST mutations are assumed to have already been performed; this
         method only reconciles the dict-storage view.
         """
         cur: Table = self
-        for i, part in enumerate(parts[:-1]):
-            if super(Table, cur).__contains__(part):
-                child = super(Table, cur).__getitem__(part)
-                if not isinstance(child, Table):
-                    # Replaced en route: refresh from CST.
-                    cur._refresh_key(part)  # noqa: SLF001
-                    child = super(Table, cur).__getitem__(part)
-                    assert isinstance(child, Table)
-                cur = child
-            else:
-                # Materialise the intermediate from the CST (it must exist
-                # there now after the structural mutation).
+        for part in parts[:-1]:
+            existing = super(Table, cur).get(part)
+            if not isinstance(existing, Table):
+                # Either absent (implicit super-table just materialised
+                # in the CST) or replaced by a non-table en route: refresh
+                # from the CST so dict storage matches.
                 cur._refresh_key(part)  # noqa: SLF001
-                next_cur = super(Table, cur).__getitem__(part)
-                assert isinstance(next_cur, Table)
-                cur = next_cur
-            # Avoid descending past the new branch we're installing into:
-            # break early if we've reached the parent of the leaf.
-            if i == len(parts) - 2:
-                break
-        leaf = parts[-1]
-        super(Table, cur).__setitem__(leaf, obj)
+            nxt = super(Table, cur).__getitem__(part)
+            assert isinstance(nxt, Table)
+            cur = nxt
+        super(Table, cur).__setitem__(parts[-1], obj)
 
 
 class Document(_StdTable):
