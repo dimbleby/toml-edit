@@ -20,9 +20,13 @@ from typing import (
     SupportsIndex,
     TypeAlias,
     TypeVar,
-    assert_never,
     overload,
 )
+
+if sys.version_info >= (3, 11):
+    from typing import assert_never
+else:
+    from typing_extensions import assert_never
 
 if sys.version_info >= (3, 12):
     from typing import override
