@@ -518,3 +518,50 @@ def test_aot_add_blank_separates_consecutive_entries() -> None:
     out = tomlrt.dumps(doc)
     # Same blank-separation behaviour as append, since add wraps it.
     assert 'name = "a"\n\n[[pkg]]' in out
+
+
+# ---------------------------------------------------------------------------
+# Array.append/extend/insert/__setitem__ accept dict & list at type level
+# ---------------------------------------------------------------------------
+
+
+def test_array_append_dict_synthesises_inline_table() -> None:
+    doc = tomlrt.parse("xs = []\n")
+    arr = doc.array("xs")
+    arr.append({"a": 1})
+    out = tomlrt.dumps(doc)
+    assert "{ a = 1 }" in out
+    parsed = _reparses(out)
+    assert parsed == {"xs": [{"a": 1}]}
+
+
+def test_array_append_list_synthesises_inline_array() -> None:
+    doc = tomlrt.parse("xs = []\n")
+    arr = doc.array("xs")
+    arr.append([1, 2, 3])
+    parsed = _reparses(tomlrt.dumps(doc))
+    assert parsed == {"xs": [[1, 2, 3]]}
+
+
+def test_array_extend_mixed_python_containers() -> None:
+    doc = tomlrt.parse("xs = []\n")
+    arr = doc.array("xs")
+    arr.extend([{"a": 1}, [1, 2], "three"])
+    parsed = _reparses(tomlrt.dumps(doc))
+    assert parsed == {"xs": [{"a": 1}, [1, 2], "three"]}
+
+
+def test_array_insert_dict() -> None:
+    doc = tomlrt.parse("xs = [1, 3]\n")
+    arr = doc.array("xs")
+    arr.insert(1, {"k": "v"})
+    parsed = _reparses(tomlrt.dumps(doc))
+    assert parsed == {"xs": [1, {"k": "v"}, 3]}
+
+
+def test_array_setitem_replaces_with_dict() -> None:
+    doc = tomlrt.parse("xs = [1, 2, 3]\n")
+    arr = doc.array("xs")
+    arr[1] = {"k": "v"}
+    parsed = _reparses(tomlrt.dumps(doc))
+    assert parsed == {"xs": [1, {"k": "v"}, 3]}

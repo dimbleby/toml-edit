@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `Array.append` / `extend` / `insert` / `__setitem__` now type their
+  input parameter as ``object`` instead of the narrower ``TomlValue``
+  alias, matching ``Table.__setitem__`` and the underlying
+  ``value_to_node`` converter. At runtime they always accepted
+  arbitrary Python values (plain ``dict`` -> inline table, plain
+  ``list`` -> inline array); the annotations were lying.
 - Synthesised inline arrays no longer carry padding spaces inside the
   brackets. ``[1, 2, 3]`` instead of ``[ 1, 2, 3 ]``, and ``[1]``
   instead of ``[ 1 ]``. Inter-element spaces are unchanged. Inline

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import operator
 import sys
-from collections.abc import Mapping, MutableMapping
+from collections.abc import Iterable, Mapping, MutableMapping
 from copy import deepcopy
 from datetime import date, datetime, time
 from types import MappingProxyType
@@ -47,7 +47,7 @@ from tomlrt._synthesise import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator, Sequence
+    from collections.abc import Callable, Iterator, Sequence
 
     if sys.version_info >= (3, 11):
         from typing import Self
@@ -2264,7 +2264,7 @@ class Array(list[TomlValue]):
         _apply_separator_style(self._node, self._style)
 
     @staticmethod
-    def _make_item(value: TomlValue, *, with_comma: bool) -> ArrayItem:
+    def _make_item(value: object, *, with_comma: bool) -> ArrayItem:
         from tomlrt._nodes import ArrayItem  # noqa: PLC0415
 
         return ArrayItem(
@@ -2335,20 +2335,20 @@ class Array(list[TomlValue]):
     # ------------------------------------------------------------------
 
     @override
-    def append(self, value: TomlValue) -> None:
+    def append(self, value: object) -> None:
         self._node.items.append(self._make_item(value, with_comma=False))
         self._rebuild_separators()
         self._resync()
 
     @override
-    def extend(self, values: Iterable[TomlValue]) -> None:
+    def extend(self, values: Iterable[object]) -> None:
         for v in list(values):
             self._node.items.append(self._make_item(v, with_comma=False))
         self._rebuild_separators()
         self._resync()
 
     @override
-    def insert(self, index: SupportsIndex, value: TomlValue) -> None:
+    def insert(self, index: SupportsIndex, value: object) -> None:
         self._node.items.insert(
             operator.index(index), self._make_item(value, with_comma=False)
         )
@@ -2356,21 +2356,19 @@ class Array(list[TomlValue]):
         self._resync()
 
     @overload
-    def __setitem__(self, index: SupportsIndex, value: TomlValue) -> None: ...
+    def __setitem__(self, index: SupportsIndex, value: object) -> None: ...
     @overload
-    def __setitem__(self, index: slice, value: Iterable[TomlValue]) -> None: ...
+    def __setitem__(self, index: slice, value: Iterable[object]) -> None: ...
     @override
     def __setitem__(
         self,
         index: SupportsIndex | slice,
-        value: TomlValue | Iterable[TomlValue],
+        value: object,
     ) -> None:
         if isinstance(index, slice):
             assert not isinstance(value, (str, bytes))
-            new_items = [
-                self._make_item(v, with_comma=False)
-                for v in list(value)  # type: ignore[arg-type]
-            ]
+            assert isinstance(value, Iterable)
+            new_items = [self._make_item(v, with_comma=False) for v in list(value)]
             self._node.items[index] = new_items
         else:
             i = operator.index(index)
@@ -2428,7 +2426,7 @@ class Array(list[TomlValue]):
         self._resync()
 
     @override
-    def __iadd__(self, values: Iterable[TomlValue]) -> Self:  # type: ignore[override]
+    def __iadd__(self, values: Iterable[object]) -> Self:  # type: ignore[override]
         self.extend(values)
         return self
 
