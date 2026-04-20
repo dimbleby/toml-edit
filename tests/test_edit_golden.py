@@ -658,6 +658,24 @@ def test_set_aot_nested_path() -> None:
     assert isinstance(doc.table("product").aot("variant"), tomlrt.AoT)
 
 
+def test_set_aot_blank_separated_entries() -> None:
+    doc = tomlrt.loads("")
+    doc.set_aot("p", [{"x": 1}, {"x": 2}, {"x": 3}])
+    assert tomlrt.dumps(doc) == ("[[p]]\nx = 1\n\n[[p]]\nx = 2\n\n[[p]]\nx = 3\n")
+
+
+def test_set_aot_blank_before_first_when_preceded_by_content() -> None:
+    doc = tomlrt.loads("top = 1\n")
+    doc.set_aot("p", [{"x": 1}])
+    assert tomlrt.dumps(doc) == "top = 1\n\n[[p]]\nx = 1\n"
+
+
+def test_set_aot_blank_after_section_header() -> None:
+    doc = tomlrt.loads("[product]\n")
+    doc.table("product").set_aot("variant", [{"sku": "X"}])
+    assert tomlrt.dumps(doc) == ('[product]\n\n[[product.variant]]\nsku = "X"\n')
+
+
 def test_promote_array_converts_inline_to_aot() -> None:
     doc = tomlrt.loads('packages = [{name = "a"}, {name = "b"}]\n')
     aot = doc.promote_array("packages")
