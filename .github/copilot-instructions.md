@@ -6,7 +6,7 @@ it doubles as a high-signal contributor guide.
 
 ## What this project is
 
-`toml-edit` is a **pure-Python, format-preserving** TOML parser and
+`tomlrt` is a **pure-Python, format-preserving** TOML parser and
 writer. The non-negotiable invariant is:
 
 > Parsing a document and dumping it again, with no mutations in
@@ -59,7 +59,7 @@ must pass before any commit. CI runs the same set on Python 3.10–3.14.
 - Do not add comments that merely restate the code. Comment intent and
   invariants, not mechanics.
 
-## Architecture (in `src/toml_edit/`)
+## Architecture (in `src/tomlrt/`)
 
 The codebase is small and deliberately layered. Read in this order:
 

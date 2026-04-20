@@ -1,4 +1,4 @@
-"""TOML 1.0.0 parser producing a :mod:`toml_edit._nodes` CST.
+"""TOML 1.0.0 parser producing a :mod:`tomlrt._nodes` CST.
 
 Hand-written recursive-descent over a ``str`` plus an integer cursor.
 Bulk character runs (whitespace, bare keys, string bodies, comment
@@ -8,7 +8,7 @@ a single C call rather than a Python-level character loop.
 The parser is responsible *only* for producing the physical CST. Logical
 table semantics (duplicate-key detection across discontiguous headers,
 dotted-key conflicts, etc.) are enforced here; the read-side wrappers
-in :mod:`toml_edit._document` rely on this validation having happened.
+in :mod:`tomlrt._document` rely on this validation having happened.
 """
 
 from __future__ import annotations
@@ -17,8 +17,8 @@ import re
 from datetime import date, datetime, time, timedelta, timezone
 from typing import TYPE_CHECKING, Final
 
-from toml_edit._errors import TOMLParseError
-from toml_edit._nodes import (
+from tomlrt._errors import TOMLParseError
+from tomlrt._nodes import (
     ArrayItem,
     ArrayNode,
     BoolNode,
@@ -43,7 +43,7 @@ from toml_edit._nodes import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from toml_edit._nodes import HeaderKind, IntStyle, ValueNode
+    from tomlrt._nodes import HeaderKind, IntStyle, ValueNode
 
 _BARE_KEY_CHARS: Final[frozenset[str]] = frozenset(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-",
@@ -456,7 +456,8 @@ class _Parser:
                 msg = f"redefinition of table {'.'.join(path)!r}"
                 raise self._error(msg, at=at)
             if path in self._aot_paths:
-                msg = f"cannot redefine array-of-tables {'.'.join(path)!r} as a normal table"
+                joined = ".".join(path)
+                msg = f"cannot redefine array-of-tables {joined!r} as a normal table"
                 raise self._error(msg, at=at)
         else:  # array-of-tables
             if path in self._explicit_table_paths:
@@ -514,7 +515,10 @@ class _Parser:
                 msg = f"key {'.'.join(sub)!r} already defined as a value"
                 raise self._error(msg, at=at)
             if sub in self._explicit_table_paths:
-                msg = f"cannot extend explicitly-defined table {'.'.join(sub)!r} via dotted keys"
+                joined = ".".join(sub)
+                msg = (
+                    f"cannot extend explicitly-defined table {joined!r} via dotted keys"
+                )
                 raise self._error(msg, at=at)
             if sub in self._aot_paths:
                 msg = f"cannot extend array-of-tables {'.'.join(sub)!r} via dotted keys"
