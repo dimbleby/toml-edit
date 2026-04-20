@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `AoT.add(entry={})` appends ``entry`` and returns the new
+  :class:`Table` view, sparing users the ``aot.append(...);
+  aot[-1]`` two-step when they need a handle to the freshly-added
+  entry for further population.
 - `tomlrt.document(data=None)` returns a fresh :class:`Document`,
   optionally populated from a mapping. Without arguments, equivalent
   to `tomlrt.parse("")` but more discoverable for the "build a TOML
