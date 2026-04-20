@@ -537,3 +537,55 @@ def test_aot_entry_owned_scope_isolates_sibling_sub_sections() -> None:
     assert s1["x"] == 2  # unchanged
     out = tomlrt.dumps(doc)
     assert _reparses(out) == {"arr": [{"sub": {"x": 100}}, {"sub": {"x": 2}}]}
+
+
+# ---------------------------------------------------------------------------
+# Array.set_multiline / multiline property
+# ---------------------------------------------------------------------------
+
+
+def test_array_set_multiline_true_wraps_with_default_indent() -> None:
+    doc = tomlrt.loads("a = [1, 2, 3]\n")
+    arr = doc.array("a")
+    assert not arr.multiline
+    arr.set_multiline(multiline=True)
+    assert tomlrt.dumps(doc) == "a = [\n    1,\n    2,\n    3,\n]\n"
+    assert arr.multiline
+
+
+def test_array_set_multiline_false_collapses() -> None:
+    doc = tomlrt.loads("a = [\n    1,\n    2,\n    3,\n]\n")
+    arr = doc.array("a")
+    assert arr.multiline
+    arr.set_multiline(multiline=False)
+    assert tomlrt.dumps(doc) == "a = [1, 2, 3]\n"
+    assert not arr.multiline
+
+
+def test_array_set_multiline_custom_indent() -> None:
+    doc = tomlrt.loads("a = [1, 2]\n")
+    doc.array("a").set_multiline(multiline=True, indent="  ")
+    assert tomlrt.dumps(doc) == "a = [\n  1,\n  2,\n]\n"
+
+
+def test_array_multiline_property_setter() -> None:
+    doc = tomlrt.loads("a = [1, 2]\n")
+    arr = doc.array("a")
+    arr.multiline = True
+    assert tomlrt.dumps(doc) == "a = [\n    1,\n    2,\n]\n"
+    arr.multiline = False
+    assert tomlrt.dumps(doc) == "a = [1, 2]\n"
+
+
+def test_array_set_multiline_then_append() -> None:
+    doc = tomlrt.loads("a = [1]\n")
+    arr = doc.array("a")
+    arr.set_multiline(multiline=True)
+    arr.append(2)
+    assert tomlrt.dumps(doc) == "a = [\n    1,\n    2,\n]\n"
+
+
+def test_array_set_multiline_returns_self() -> None:
+    doc = tomlrt.loads("a = [1]\n")
+    arr = doc.array("a")
+    assert arr.set_multiline(multiline=True) is arr
