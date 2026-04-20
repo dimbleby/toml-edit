@@ -392,7 +392,11 @@ def _trivia_render_eq(a: Trivia, b: Trivia) -> bool:
 
 
 def _clone_trivia(t: Trivia) -> Trivia:
-    return Trivia([deepcopy(p) for p in t.pieces])
+    # Trivia pieces (WhitespaceNode/NewlineNode/CommentNode) are
+    # never mutated in place — only replaced wholesale — so we can
+    # share piece refs. Only the list container needs to be fresh
+    # so that subsequent splicing doesn't disturb the original.
+    return Trivia(list(t.pieces))
 
 
 class _SeparatorStyle:
@@ -501,8 +505,7 @@ def _sample_separator_style(
         # in either slot it belongs to the item, not the pad — derive a
         # sensible pad from the inter-separator instead.
         combined = Trivia(
-            [deepcopy(p) for p in last.trailing.pieces]
-            + [deepcopy(p) for p in final_trivia.pieces],
+            list(last.trailing.pieces) + list(final_trivia.pieces),
         )
         close_pad = (
             combined if _is_pure_whitespace(combined) else _derive_close_pad(sep)
@@ -1311,11 +1314,14 @@ class _InlineTable(Table):
 
     def _make_entry(self, path: tuple[str, ...], value: object) -> InlineTableEntry:
         pre, post = self._eq_padding
+        # ``pre``/``post`` are WhitespaceNode|None value objects; sharing
+        # the ref across entries is safe because their ``text`` field is
+        # never mutated in place.
         return InlineTableEntry(
             leading=Trivia(),
             key=_make_dotted_key(path) if len(path) > 1 else make_simple_key(path[0]),
-            pre_eq=deepcopy(pre),
-            post_eq=deepcopy(post),
+            pre_eq=pre,
+            post_eq=post,
             value=value_to_node(value),
             trailing=Trivia(),
             has_comma=False,
