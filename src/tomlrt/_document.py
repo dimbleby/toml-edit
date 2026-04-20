@@ -709,7 +709,7 @@ def _parse_key_path(path: str) -> tuple[str, ...]:
     return tuple(parts)
 
 
-def _purge_path(doc_view: _DocumentView, full_path: tuple[str, ...]) -> None:
+def _purge_path(doc_node: DocumentNode, full_path: tuple[str, ...]) -> None:
     """Remove every node addressable as ``full_path``.
 
     Drops sections whose header is at or under ``full_path`` (purging
@@ -718,7 +718,7 @@ def _purge_path(doc_view: _DocumentView, full_path: tuple[str, ...]) -> None:
     descent into ``full_path``.
     """
     plen = len(full_path)
-    sections = doc_view._node.sections  # noqa: SLF001
+    sections = doc_node.sections
     sections[:] = [
         sec
         for sec in sections
@@ -842,13 +842,13 @@ class Table(dict[str, Any]):
 
     # --- attachment / detachment ------------------------------------------
 
-    def _detach(self, doc_view: _DocumentView | None = None) -> None:
+    def _detach(self, doc_node: DocumentNode | None = None) -> None:
         """Mark this table (and any nested containers) as orphaned.
 
         After detachment, mutations through this object only affect its
         own (now-isolated) state; CST writeback no longer reaches the
-        original document. ``doc_view`` is supplied when the parent has
-        already created an orphan :class:`_DocumentView` covering the
+        original document. ``doc_node`` is supplied when the parent has
+        already created an orphan :class:`DocumentNode` covering the
         whole detached subtree; subclasses with section-based storage
         (:class:`_StdTable`, :class:`AoT`) use it to keep nested
         structural mutations confined to that orphan view.
@@ -856,7 +856,7 @@ class Table(dict[str, Any]):
         self._attached = False
         for v in self.values():
             if isinstance(v, (Table, AoT)):
-                v._detach(doc_view)  # noqa: SLF001
+                v._detach(doc_node)  # noqa: SLF001
             elif isinstance(v, Array):
                 v._detach()  # noqa: SLF001
 
@@ -1555,11 +1555,11 @@ class _DottedSubTable(Table):
 class _StdTable(Table):
     """Standard TOML table view: aggregates physical sections by path."""
 
-    __slots__ = ("_anchor", "_doc_view", "_extras", "_path", "_scope")
+    __slots__ = ("_anchor", "_doc_node", "_extras", "_path", "_scope")
 
     def __init__(
         self,
-        doc_view: _DocumentView,
+        doc_node: DocumentNode,
         path: tuple[str, ...],
         *,
         scope: list[SectionNode] | None = None,
@@ -1567,7 +1567,7 @@ class _StdTable(Table):
         extras: list[tuple[tuple[str, ...], KeyValueNode]] | None = None,
     ) -> None:
         super().__init__()
-        self._doc_view = doc_view
+        self._doc_node = doc_node
         self._path = path
         # ``scope`` narrows the section-scan window (used by AoT entries
         # and by recursive sub-table descent for perf). ``None`` means
@@ -1586,7 +1586,8 @@ class _StdTable(Table):
 
     @override
     def _items(self) -> Iterator[tuple[str, TomlValue]]:
-        return self._doc_view.iter_table(
+        return _iter_table(
+            self._doc_node,
             self._path,
             scope=self._scope,
             anchor=self._anchor,
@@ -1596,10 +1597,7 @@ class _StdTable(Table):
     def _direct_sections(self) -> list[SectionNode]:
         if self._anchor is not None:
             return [self._anchor]
-        if self._scope is not None:
-            scope = self._scope
-        else:
-            scope = self._doc_view._node.sections  # noqa: SLF001
+        scope = self._scope if self._scope is not None else self._doc_node.sections
         path = self._path
         if path == ():
             return [s for s in scope if s.header is None]
@@ -1612,10 +1610,10 @@ class _StdTable(Table):
         ]
 
     @override
-    def _detach(self, doc_view: _DocumentView | None = None) -> None:
+    def _detach(self, doc_node: DocumentNode | None = None) -> None:
         if not self._attached:
             return
-        if doc_view is None:
+        if doc_node is None:
             # Top of detachment subtree: capture every section under our
             # path and move them into a private DocumentNode so later
             # structural mutations through this table cannot reach the
@@ -1625,17 +1623,17 @@ class _StdTable(Table):
             captured = (
                 self._scope if self._scope is not None else self._sections_under_path()
             )
-            doc_view = _DocumentView(DocumentNode(sections=list(captured)))
-        self._doc_view = doc_view
+            doc_node = DocumentNode(sections=list(captured))
+        self._doc_node = doc_node
         # Now that scope refers to the orphan view's sections, clear it
         # so iteration falls back to scanning the orphan in full.
         self._scope = None
-        super()._detach(doc_view)
+        super()._detach(doc_node)
 
     def _sections_under_path(self) -> list[SectionNode]:
         plen = len(self._path)
         out: list[SectionNode] = []
-        for sec in self._doc_view._node.sections:  # noqa: SLF001
+        for sec in self._doc_node.sections:
             hdr = sec.header
             if hdr is None:
                 continue
@@ -1665,14 +1663,19 @@ class _StdTable(Table):
                         return ("direct", kv)
                     return ("dotted", None)
         child = (*self._path, key)
-        if self._doc_view._aot_sections(child):  # noqa: SLF001
-            return ("aot", None)
-        for sec in self._doc_view._node.sections:  # noqa: SLF001
+        for sec in self._doc_node.sections:
             hdr = sec.header
-            if hdr is not None and hdr.kind == "table":
-                hpath = hdr.key.path
-                if len(hpath) >= len(child) and hpath[: len(child)] == child:
-                    return ("table", None)
+            if hdr is None:
+                continue
+            hpath = hdr.key.path
+            if hdr.kind == "array" and hpath == child:
+                return ("aot", None)
+            if (
+                hdr.kind == "table"
+                and len(hpath) >= len(child)
+                and hpath[: len(child)] == child
+            ):
+                return ("table", None)
         return ("absent", None)
 
     def _purge_conflicting(self, key: str) -> None:
@@ -1686,7 +1689,7 @@ class _StdTable(Table):
             sec.entries[:] = [kv for kv in sec.entries if kv.key.path[0] != key]
         prefix = (*self._path, key)
         plen = len(prefix)
-        doc_sections = self._doc_view._node.sections  # noqa: SLF001
+        doc_sections = self._doc_node.sections
         doc_sections[:] = [
             sec
             for sec in doc_sections
@@ -1726,7 +1729,7 @@ class _StdTable(Table):
         # pre-header section and a ``[table]`` follows, ensure a blank
         # line separates the new key from that header.
         if self._path == () and target.header is None:
-            doc_node = self._doc_view._node  # noqa: SLF001
+            doc_node = self._doc_node
             try:
                 idx = doc_node.sections.index(target)
             except ValueError:  # pragma: no cover - defensive
@@ -1756,7 +1759,7 @@ class _StdTable(Table):
         new_seps = ["."] * (len(new_parts) - 1)
         # Source sections to clone, in source-document order:
         src_own = value._own_sections()  # noqa: SLF001
-        doc_node = self._doc_view._node  # noqa: SLF001
+        doc_node = self._doc_node
         for src_sec in src_own:
             cloned = deepcopy(src_sec)
             assert cloned.header is not None
@@ -1778,7 +1781,7 @@ class _StdTable(Table):
 
     def _ensure_root_section(self) -> SectionNode:
         """Insert an implicit pre-header section at the top of the document."""
-        doc_node = self._doc_view._node  # noqa: SLF001
+        doc_node = self._doc_node
         new_sec = SectionNode(header=None, entries=[])
         # Ensure a blank line precedes the next section's header so the
         # newly-inserted top-level keys aren't visually glued to it.
@@ -1796,7 +1799,7 @@ class _StdTable(Table):
         the new keys logically belong to the same place in the document.
         Falls back to appending when there is no descendant.
         """
-        doc_node = self._doc_view._node  # noqa: SLF001
+        doc_node = self._doc_node
         new_sec = _new_section(self._path)
         assert new_sec.header is not None
         header = new_sec.header
@@ -1908,7 +1911,7 @@ class _StdTable(Table):
         # (defensive: the parser blocks any source where this would arise,
         # and assignment auto-purges any conflicting sections, so this
         # branch only fires under direct CST manipulation).
-        for existing in self._doc_view._node.sections:  # noqa: SLF001
+        for existing in self._doc_node.sections:
             hdr = existing.header
             if hdr is not None and hdr.key.path == child_path:  # pragma: no cover
                 joined = ".".join(child_path)
@@ -1919,7 +1922,7 @@ class _StdTable(Table):
         sec.entries.remove(kv)
         # Insert the promoted section after the parent's last direct
         # section (or at end of document if the parent has none).
-        sections = self._doc_view._node.sections  # noqa: SLF001
+        sections = self._doc_node.sections
         parent_secs = self._direct_sections()
         if parent_secs:
             anchor = parent_secs[-1]
@@ -1930,7 +1933,7 @@ class _StdTable(Table):
             sections.insert(anchor_idx + 1, new_sec)
         else:
             sections.append(new_sec)
-        view = _StdTable(self._doc_view, child_path)
+        view = _StdTable(self._doc_node, child_path)
         dict.__setitem__(self, key, view)
         return view
 
@@ -1953,7 +1956,7 @@ class _StdTable(Table):
                 raise TOMLError(msg)
         child_path = (*self._path, key)
         # Defensive: parser/assignment paths should never let this fire.
-        for existing in self._doc_view._node.sections:  # noqa: SLF001
+        for existing in self._doc_node.sections:
             hdr = existing.header
             if hdr is not None and hdr.key.path == child_path:  # pragma: no cover
                 joined = ".".join(child_path)
@@ -1968,7 +1971,7 @@ class _StdTable(Table):
             if isinstance(item.value, InlineTableNode)  # for type narrowing
         ]
         sec.entries.remove(kv)
-        sections = self._doc_view._node.sections  # noqa: SLF001
+        sections = self._doc_node.sections
         parent_secs = self._direct_sections()
         if parent_secs:
             anchor = parent_secs[-1]
@@ -1976,7 +1979,7 @@ class _StdTable(Table):
         else:
             insert_at = len(sections)
         _insert_section_block(sections, insert_at, new_secs)
-        aot = AoT(self._doc_view, child_path, [])
+        aot = AoT(self._doc_node, child_path, [])
         aot._resync()  # noqa: SLF001
         dict.__setitem__(self, key, aot)
         return aot
@@ -1994,14 +1997,14 @@ class _StdTable(Table):
             if kind != "absent":
                 self._purge_conflicting(parts[0])
         else:
-            _purge_path(self._doc_view, full_path)
-        aot = AoT(self._doc_view, full_path, [])
+            _purge_path(self._doc_node, full_path)
+        aot = AoT(self._doc_node, full_path, [])
         new_secs: list[SectionNode] = []
         for entry in entries:
             sec = aot._make_header_section()  # noqa: SLF001
             aot._populate_section(sec, entry)  # noqa: SLF001
             new_secs.append(sec)
-        sections = self._doc_view._node.sections  # noqa: SLF001
+        sections = self._doc_node.sections
         insert_at = (
             len(sections)
             if len(parts) == 1
@@ -2028,12 +2031,12 @@ class _StdTable(Table):
             if kind != "absent":
                 self._purge_conflicting(parts[0])
         else:
-            _purge_path(self._doc_view, full_path)
+            _purge_path(self._doc_node, full_path)
         new_sec = _new_section(full_path)
-        sections = self._doc_view._node.sections  # noqa: SLF001
+        sections = self._doc_node.sections
         insert_at = _section_insert_index(sections, full_path)
         _insert_section_block(sections, insert_at, [new_sec])
-        view = _StdTable(self._doc_view, full_path)
+        view = _StdTable(self._doc_node, full_path)
         self._install_at_path(parts, view)
         for k, v in value.items():
             view[k] = v
@@ -2074,31 +2077,29 @@ class _StdTable(Table):
 class Document(_StdTable):
     """Top-level TOML document. Subclass of :class:`Table`."""
 
-    __slots__ = ("_node",)
+    __slots__ = ()
 
     def __init__(self, node: DocumentNode) -> None:
-        view = _DocumentView(node)
-        self._node = node
-        super().__init__(view, ())
+        super().__init__(node, ())
 
     @property
     def cst(self) -> DocumentNode:
         """The underlying physical CST (intended for tooling/debugging)."""
-        return self._node
+        return self._doc_node
 
     def render(self) -> str:
-        return self._node.render()
+        return self._doc_node.render()
 
     def _doc_has_content(self) -> bool:
-        return any(s.header is not None or s.entries for s in self._node.sections)
+        return any(s.header is not None or s.entries for s in self._doc_node.sections)
 
     def _preamble_target(self) -> Trivia:
-        for sec in self._node.sections:
+        for sec in self._doc_node.sections:
             if sec.header is not None:
                 return sec.header.leading
             if sec.entries:
                 return sec.entries[0].leading
-        return self._node.trailing_trivia
+        return self._doc_node.trailing_trivia
 
     @property
     def preamble(self) -> tuple[str, ...]:
@@ -2161,7 +2162,7 @@ class Document(_StdTable):
         """
         if not self._doc_has_content():
             return ()
-        return _extract_trailing_comment_block(self._node.trailing_trivia)
+        return _extract_trailing_comment_block(self._doc_node.trailing_trivia)
 
     @epilogue.setter
     def epilogue(self, value: Sequence[str]) -> None:
@@ -2173,7 +2174,7 @@ class Document(_StdTable):
                 )
                 raise TOMLError(msg)
             return
-        _replace_trailing_comment_block(self._node.trailing_trivia, value, "")
+        _replace_trailing_comment_block(self._doc_node.trailing_trivia, value, "")
 
 
 # ---------------------------------------------------------------------------
@@ -2815,38 +2816,38 @@ class AoT(list[Table]):
     ``[[path]]`` sections in the underlying CST.
     """
 
-    __slots__ = ("_attached", "_doc_view", "_path")
+    __slots__ = ("_attached", "_doc_node", "_path")
 
     def __init__(
         self,
-        doc_view: _DocumentView,
+        doc_node: DocumentNode,
         path: tuple[str, ...],
         tables: list[Table],
     ) -> None:
         super().__init__(tables)
-        self._doc_view = doc_view
+        self._doc_node = doc_node
         self._path = path
         self._attached = True
 
-    def _detach(self, doc_view: _DocumentView | None = None) -> None:
+    def _detach(self, doc_node: DocumentNode | None = None) -> None:
         if not self._attached:
             return
-        if doc_view is None:
+        if doc_node is None:
             captured: list[SectionNode] = []
             seen: set[int] = set()
             for s in self._own_sections():
                 if id(s) not in seen:
                     captured.append(s)
                     seen.add(id(s))
-                for sub in self._doc_view._aot_owned_range(s):  # noqa: SLF001
+                for sub in _aot_owned_range(self._doc_node, s):
                     if id(sub) not in seen:
                         captured.append(sub)
                         seen.add(id(sub))
-            doc_view = _DocumentView(DocumentNode(sections=captured))
+            doc_node = DocumentNode(sections=captured)
         self._attached = False
-        self._doc_view = doc_view
+        self._doc_node = doc_node
         for v in self:
-            v._detach(doc_view)  # noqa: SLF001
+            v._detach(doc_node)  # noqa: SLF001
 
     # ------------------------------------------------------------------
     # CST <-> list synchronisation
@@ -2856,7 +2857,7 @@ class AoT(list[Table]):
         """Sections that act as the [[path]] entry headers (in doc order)."""
         return [
             s
-            for s in self._doc_view._node.sections  # noqa: SLF001
+            for s in self._doc_node.sections
             if s.header is not None
             and s.header.kind == "array"
             and s.header.key.path == self._path
@@ -2872,7 +2873,7 @@ class AoT(list[Table]):
         new_entries: list[Table] = []
         kept: set[int] = set()
         for s in own:
-            owned = self._doc_view._aot_owned_range(s)  # noqa: SLF001
+            owned = _aot_owned_range(self._doc_node, s)
             cached = existing.get(id(s))
             if cached is not None:
                 kept.add(id(cached))
@@ -2880,7 +2881,7 @@ class AoT(list[Table]):
             else:
                 new_entries.append(
                     _StdTable(
-                        self._doc_view,
+                        self._doc_node,
                         self._path,
                         scope=[s, *owned],
                         anchor=s,
@@ -2978,14 +2979,14 @@ class AoT(list[Table]):
         py_index = max(0, min(py_index, n))
         new_sec = self._make_header_section()
         self._populate_section(new_sec, value)
-        sections = self._doc_view._node.sections  # noqa: SLF001
+        sections = self._doc_node.sections
         # Pick an insertion point first; blank-line decision depends on it.
         if py_index == n:
             # Append: land after the last [[path]] entry's owned range,
             # or at end of doc if no entries exist yet.
             if own:
                 last = own[-1]
-                owned = self._doc_view._aot_owned_range(last)  # noqa: SLF001
+                owned = _aot_owned_range(self._doc_node, last)
                 tail = owned[-1] if owned else last
                 insert_idx = _index_of(sections, tail) + 1
             else:
@@ -3023,14 +3024,12 @@ class AoT(list[Table]):
             msg = "pop index out of range"
             raise IndexError(msg)
         target = own[i]
-        owned = self._doc_view._aot_owned_range(target)  # noqa: SLF001
-        sections = self._doc_view._node.sections  # noqa: SLF001
+        owned = _aot_owned_range(self._doc_node, target)
+        sections = self._doc_node.sections
         to_remove = {id(target), *(id(s) for s in owned)}
         # Use the live entry as the popped object to preserve identity.
         popped = self[i]
-        self._doc_view._node.sections = [  # noqa: SLF001
-            s for s in sections if id(s) not in to_remove
-        ]
+        self._doc_node.sections = [s for s in sections if id(s) not in to_remove]
         self._resync()
         popped._detach()  # noqa: SLF001
         return popped
@@ -3041,12 +3040,10 @@ class AoT(list[Table]):
         to_remove: set[int] = set()
         for s in own:
             to_remove.add(id(s))
-            for sub in self._doc_view._aot_owned_range(s):  # noqa: SLF001
+            for sub in _aot_owned_range(self._doc_node, s):
                 to_remove.add(id(sub))
-        sections = self._doc_view._node.sections  # noqa: SLF001
-        self._doc_view._node.sections = [  # noqa: SLF001
-            s for s in sections if id(s) not in to_remove
-        ]
+        sections = self._doc_node.sections
+        self._doc_node.sections = [s for s in sections if id(s) not in to_remove]
         self._resync()
 
     @override
@@ -3072,237 +3069,199 @@ def _index_of(sections: list[SectionNode], target: SectionNode) -> int:
 # ---------------------------------------------------------------------------
 
 
-class _DocumentView:
-    """Computes logical structure on demand from the CST."""
+def _aot_owned_range(
+    doc_node: DocumentNode,
+    aot_sec: SectionNode,
+) -> list[SectionNode]:
+    """Sections owned by this AoT entry.
 
-    __slots__ = ("_node",)
-
-    def __init__(self, node: DocumentNode) -> None:
-        self._node = node
-
-    def _direct_sections(self, path: tuple[str, ...]) -> list[SectionNode]:
-        out: list[SectionNode] = []
-        for sec in self._node.sections:
-            if path == ():
-                if sec.header is None:
-                    out.append(sec)
-            else:
-                hdr = sec.header
-                if hdr is not None and hdr.kind == "table" and hdr.key.path == path:
-                    out.append(sec)
-        return out
-
-    def _aot_sections(self, path: tuple[str, ...]) -> list[SectionNode]:
-        return [
-            sec
-            for sec in self._node.sections
-            if sec.header is not None
-            and sec.header.kind == "array"
-            and sec.header.key.path == path
-        ]
-
-    def _child_table_paths(self, path: tuple[str, ...]) -> list[tuple[str, ...]]:
-        seen: dict[str, None] = {}
-        for sec in self._node.sections:
-            hdr = sec.header
-            if hdr is None:
-                continue
-            hpath = hdr.key.path
-            if len(hpath) > len(path) and hpath[: len(path)] == path:
-                seen.setdefault(hpath[len(path)], None)
-        return [(*path, k) for k in seen]
-
-    def _aot_owned_range(self, aot_sec: SectionNode) -> list[SectionNode]:
-        """Sections owned by this AoT entry.
-
-        Owned = sections that come *after* ``aot_sec`` in document order
-        and whose header path strictly extends this AoT's path. The range
-        ends at the next [[same-path]] header or any other section that
-        doesn't extend ``aot_sec``'s path.
-        """
-        if aot_sec.header is None:
-            return []
-        aot_path = aot_sec.header.key.path
-        sections = self._node.sections
-        i = -1
-        for idx, candidate in enumerate(sections):
-            if candidate is aot_sec:
-                i = idx
-                break
-        if i < 0:
-            return []
-        owned: list[SectionNode] = []
-        for j in range(i + 1, len(sections)):
-            sec = sections[j]
-            hdr = sec.header
-            if hdr is None:
-                # The synthetic root section appears only at index 0; safe to stop.
-                break
-            hpath = hdr.key.path
-            if hdr.kind == "array" and hpath == aot_path:
-                break  # next AoT entry of same path — terminate
-            if len(hpath) > len(aot_path) and hpath[: len(aot_path)] == aot_path:
-                owned.append(sec)
-            else:
-                # sibling or outer section — terminate ownership
-                break
-        return owned
-
-    def iter_table(
-        self,
-        path: tuple[str, ...],
-        *,
-        scope: list[SectionNode] | None = None,
-        anchor: SectionNode | None = None,
-        extras: list[tuple[tuple[str, ...], KeyValueNode]] | None = None,
-    ) -> Iterator[tuple[str, TomlValue]]:
-        # The pool of sections we walk in physical order. ``scope``
-        # narrows it for AoT entries and recursive sub-table descent;
-        # otherwise we walk the whole document.
-        section_pool: list[SectionNode] = (
-            scope if scope is not None else list(self._node.sections)
-        )
-
-        # Sections whose entries are "direct" key/values at this exact path.
-        direct_secs: list[SectionNode]
-        if anchor is not None:
-            direct_secs = [anchor]
-        elif path == ():
-            direct_secs = [s for s in section_pool if s.header is None]
+    Owned = sections that come *after* ``aot_sec`` in document order
+    and whose header path strictly extends this AoT's path. The range
+    ends at the next [[same-path]] header or any other section that
+    doesn't extend ``aot_sec``'s path.
+    """
+    if aot_sec.header is None:
+        return []
+    aot_path = aot_sec.header.key.path
+    sections = doc_node.sections
+    i = -1
+    for idx, candidate in enumerate(sections):
+        if candidate is aot_sec:
+            i = idx
+            break
+    if i < 0:
+        return []
+    owned: list[SectionNode] = []
+    for j in range(i + 1, len(sections)):
+        sec = sections[j]
+        hdr = sec.header
+        if hdr is None:
+            # The synthetic root section appears only at index 0; safe to stop.
+            break
+        hpath = hdr.key.path
+        if hdr.kind == "array" and hpath == aot_path:
+            break  # next AoT entry of same path — terminate
+        if len(hpath) > len(aot_path) and hpath[: len(aot_path)] == aot_path:
+            owned.append(sec)
         else:
-            direct_secs = [
-                s
-                for s in section_pool
-                if s.header is not None
-                and s.header.kind == "table"
-                and s.header.key.path == path
-            ]
-        direct_ids = {id(s) for s in direct_secs}
+            # sibling or outer section — terminate ownership
+            break
+    return owned
 
-        name_order: list[str] = []
-        seen: set[str] = set()
 
-        def _add(name: str) -> None:
-            if name not in seen:
-                seen.add(name)
-                name_order.append(name)
+def _iter_table(
+    doc_node: DocumentNode,
+    path: tuple[str, ...],
+    *,
+    scope: list[SectionNode] | None = None,
+    anchor: SectionNode | None = None,
+    extras: list[tuple[tuple[str, ...], KeyValueNode]] | None = None,
+) -> Iterator[tuple[str, TomlValue]]:
+    # The pool of sections we walk in physical order. ``scope``
+    # narrows it for AoT entries and recursive sub-table descent;
+    # otherwise we walk the whole document.
+    section_pool: list[SectionNode] = (
+        scope if scope is not None else list(doc_node.sections)
+    )
 
-        direct_kvs_by_head: dict[str, list[KeyValueNode]] = {}
-        extras_by_head: dict[str, list[tuple[tuple[str, ...], KeyValueNode]]] = {}
-        aot_by_head: dict[str, list[SectionNode]] = {}
-        sub_by_head: dict[str, list[SectionNode]] = {}
+    # Sections whose entries are "direct" key/values at this exact path.
+    direct_secs: list[SectionNode]
+    if anchor is not None:
+        direct_secs = [anchor]
+    elif path == ():
+        direct_secs = [s for s in section_pool if s.header is None]
+    else:
+        direct_secs = [
+            s
+            for s in section_pool
+            if s.header is not None
+            and s.header.kind == "table"
+            and s.header.key.path == path
+        ]
+    direct_ids = {id(s) for s in direct_secs}
 
-        # Single physical-order walk: each section either contributes direct
-        # entries (header == path) or registers a sub-table / sub-AoT head.
-        # First-appearance order matches what tomllib produces.
-        plen = len(path)
-        for sec in section_pool:
-            if id(sec) in direct_ids:
-                for entry in sec.entries:
-                    head = entry.key.path[0]
-                    direct_kvs_by_head.setdefault(head, []).append(entry)
-                    _add(head)
-                continue
-            hdr = sec.header
-            if hdr is None:
-                continue
-            hpath = hdr.key.path
-            if len(hpath) <= plen or hpath[:plen] != path:
-                continue
-            head = hpath[plen]
-            if hdr.kind == "array" and hpath == (*path, head):
-                aot_by_head.setdefault(head, []).append(sec)
-            else:
-                sub_by_head.setdefault(head, []).append(sec)
+    name_order: list[str] = []
+    seen: set[str] = set()
+
+    def _add(name: str) -> None:
+        if name not in seen:
+            seen.add(name)
+            name_order.append(name)
+
+    direct_kvs_by_head: dict[str, list[KeyValueNode]] = {}
+    extras_by_head: dict[str, list[tuple[tuple[str, ...], KeyValueNode]]] = {}
+    aot_by_head: dict[str, list[SectionNode]] = {}
+    sub_by_head: dict[str, list[SectionNode]] = {}
+
+    # Single physical-order walk: each section either contributes direct
+    # entries (header == path) or registers a sub-table / sub-AoT head.
+    # First-appearance order matches what tomllib produces.
+    plen = len(path)
+    for sec in section_pool:
+        if id(sec) in direct_ids:
+            for entry in sec.entries:
+                head = entry.key.path[0]
+                direct_kvs_by_head.setdefault(head, []).append(entry)
+                _add(head)
+            continue
+        hdr = sec.header
+        if hdr is None:
+            continue
+        hpath = hdr.key.path
+        if len(hpath) <= plen or hpath[:plen] != path:
+            continue
+        head = hpath[plen]
+        if hdr.kind == "array" and hpath == (*path, head):
+            aot_by_head.setdefault(head, []).append(sec)
+        else:
+            sub_by_head.setdefault(head, []).append(sec)
+        _add(head)
+
+    # Extras (dotted-key prefixes inherited from an ancestor) have no
+    # physical position; tack their heads on at the end.
+    if extras:
+        for rel_path, entry in extras:
+            head = rel_path[0]
+            extras_by_head.setdefault(head, []).append((rel_path, entry))
             _add(head)
 
-        # Extras (dotted-key prefixes inherited from an ancestor) have no
-        # physical position; tack their heads on at the end.
-        if extras:
-            for rel_path, entry in extras:
-                head = rel_path[0]
-                extras_by_head.setdefault(head, []).append((rel_path, entry))
-                _add(head)
+    for head in name_order:
+        direct_kvs = direct_kvs_by_head.get(head, [])
+        head_extras = extras_by_head.get(head, [])
+        aot_secs = aot_by_head.get(head, [])
+        sub_secs = sub_by_head.get(head, [])
 
-        for head in name_order:
-            direct_kvs = direct_kvs_by_head.get(head, [])
-            head_extras = extras_by_head.get(head, [])
-            aot_secs = aot_by_head.get(head, [])
-            sub_secs = sub_by_head.get(head, [])
-
-            if aot_secs:
-                tables: list[Table] = []
-                for s in aot_secs:
-                    owned = self._aot_owned_range(s)
-                    tables.append(
-                        _StdTable(
-                            self,
-                            (*path, head),
-                            scope=[s, *owned],
-                            anchor=s,
-                        ),
-                    )
-                yield head, AoT(self, (*path, head), tables)
-                continue
-
-            # Split into "terminal" (binds a value at this name) and
-            # "nested" (contributes to a sub-table at this name).
-            terminal: KeyValueNode | None = None
-            nested_kvs: list[KeyValueNode] = []
-            nested_extras: list[tuple[tuple[str, ...], KeyValueNode]] = []
-            for kv in direct_kvs:
-                if len(kv.key.path) == 1:
-                    if terminal is None:
-                        terminal = kv
-                else:
-                    nested_kvs.append(kv)
-            for rel_path, kv in head_extras:
-                if len(rel_path) == 1:
-                    if terminal is None:
-                        terminal = kv
-                else:
-                    nested_extras.append((rel_path, kv))
-
-            if (
-                terminal is not None
-                and not nested_kvs
-                and not nested_extras
-                and not sub_secs
-            ):
-                yield head, _value_for(terminal.value)
-                continue
-
-            if not sub_secs and not nested_extras:
-                # Pure dotted from this section level. Prefix is relative
-                # to the host section (where dotted KVs live), not the
-                # absolute logical path.
-                yield (
-                    head,
-                    _DottedSubTable(
-                        depth=1,
-                        host=_SectionDottedHost(direct_secs),
-                        prefix=(head,),
+        if aot_secs:
+            tables: list[Table] = []
+            for s in aot_secs:
+                owned = _aot_owned_range(doc_node, s)
+                tables.append(
+                    _StdTable(
+                        doc_node,
+                        (*path, head),
+                        scope=[s, *owned],
+                        anchor=s,
                     ),
                 )
-                continue
+            yield head, AoT(doc_node, (*path, head), tables)
+            continue
 
-            # Merged view at path + (head,): combines sub-section content with
-            # any dotted KVs from this section and any ancestor-dotted extras.
-            child_extras: list[tuple[tuple[str, ...], KeyValueNode]] = [
-                (kv.key.path[1:], kv) for kv in nested_kvs
-            ]
-            child_extras.extend(
-                (rel_path[1:], entry) for rel_path, entry in nested_extras
-            )
+        # Split into "terminal" (binds a value at this name) and
+        # "nested" (contributes to a sub-table at this name).
+        terminal: KeyValueNode | None = None
+        nested_kvs: list[KeyValueNode] = []
+        nested_extras: list[tuple[tuple[str, ...], KeyValueNode]] = []
+        for kv in direct_kvs:
+            if len(kv.key.path) == 1:
+                if terminal is None:
+                    terminal = kv
+            else:
+                nested_kvs.append(kv)
+        for rel_path, kv in head_extras:
+            if len(rel_path) == 1:
+                if terminal is None:
+                    terminal = kv
+            else:
+                nested_extras.append((rel_path, kv))
+
+        if (
+            terminal is not None
+            and not nested_kvs
+            and not nested_extras
+            and not sub_secs
+        ):
+            yield head, _value_for(terminal.value)
+            continue
+
+        if not sub_secs and not nested_extras:
+            # Pure dotted from this section level. Prefix is relative
+            # to the host section (where dotted KVs live), not the
+            # absolute logical path.
             yield (
                 head,
-                _StdTable(
-                    self,
-                    (*path, head),
-                    scope=sub_secs,
-                    extras=child_extras or None,
+                _DottedSubTable(
+                    depth=1,
+                    host=_SectionDottedHost(direct_secs),
+                    prefix=(head,),
                 ),
             )
+            continue
+
+        # Merged view at path + (head,): combines sub-section content with
+        # any dotted KVs from this section and any ancestor-dotted extras.
+        child_extras: list[tuple[tuple[str, ...], KeyValueNode]] = [
+            (kv.key.path[1:], kv) for kv in nested_kvs
+        ]
+        child_extras.extend((rel_path[1:], entry) for rel_path, entry in nested_extras)
+        yield (
+            head,
+            _StdTable(
+                doc_node,
+                (*path, head),
+                scope=sub_secs,
+                extras=child_extras or None,
+            ),
+        )
 
 
 __all__ = [
