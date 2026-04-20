@@ -98,13 +98,15 @@ def test_set_table_returns_object_stored_in_dict() -> None:
 
 def test_set_aot_returns_object_stored_in_dict() -> None:
     doc = tomlrt.parse("")
-    aot = doc.install("things", AoT())
+    doc["things"] = AoT()
+    aot = doc["things"]
     assert aot is doc["things"]
 
 
 def test_empty_aot_appendable_after_set() -> None:
     doc = tomlrt.parse("")
-    aot = doc.install("things", AoT())
+    doc["things"] = AoT()
+    aot = doc["things"]
     aot.add({"k": 1})
     assert tomlrt.dumps(doc).strip().endswith("k = 1")
     # And still the same object.
@@ -243,7 +245,8 @@ def test_del_then_set_table_does_not_revive_held_ref() -> None:
     doc = tomlrt.parse("[a]\nx = 1\n")
     held = doc["a"]
     del doc["a"]
-    new = doc.install("a", Table.section())
+    doc["a"] = Table.section()
+    new = doc["a"]
     assert new is doc["a"]
     assert held is not new
 
@@ -271,7 +274,7 @@ def test_detached_set_table_does_not_revive_in_doc() -> None:
     held = doc["outer"]
     del doc["outer"]
     assert isinstance(held, tomlrt.Table)
-    held.install("nested", Table.section({"deep": "data"}))
+    held["nested"] = Table.section({"deep": "data"})
     assert tomlrt.dumps(doc) == ""
     # Held subtree still reflects its own structural changes.
     assert dict(held["nested"]) == {"deep": "data"}
@@ -291,7 +294,7 @@ def test_detached_aot_entry_set_table_does_not_revive() -> None:
     held_aot = doc.aot("entries")
     held_entry = held_aot[0]
     del doc["entries"]
-    held_entry.install("sub", Table.section({"a": 1}))
+    held_entry["sub"] = Table.section({"a": 1})
     held_entry["new"] = 42
     assert tomlrt.dumps(doc) == ""
     assert held_entry["new"] == 42

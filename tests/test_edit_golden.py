@@ -626,12 +626,8 @@ def test_array_parsed_empty_with_newline_indent_is_inferred() -> None:
 
 def test_set_aot_creates_repeated_headers() -> None:
     doc = tomlrt.loads("")
-    aot = doc.install(
-        "packages",
-        AoT(
-            [{"name": "a", "version": "1.0"}, {"name": "b"}],
-        ),
-    )
+    doc["packages"] = AoT([{"name": "a", "version": "1.0"}, {"name": "b"}])
+    aot = doc["packages"]
     assert isinstance(aot, tomlrt.AoT)
     assert len(aot) == 2
     assert "[[packages]]" in tomlrt.dumps(doc)
@@ -639,7 +635,8 @@ def test_set_aot_creates_repeated_headers() -> None:
 
 def test_set_aot_with_no_entries_returns_appendable_view() -> None:
     doc = tomlrt.loads("")
-    aot = doc.install("servers", AoT())
+    doc["servers"] = AoT()
+    aot = doc["servers"]
     assert tomlrt.dumps(doc) == ""
     aot.append({"host": "localhost"})
     rendered = tomlrt.dumps(doc)
@@ -649,7 +646,7 @@ def test_set_aot_with_no_entries_returns_appendable_view() -> None:
 
 def test_set_aot_overwrites_existing_key() -> None:
     doc = tomlrt.loads("foo = 1\n")
-    doc.install("foo", AoT([{"x": 1}]))
+    doc["foo"] = AoT([{"x": 1}])
     rendered = tomlrt.dumps(doc)
     assert "foo = 1" not in rendered
     assert "[[foo]]" in rendered
@@ -657,7 +654,7 @@ def test_set_aot_overwrites_existing_key() -> None:
 
 def test_set_aot_nested_path() -> None:
     doc = tomlrt.loads("[product]\n")
-    doc.table("product").install("variant", AoT([{"sku": "X"}]))
+    doc.table("product")["variant"] = AoT([{"sku": "X"}])
     rendered = tomlrt.dumps(doc)
     assert "[[product.variant]]" in rendered
     assert 'sku = "X"' in rendered
@@ -666,19 +663,19 @@ def test_set_aot_nested_path() -> None:
 
 def test_set_aot_blank_separated_entries() -> None:
     doc = tomlrt.loads("")
-    doc.install("p", AoT([{"x": 1}, {"x": 2}, {"x": 3}]))
+    doc["p"] = AoT([{"x": 1}, {"x": 2}, {"x": 3}])
     assert tomlrt.dumps(doc) == ("[[p]]\nx = 1\n\n[[p]]\nx = 2\n\n[[p]]\nx = 3\n")
 
 
 def test_set_aot_blank_before_first_when_preceded_by_content() -> None:
     doc = tomlrt.loads("top = 1\n")
-    doc.install("p", AoT([{"x": 1}]))
+    doc["p"] = AoT([{"x": 1}])
     assert tomlrt.dumps(doc) == "top = 1\n\n[[p]]\nx = 1\n"
 
 
 def test_set_aot_blank_after_section_header() -> None:
     doc = tomlrt.loads("[product]\n")
-    doc.table("product").install("variant", AoT([{"sku": "X"}]))
+    doc.table("product")["variant"] = AoT([{"sku": "X"}])
     assert tomlrt.dumps(doc) == ('[product]\n\n[[product.variant]]\nsku = "X"\n')
 
 
@@ -718,7 +715,8 @@ def test_promote_array_rejects_non_array() -> None:
 
 def test_set_table_creates_section_directly() -> None:
     doc = tomlrt.loads("")
-    t = doc.install("tool", Table.section({"name": "x"}))
+    doc["tool"] = Table.section({"name": "x"})
+    t = doc["tool"]
     assert isinstance(t, tomlrt.Table)
     assert tomlrt.dumps(doc) == '[tool]\nname = "x"\n'
 
@@ -869,26 +867,28 @@ def test_set_table_round_trips() -> None:
 
 def test_set_array_creates_inline_array() -> None:
     doc = tomlrt.loads("")
-    arr = doc.install("authors", Array(["A", "B"]))
+    doc["authors"] = Array(["A", "B"])
+    arr = doc["authors"]
     assert isinstance(arr, tomlrt.Array)
     assert tomlrt.dumps(doc) == 'authors = ["A", "B"]\n'
 
 
 def test_set_array_multiline_lays_out_one_per_line() -> None:
     doc = tomlrt.loads("")
-    doc.install("authors", Array(["A", "B", "C"], multiline=True))
+    doc["authors"] = Array(["A", "B", "C"], multiline=True)
     assert tomlrt.dumps(doc) == ('authors = [\n    "A",\n    "B",\n    "C",\n]\n')
 
 
 def test_set_array_custom_indent() -> None:
     doc = tomlrt.loads("")
-    doc.install("x", Array([1, 2], multiline=True, indent="  "))
+    doc["x"] = Array([1, 2], multiline=True, indent="  ")
     assert tomlrt.dumps(doc) == "x = [\n  1,\n  2,\n]\n"
 
 
 def test_set_array_empty_multiline_appendable() -> None:
     doc = tomlrt.loads("")
-    arr = doc.install("x", Array(multiline=True))
+    doc["x"] = Array(multiline=True)
+    arr = doc["x"]
     arr.append(1)
     assert tomlrt.dumps(doc) == "x = [\n    1,\n]\n"
 
@@ -909,7 +909,7 @@ def test_set_array_dotted_path_uses_existing_section() -> None:
 
 def test_set_array_replaces_existing_value() -> None:
     doc = tomlrt.loads("a = 1\n")
-    doc.install("a", Array([1, 2, 3]))
+    doc["a"] = Array([1, 2, 3])
     assert tomlrt.dumps(doc) == "a = [1, 2, 3]\n"
 
 
@@ -1021,7 +1021,8 @@ def test_aot_insert_on_empty_doc_migrates_preamble() -> None:
     """
     doc = tomlrt.parse("")
     doc.preamble = ("Copyright",)
-    aot = doc.install("products", AoT())
+    doc["products"] = AoT()
+    aot = doc["products"]
     aot.insert(0, {"name": "x"})
     rendered = tomlrt.dumps(doc)
     assert rendered.startswith("# Copyright\n\n[[products]]\n"), rendered
