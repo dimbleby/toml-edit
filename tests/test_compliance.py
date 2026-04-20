@@ -87,7 +87,7 @@ def _decode_tagged(obj: object) -> object:
             if t == "date-local":
                 return date.fromisoformat(v)
             if t == "time-local":
-                return time.fromisoformat(v)
+                return _parse_iso_time(v)
             msg = f"unknown tagged type: {t!r}"
             raise AssertionError(msg)
         return {k: _decode_tagged(val) for k, val in obj.items()}
@@ -98,9 +98,30 @@ def _decode_tagged(obj: object) -> object:
 
 
 def _parse_iso_datetime(s: str) -> datetime:
-    # Python's fromisoformat handles most cases including offset; some
-    # corpus entries use 'Z' which 3.11+ accepts.
-    return datetime.fromisoformat(s)
+    # Python 3.11+ ``fromisoformat`` accepts a trailing ``Z`` for UTC and
+    # arbitrary fractional-second precision; on 3.10 we have to normalise.
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    return datetime.fromisoformat(_normalise_fractional_seconds(s))
+
+
+def _parse_iso_time(s: str) -> time:
+    return time.fromisoformat(_normalise_fractional_seconds(s))
+
+
+def _normalise_fractional_seconds(s: str) -> str:
+    # On 3.10 ``fromisoformat`` requires exactly 3 or 6 fractional digits.
+    dot = s.rfind(".")
+    if dot < 0:
+        return s
+    end = dot + 1
+    while end < len(s) and s[end].isdigit():
+        end += 1
+    digits = s[dot + 1 : end]
+    if len(digits) in (3, 6):
+        return s
+    digits = digits.ljust(6, "0") if len(digits) < 6 else digits[:6]
+    return s[: dot + 1] + digits + s[end:]
 
 
 # ---------------------------------------------------------------------------

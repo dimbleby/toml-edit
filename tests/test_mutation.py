@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
-import tomllib
+import sys
+from typing import Any
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
 
 import pytest
 
 import toml_edit
 
 
-def _reparses(src: str) -> dict[str, object]:
+def _reparses(src: str) -> dict[str, Any]:
     """Sanity check that a rendered document is still valid TOML."""
     return tomllib.loads(src)
 

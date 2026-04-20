@@ -14,7 +14,7 @@ in :mod:`toml_edit._document` rely on this validation having happened.
 from __future__ import annotations
 
 import re
-from datetime import UTC, date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import TYPE_CHECKING, Final
 
 from toml_edit._errors import TOMLParseError
@@ -1167,7 +1167,7 @@ class _Parser:
 
     def _parse_offset(self, text: str) -> timezone:
         if text in ("Z", "z"):
-            return UTC
+            return timezone.utc
         if len(text) != 6 or text[0] not in "+-" or text[3] != ":":
             msg = f"bad timezone offset: {text!r}"
             raise ValueError(msg)

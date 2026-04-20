@@ -8,12 +8,16 @@ mutation API on top of the physical CST defined in :mod:`toml_edit._nodes`.
 from __future__ import annotations
 
 import operator
+import sys
 from collections.abc import Mapping, MutableMapping
 from copy import deepcopy
 from datetime import date, datetime, time
 from typing import TYPE_CHECKING, Protocol, SupportsIndex, TypeAlias, overload
 
-from typing_extensions import override
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
 
 from toml_edit._errors import TOMLEditError
 from toml_edit._nodes import (
@@ -38,7 +42,11 @@ from toml_edit._synthesise import make_key_part, make_keyvalue_node, make_simple
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Sequence
-    from typing import Self
+
+    if sys.version_info >= (3, 11):
+        from typing import Self
+    else:
+        from typing_extensions import Self
 
     from toml_edit._nodes import (
         ArrayItem,

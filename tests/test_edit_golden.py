@@ -14,7 +14,13 @@ Coverage targets:
 
 from __future__ import annotations
 
-import tomllib
+import sys
+from typing import Any
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
 
 import pytest
 
@@ -22,7 +28,7 @@ import toml_edit
 from toml_edit import TOMLEditError
 
 
-def _reparses(src: str) -> dict[str, object]:
+def _reparses(src: str) -> dict[str, Any]:
     return tomllib.loads(src)
 
 
@@ -246,8 +252,8 @@ def test_cross_doc_aot_assign_deep_clones() -> None:
     a_users = a["users"]
     assert isinstance(a_users, toml_edit.AoT)
     a_users[0]["name"] = "MUT"
-    assert _reparses(toml_edit.dumps(a))["users"][0]["name"] == "MUT"  # type: ignore[index]
-    assert _reparses(toml_edit.dumps(b))["users"][0]["name"] == "alice"  # type: ignore[index]
+    assert _reparses(toml_edit.dumps(a))["users"][0]["name"] == "MUT"
+    assert _reparses(toml_edit.dumps(b))["users"][0]["name"] == "alice"
 
 
 def test_cross_doc_array_assign_deep_clones() -> None:
