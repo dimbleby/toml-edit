@@ -274,29 +274,50 @@ def test_cross_doc_array_assign_deep_clones() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_set_value_conflicting_with_existing_subsection_raises() -> None:
-    """Setting a name that already exists as a sub-section header.
+def test_set_value_overwriting_existing_subsection() -> None:
+    """Assigning a scalar to a name that's currently a sub-table.
 
-    [a] / x=1 / [a.b] makes 'b' a sub-table inside [a]. Trying
-    a["b"] = 2 would have to either redefine that sub-table as a value
-    (breaking [a.b]) or be rejected. The classifier must see "table"
-    here and refuse.
+    Matches plain-dict semantics: the [a.b] section (and anything nested
+    under it) is silently removed and replaced with ``b = 99`` inside
+    ``[a]``.
     """
-    src = "[a]\nx = 1\n[a.b]\ny = 2\n"
+    src = "[a]\nx = 1\n[a.b]\ny = 2\n[a.b.c]\nz = 3\n"
     doc = toml_edit.parse(src)
     a = doc["a"]
     assert isinstance(a, toml_edit.Table)
-    with pytest.raises(TOMLEditError):
-        a["b"] = 99
+    a["b"] = 99
+    out = toml_edit.dumps(doc)
+    assert out == "[a]\nx = 1\nb = 99\n"
+    assert _reparses(out) == {"a": {"x": 1, "b": 99}}
 
 
-def test_set_value_conflicting_with_existing_aot_raises() -> None:
-    src = '[a]\nx = 1\n[[a.items]]\nname = "first"\n'
+def test_set_value_overwriting_existing_aot() -> None:
+    src = '[a]\nx = 1\n[[a.items]]\nname = "first"\n[[a.items]]\nname = "second"\n'
     doc = toml_edit.parse(src)
     a = doc["a"]
     assert isinstance(a, toml_edit.Table)
-    with pytest.raises(TOMLEditError):
-        a["items"] = 5
+    a["items"] = 5
+    out = toml_edit.dumps(doc)
+    assert out == "[a]\nx = 1\nitems = 5\n"
+    assert _reparses(out) == {"a": {"x": 1, "items": 5}}
+
+
+def test_set_value_overwriting_dotted_subtree() -> None:
+    src = "[a]\nb.c = 1\nb.d = 2\nx = 9\n"
+    doc = toml_edit.parse(src)
+    a = doc["a"]
+    assert isinstance(a, toml_edit.Table)
+    a["b"] = 99
+    out = toml_edit.dumps(doc)
+    assert _reparses(out) == {"a": {"x": 9, "b": 99}}
+
+
+def test_set_value_overwriting_top_level_table() -> None:
+    src = "[a]\nx = 1\n[b]\ny = 2\n"
+    doc = toml_edit.parse(src)
+    doc["a"] = 99
+    out = toml_edit.dumps(doc)
+    assert _reparses(out) == {"a": 99, "b": {"y": 2}}
 
 
 # ---------------------------------------------------------------------------

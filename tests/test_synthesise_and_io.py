@@ -248,10 +248,12 @@ def test_assign_unsupported_type_raises() -> None:
         doc["x"] = object()
 
 
-def test_assign_aot_inline_raises() -> None:
+def test_assign_aot_over_scalar() -> None:
     src = toml_edit.parse(
         "[[products]]\nname = 'a'\n[[products]]\nname = 'b'\n",
     )
     dest = toml_edit.parse("dest = 0\n")
-    with pytest.raises(TOMLEditError, match="array-of-tables"):
-        dest["dest"] = src.aot("products")
+    dest["dest"] = src.aot("products")
+    assert toml_edit.loads(toml_edit.dumps(dest)) == {
+        "dest": [{"name": "a"}, {"name": "b"}],
+    }
