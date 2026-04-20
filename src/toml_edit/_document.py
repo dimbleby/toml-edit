@@ -792,7 +792,12 @@ class Table(MutableMapping[str, TomlValue]):
 
 
 class _InlineTable(Table):
-    """Mapping view over an :class:`InlineTableNode`."""
+    """Mapping view over an :class:`InlineTableNode`.
+
+    Also acts as the :class:`_DottedHost` for any dotted-key views
+    derived from its entries — the inline table itself owns all the
+    state (node, separator style, ``=`` padding) those views need.
+    """
 
     __slots__ = ("_node", "_post_eq_text", "_pre_eq_text", "_style")
 
@@ -823,21 +828,7 @@ class _InlineTable(Table):
             if len(entries) == 1 and len(entries[0][0]) == 1:
                 yield head, _value_for(entries[0][1])
             else:
-                yield (
-                    head,
-                    _DottedSubTable(
-                        entries,
-                        depth=1,
-                        host=_InlineDottedHost(
-                            self._node,
-                            style=self._style,
-                            pre_eq_text=self._pre_eq_text,
-                            post_eq_text=self._post_eq_text,
-                            set_final_trivia=self._set_final_trivia,
-                        ),
-                        prefix=(head,),
-                    ),
-                )
+                yield head, _DottedSubTable(depth=1, host=self, prefix=(head,))
 
     def _find_entry(self, key: str) -> InlineTableEntry | None:
         for entry in self._node.entries:
@@ -848,17 +839,10 @@ class _InlineTable(Table):
     def _set_final_trivia(self, t: Trivia) -> None:
         self._node.final_trivia = t
 
-    @override
-    def _set_value(self, key: str, value: object) -> None:
-        existing = self._find_entry(key)
-        if existing is not None:
-            existing.value = value_to_node(value)
-            return
-        # Auto-purge any dotted-key entries with this head segment.
-        self._node.entries[:] = [e for e in self._node.entries if e.key.path[0] != key]
-        new_entry = InlineTableEntry(
+    def _make_entry(self, path: tuple[str, ...], value: object) -> InlineTableEntry:
+        return InlineTableEntry(
             leading=Trivia(),
-            key=make_simple_key(key),
+            key=_make_dotted_key(path) if len(path) > 1 else make_simple_key(path[0]),
             pre_eq=WhitespaceNode(self._pre_eq_text) if self._pre_eq_text else None,
             post_eq=WhitespaceNode(self._post_eq_text) if self._post_eq_text else None,
             value=value_to_node(value),
@@ -866,16 +850,53 @@ class _InlineTable(Table):
             has_comma=False,
             post_comma_trivia=Trivia(),
         )
-        self._node.entries.append(new_entry)
+
+    # --- _DottedHost protocol ------------------------------------------------
+
+    def set_at(self, path: tuple[str, ...], value: object) -> None:
+        # Preserve in-place update for an exact simple match so the
+        # entry's surrounding trivia and position survive round-tripping.
+        if len(path) == 1:
+            existing = self._find_entry(path[0])
+            if existing is not None:
+                existing.value = value_to_node(value)
+                return
+        self._node.entries[:] = [
+            e for e in self._node.entries if not _path_has_prefix(e.key.path, path)
+        ]
+        self._node.entries.append(self._make_entry(path, value))
         _apply_separator_style(self._node.entries, self._style, self._set_final_trivia)
+
+    def del_prefix(self, prefix: tuple[str, ...]) -> bool:
+        kept = [e for e in self._node.entries if not _path_has_prefix(e.key.path, prefix)]
+        if len(kept) == len(self._node.entries):
+            return False
+        self._node.entries[:] = kept
+        _apply_separator_style(self._node.entries, self._style, self._set_final_trivia)
+        return True
+
+    def entries_under(self, prefix: tuple[str, ...]) -> list[tuple[tuple[str, ...], ValueNode]]:
+        plen = len(prefix)
+        return [
+            (e.key.path, e.value)
+            for e in self._node.entries
+            if len(e.key.path) > plen and e.key.path[:plen] == prefix
+        ]
+
+    # --- mapping mutation ----------------------------------------------------
+
+    @override
+    def _set_value(self, key: str, value: object) -> None:
+        self.set_at((key,), value)
 
     @override
     def _delete_value(self, key: str) -> None:
-        before = len(self._node.entries)
-        self._node.entries[:] = [e for e in self._node.entries if e.key.path[0] != key]
-        if len(self._node.entries) == before:
+        if not self.del_prefix((key,)):
             raise KeyError(key)
-        _apply_separator_style(self._node.entries, self._style, self._set_final_trivia)
+
+
+def _path_has_prefix(path: tuple[str, ...], prefix: tuple[str, ...]) -> bool:
+    return len(path) >= len(prefix) and path[: len(prefix)] == prefix
 
 
 class _DottedHost(Protocol):
@@ -907,49 +928,52 @@ class _SectionDottedHost:
     def __init__(self, sections: list[SectionNode]) -> None:
         self._sections = sections
 
-    def _purge(self, prefix: tuple[str, ...]) -> tuple[bool, SectionNode | None]:
-        plen = len(prefix)
-        any_removed = False
-        last_match: SectionNode | None = None
-        for sec in self._sections:
-            keep: list[KeyValueNode] = []
-            for kv in sec.entries:
-                if kv.key.path[:plen] == prefix:
-                    any_removed = True
-                    last_match = sec
-                else:
-                    keep.append(kv)
-            if len(keep) != len(sec.entries):
-                sec.entries[:] = keep
-        return any_removed, last_match
-
     def set_at(self, path: tuple[str, ...], value: object) -> None:
-        _, host_sec = self._purge(path)
+        # Remove any existing entry at or under this path; remember which
+        # section last hosted such an entry so the new dotted KV lands
+        # near its predecessors when sections are split.
+        host_sec: SectionNode | None = None
+        for sec in self._sections:
+            kept: list[KeyValueNode] = []
+            for kv in sec.entries:
+                if _path_has_prefix(kv.key.path, path):
+                    host_sec = sec
+                else:
+                    kept.append(kv)
+            if len(kept) != len(sec.entries):
+                sec.entries[:] = kept
         if host_sec is None:
+            # No existing entry at this path: pick the section that
+            # already owns dotted entries with the same head, else last.
             head = path[0]
-            for sec in self._sections:
-                for kv in sec.entries:
-                    if kv.key.path and kv.key.path[0] == head:
-                        host_sec = sec
-                        break
-                if host_sec is not None:
-                    break
-            if host_sec is None:
-                host_sec = self._sections[-1]
-        kv = KeyValueNode(
-            leading=Trivia(),
-            key=_make_dotted_key(path),
-            pre_eq=WhitespaceNode(" "),
-            post_eq=WhitespaceNode(" "),
-            value=value_to_node(value),
-            trailing=None,
-            trailing_comment=None,
-            newline=NewlineNode("\n"),
+            host_sec = next(
+                (
+                    sec
+                    for sec in self._sections
+                    if any(kv.key.path and kv.key.path[0] == head for kv in sec.entries)
+                ),
+                self._sections[-1],
+            )
+        host_sec.entries.append(
+            KeyValueNode(
+                leading=Trivia(),
+                key=_make_dotted_key(path),
+                pre_eq=WhitespaceNode(" "),
+                post_eq=WhitespaceNode(" "),
+                value=value_to_node(value),
+                trailing=None,
+                trailing_comment=None,
+                newline=NewlineNode("\n"),
+            ),
         )
-        host_sec.entries.append(kv)
 
     def del_prefix(self, prefix: tuple[str, ...]) -> bool:
-        any_removed, _ = self._purge(prefix)
+        any_removed = False
+        for sec in self._sections:
+            kept = [kv for kv in sec.entries if not _path_has_prefix(kv.key.path, prefix)]
+            if len(kept) != len(sec.entries):
+                sec.entries[:] = kept
+                any_removed = True
         return any_removed
 
     def entries_under(self, prefix: tuple[str, ...]) -> list[tuple[tuple[str, ...], ValueNode]]:
@@ -964,97 +988,33 @@ class _SectionDottedHost:
         return out
 
 
-class _InlineDottedHost:
-    """Mutates dotted-key entries inside an :class:`InlineTableNode`."""
-
-    __slots__ = ("_node", "_post_eq_text", "_pre_eq_text", "_set_final_trivia", "_style")
-
-    def __init__(
-        self,
-        node: InlineTableNode,
-        *,
-        style: _SeparatorStyle,
-        pre_eq_text: str,
-        post_eq_text: str,
-        set_final_trivia: Callable[[Trivia], None],
-    ) -> None:
-        self._node = node
-        self._style = style
-        self._pre_eq_text = pre_eq_text
-        self._post_eq_text = post_eq_text
-        self._set_final_trivia = set_final_trivia
-
-    def _purge(self, prefix: tuple[str, ...]) -> bool:
-        plen = len(prefix)
-        before = len(self._node.entries)
-        self._node.entries[:] = [e for e in self._node.entries if e.key.path[:plen] != prefix]
-        return len(self._node.entries) != before
-
-    def set_at(self, path: tuple[str, ...], value: object) -> None:
-        self._purge(path)
-        new_entry = InlineTableEntry(
-            leading=Trivia(),
-            key=_make_dotted_key(path),
-            pre_eq=WhitespaceNode(self._pre_eq_text) if self._pre_eq_text else None,
-            post_eq=WhitespaceNode(self._post_eq_text) if self._post_eq_text else None,
-            value=value_to_node(value),
-            trailing=Trivia(),
-            has_comma=False,
-            post_comma_trivia=Trivia(),
-        )
-        self._node.entries.append(new_entry)
-        _apply_separator_style(self._node.entries, self._style, self._set_final_trivia)
-
-    def del_prefix(self, prefix: tuple[str, ...]) -> bool:
-        if not self._purge(prefix):
-            return False
-        _apply_separator_style(self._node.entries, self._style, self._set_final_trivia)
-        return True
-
-    def entries_under(self, prefix: tuple[str, ...]) -> list[tuple[tuple[str, ...], ValueNode]]:
-        plen = len(prefix)
-        return [
-            (e.key.path, e.value)
-            for e in self._node.entries
-            if len(e.key.path) > plen and e.key.path[:plen] == prefix
-        ]
-
-
 class _DottedSubTable(Table):
     """Synthetic table aggregating dotted-key entries.
 
-    When a ``host`` is provided the view is *live*: entries are re-read
-    from the host on each access, so mutations through this view are
-    visible immediately. Without a host the view is a static snapshot
-    and mutations are not supported (they fall back to the base class).
+    The view is *live*: entries are re-read from the host on each
+    access, so mutations through this view (or a sibling view onto the
+    same underlying container) are immediately visible.
     """
 
-    __slots__ = ("_depth", "_entries", "_host", "_prefix")
+    __slots__ = ("_depth", "_host", "_prefix")
 
     def __init__(
         self,
-        entries: list[tuple[tuple[str, ...], ValueNode]],
         *,
         depth: int,
-        host: _DottedHost | None = None,
-        prefix: tuple[str, ...] = (),
+        host: _DottedHost,
+        prefix: tuple[str, ...],
     ) -> None:
-        self._entries = entries
         self._depth = depth
         self._host = host
         self._prefix = prefix
-
-    def _current_entries(self) -> list[tuple[tuple[str, ...], ValueNode]]:
-        if self._host is None:
-            return self._entries
-        return self._host.entries_under(self._prefix)
 
     @override
     def _items(self) -> Iterator[tuple[str, TomlValue]]:
         groups: dict[str, list[tuple[tuple[str, ...], ValueNode]]] = {}
         order: list[str] = []
         terminals: dict[str, ValueNode] = {}
-        for path, value in self._current_entries():
+        for path, value in self._host.entries_under(self._prefix):
             head = path[self._depth]
             if len(path) == self._depth + 1:
                 terminals[head] = value
@@ -1073,7 +1033,6 @@ class _DottedSubTable(Table):
                 yield (
                     head,
                     _DottedSubTable(
-                        groups[head],
                         depth=self._depth + 1,
                         host=self._host,
                         prefix=(*self._prefix, head),
@@ -1082,16 +1041,10 @@ class _DottedSubTable(Table):
 
     @override
     def _set_value(self, key: str, value: object) -> None:
-        if self._host is None:
-            super()._set_value(key, value)
-            return
         self._host.set_at((*self._prefix, key), value)
 
     @override
     def _delete_value(self, key: str) -> None:
-        if self._host is None:
-            super()._delete_value(key)
-            return
         if key not in self:
             raise KeyError(key)
         self._host.del_prefix((*self._prefix, key))
@@ -2388,7 +2341,6 @@ class _DocumentView:
                 yield (
                     head,
                     _DottedSubTable(
-                        [(kv.key.path, kv.value) for kv in nested_kvs],
                         depth=1,
                         host=_SectionDottedHost(direct_secs),
                         prefix=(head,),
