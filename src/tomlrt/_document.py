@@ -20,6 +20,7 @@ from typing import (
     SupportsIndex,
     TypeAlias,
     TypeVar,
+    assert_never,
     overload,
 )
 
@@ -100,8 +101,11 @@ def _to_plain(value: object) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def _scalar_value(node: ValueNode) -> Scalar | None:
-    """Return the Python scalar for a value node, or None if it's a container."""
+def _value_for(node: ValueNode) -> TomlValue:
+    if isinstance(node, ArrayNode):
+        return Array(node)
+    if isinstance(node, InlineTableNode):
+        return _InlineTable(node)
     if isinstance(node, StringNode):
         return node.value
     if isinstance(node, BoolNode):
@@ -112,17 +116,7 @@ def _scalar_value(node: ValueNode) -> Scalar | None:
         return node.value
     if isinstance(node, DateTimeNode):
         return node.value
-    return None
-
-
-def _value_for(node: ValueNode) -> TomlValue:
-    if isinstance(node, ArrayNode):
-        return Array(node)
-    if isinstance(node, InlineTableNode):
-        return _InlineTable(node)
-    scalar = _scalar_value(node)
-    assert scalar is not None  # exhaustive by construction
-    return scalar
+    assert_never(node)
 
 
 def _materialise_array(node: ArrayNode) -> list[TomlValue]:
@@ -845,24 +839,6 @@ class Table(dict[str, Any]):
                 return
         if super().__contains__(key):
             super().__delitem__(key)
-
-    def _refresh_path(self, path: tuple[str, ...]) -> None:
-        """Refresh dict storage along ``path`` from the CST.
-
-        Descends through existing :class:`Table` children to preserve
-        their identity, and only refreshes the leaf (or any segment
-        where descent isn't possible) from scratch.
-        """
-        if not path:
-            return
-        head = path[0]
-        rest = path[1:]
-        if rest and super().__contains__(head):
-            existing = super().__getitem__(head)
-            if isinstance(existing, Table):
-                existing._refresh_path(rest)  # noqa: SLF001
-                return
-        self._refresh_key(head)
 
     # --- attachment / detachment ------------------------------------------
 
