@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `Table` now subclasses `MutableMapping[str, Any]` (was
+  `MutableMapping[str, TomlValue]`), and `Table.__getitem__` returns
+  `Any` (was the strict `Scalar | Array | AoT | Table` union).
+  Symmetrically, `Array` now subclasses `list[Any]` and
+  `Array.__getitem__` / `Array.pop` return `Any`. This matches what
+  `tomllib.loads` returns (`dict[str, Any]`) and what `tomlkit` does,
+  and lets chained subscripts like ``doc["tool"]["poetry"]["name"]``
+  type-check without `cast`. Consumers typed against
+  `MutableMapping[str, Any]` or `list[Any]` (which is most of the
+  ecosystem) now compose with `Table` / `Array` directly. The strict
+  return type is still available through the `.table()` / `.array()` /
+  `.aot()` accessors and their `get_*` counterparts when you want it.
 - `Array.append` / `extend` / `insert` / `__setitem__` now type their
   input parameter as ``object`` instead of the narrower ``TomlValue``
   alias, matching ``Table.__setitem__`` and the underlying

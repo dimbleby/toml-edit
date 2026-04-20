@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import sys
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import MutableMapping
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -760,3 +763,52 @@ def test_array_get_table_raises_typeerror_on_wrong_type() -> None:
     arr = doc.array("xs")
     with pytest.raises(TypeError, match="not a Table"):
         arr.get_table(0)
+
+
+# ---------------------------------------------------------------------------
+# Loosened typing on __getitem__ and the MutableMapping/list parameter.
+#
+# These are partly type-ergonomics smoke tests (mypy --strict will catch
+# regressions), and partly behavioural confirmations that loosening the
+# annotations didn't change the runtime contract.
+# ---------------------------------------------------------------------------
+
+
+def test_chained_subscripts_typecheck_and_work() -> None:
+    doc = tomlrt.parse(
+        """
+        [tool.poetry]
+        name = "demo"
+        """,
+    )
+    # Chained subscripts now type-check (return Any, not the strict union).
+    name: str = doc["tool"]["poetry"]["name"]
+    assert name == "demo"
+
+
+def test_table_is_mutablemapping_str_any() -> None:
+    doc = tomlrt.parse("a = 1\n[t]\nb = 2\n")
+    # Consumers typed against MutableMapping[str, Any] (which is most of
+    # the ecosystem) now compose with Table without a cast.
+    sink: MutableMapping[str, Any] = doc
+    assert sink["a"] == 1
+    sink["c"] = "hello"
+    assert doc["c"] == "hello"
+
+
+def test_array_is_list_any() -> None:
+    doc = tomlrt.parse('xs = [1, "two", { k = "v" }]\n')
+    arr = doc.array("xs")
+    # An Array is a list (subclass), parameterised as list[Any].
+    sink: list[Any] = arr
+    assert sink[0] == 1
+    assert sink[2]["k"] == "v"
+
+
+def test_table_getitem_returns_any_pop_too() -> None:
+    doc = tomlrt.parse("[t]\nname = 'x'\n")
+    # Static type of the popped value is Any; runtime is a plain dict
+    # snapshot (per Table.pop semantics).
+    popped = doc.pop("t")
+    assert popped == {"name": "x"}
+    assert "t" not in doc

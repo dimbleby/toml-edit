@@ -771,7 +771,7 @@ def _section_insert_index(
 # ---------------------------------------------------------------------------
 
 
-class Table(MutableMapping[str, TomlValue]):
+class Table(MutableMapping[str, Any]):
     """A logical TOML table.
 
     All mapping flavours in tomlrt (top-level document, standard
@@ -837,7 +837,7 @@ class Table(MutableMapping[str, TomlValue]):
         return any(k == key for k, _ in self._items())
 
     @override
-    def __getitem__(self, key: str) -> TomlValue:
+    def __getitem__(self, key: str) -> Any:
         for k, v in self._items():
             if k == key:
                 return v
@@ -2349,7 +2349,7 @@ class _ArrayLeadingCommentsView(MutableMapping[int, "tuple[str, ...]"]):
 # ---------------------------------------------------------------------------
 
 
-class Array(list[TomlValue]):
+class Array(list[Any]):
     """Inline TOML array exposed as a real :class:`list`.
 
     Every standard list mutator is overridden so the underlying CST
@@ -2500,14 +2500,14 @@ class Array(list[TomlValue]):
         self._resync()
 
     @override
-    def pop(self, index: SupportsIndex = -1) -> TomlValue:
+    def pop(self, index: SupportsIndex = -1) -> Any:
         item = self._node.items.pop(operator.index(index))
         self._rebuild_separators()
         self._resync()
         return _value_for(item.value)
 
     @override
-    def remove(self, value: TomlValue) -> None:
+    def remove(self, value: object) -> None:
         idx = list.index(self, value)
         del self[idx]
 
@@ -2527,7 +2527,7 @@ class Array(list[TomlValue]):
     def sort(
         self,
         *,
-        key: Callable[[TomlValue], object] | None = None,
+        key: Callable[[Any], object] | None = None,
         reverse: bool = False,
     ) -> None:
         pairs = list(zip(_materialise_array(self._node), self._node.items, strict=True))
@@ -2540,7 +2540,7 @@ class Array(list[TomlValue]):
         self._resync()
 
     @override
-    def __iadd__(self, values: Iterable[object]) -> Self:  # type: ignore[override]
+    def __iadd__(self, values: Iterable[object]) -> Self:
         self.extend(values)
         return self
 

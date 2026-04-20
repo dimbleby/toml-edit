@@ -161,7 +161,7 @@ def test_assign_float_inf_and_nan() -> None:
     re = tomlrt.parse(out)
     assert re["x"] == math.inf
     assert re["y"] == -math.inf
-    assert math.isnan(re["z"])  # type: ignore[arg-type]
+    assert math.isnan(re["z"])
 
 
 def test_assign_local_date() -> None:
