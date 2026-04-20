@@ -27,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates an inline array at ``key`` (replacing any existing value),
   optionally laid out one item per line. Accepts dotted paths so a
   multiline array deep in the tree can be created in a single call.
+- `Document.preamble` and `Document.epilogue` properties expose the
+  comment block at the top and bottom of the document. They are
+  blank-line-separated from any structural content (and from any
+  "attached" leading comment of the first key), so writing one will
+  not clobber the other or any per-key comment block.
 - `Table.set_aot` now accepts dotted paths, mirroring `set_table`.
 - `Table.table`, `Table.array` and `Table.aot` typed accessors now
   accept dotted paths for navigation through nested structures.

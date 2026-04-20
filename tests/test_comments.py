@@ -686,3 +686,117 @@ def test_array_array_wrong_kind_raises_typeerror() -> None:
     doc = tomlrt.parse("xs = [1, 2]\n")
     with pytest.raises(TypeError, match="not an Array"):
         doc.array("xs").array(0)
+
+
+# ---------------------------------------------------------------------------
+# Document.preamble / Document.epilogue
+# ---------------------------------------------------------------------------
+
+
+def test_preamble_empty_doc_set_and_get() -> None:
+    doc = tomlrt.loads("")
+    assert doc.preamble == ()
+    doc.preamble = ("hello", "world")
+    assert doc.preamble == ("hello", "world")
+    assert tomlrt.dumps(doc) == "# hello\n# world\n"
+
+
+def test_preamble_set_on_doc_with_content_adds_blank_separator() -> None:
+    doc = tomlrt.loads("a = 1\n")
+    doc.preamble = ("top",)
+    assert tomlrt.dumps(doc) == "# top\n\na = 1\n"
+    assert doc.preamble == ("top",)
+
+
+def test_preamble_distinguishes_attached_leading_comment() -> None:
+    """A comment immediately above the first key is leading, not preamble."""
+    doc = tomlrt.loads("# attached\nkey = 1\n")
+    assert doc.preamble == ()
+    assert doc.leading_comments["key"] == ("attached",)
+
+
+def test_preamble_set_preserves_attached_leading_comment() -> None:
+    doc = tomlrt.loads("# attached\nkey = 1\n")
+    doc.preamble = ("preamble",)
+    assert tomlrt.dumps(doc) == "# preamble\n\n# attached\nkey = 1\n"
+    assert doc.preamble == ("preamble",)
+    assert doc.leading_comments["key"] == ("attached",)
+
+
+def test_preamble_blank_separated_from_attached() -> None:
+    doc = tomlrt.loads("# pre\n\n# attached\nkey = 1\n")
+    assert doc.preamble == ("pre",)
+    assert doc.leading_comments["key"] == ("attached",)
+
+
+def test_preamble_works_when_doc_starts_with_section_header() -> None:
+    doc = tomlrt.loads("[t]\nx = 1\n")
+    doc.preamble = ("hi",)
+    assert tomlrt.dumps(doc) == "# hi\n\n[t]\nx = 1\n"
+
+
+def test_preamble_delete() -> None:
+    doc = tomlrt.loads("# pre\n\nkey = 1\n")
+    del doc.preamble
+    assert tomlrt.dumps(doc) == "key = 1\n"
+    assert doc.preamble == ()
+
+
+def test_preamble_replace_existing() -> None:
+    doc = tomlrt.loads("# old\n\nkey = 1\n")
+    doc.preamble = ("new1", "new2")
+    assert tomlrt.dumps(doc) == "# new1\n# new2\n\nkey = 1\n"
+
+
+def test_epilogue_empty_doc_returns_empty() -> None:
+    doc = tomlrt.loads("")
+    assert doc.epilogue == ()
+
+
+def test_epilogue_set_on_doc_with_content() -> None:
+    doc = tomlrt.loads("a = 1\n")
+    doc.epilogue = ("bye",)
+    assert tomlrt.dumps(doc) == "a = 1\n# bye\n"
+    assert doc.epilogue == ("bye",)
+
+
+def test_epilogue_replace_existing() -> None:
+    doc = tomlrt.loads("a = 1\n# old\n")
+    assert doc.epilogue == ("old",)
+    doc.epilogue = ("new",)
+    assert tomlrt.dumps(doc) == "a = 1\n# new\n"
+
+
+def test_epilogue_delete() -> None:
+    doc = tomlrt.loads("a = 1\n# old\n")
+    del doc.epilogue
+    assert tomlrt.dumps(doc) == "a = 1\n"
+    assert doc.epilogue == ()
+
+
+def test_epilogue_set_on_empty_doc_raises() -> None:
+    doc = tomlrt.loads("")
+    with pytest.raises(tomlrt.TOMLError, match="no structural content"):
+        doc.epilogue = ("x",)
+
+
+def test_preamble_and_epilogue_independent() -> None:
+    doc = tomlrt.loads("# top\n\na = 1\n# bottom\n")
+    assert doc.preamble == ("top",)
+    assert doc.epilogue == ("bottom",)
+    assert tomlrt.dumps(doc) == "# top\n\na = 1\n# bottom\n"
+
+
+def test_preamble_round_trips_through_reparse() -> None:
+    doc = tomlrt.loads("")
+    doc.preamble = ("a", "b")
+    doc["k"] = 1
+    doc.epilogue = ("z",)
+    rendered = tomlrt.dumps(doc)
+    assert tomlrt.dumps(tomlrt.loads(rendered)) == rendered
+
+
+def test_preamble_rejects_embedded_newline() -> None:
+    doc = tomlrt.loads("")
+    with pytest.raises(tomlrt.TOMLError, match="line terminator"):
+        doc.preamble = ("a\nb",)

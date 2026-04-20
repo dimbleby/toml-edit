@@ -341,6 +341,163 @@ def _is_pure_whitespace(t: Trivia) -> bool:
     return all(isinstance(p, (WhitespaceNode, NewlineNode)) for p in t.pieces)
 
 
+def _scan_leading_comment_run(pieces: list[TriviaPiece]) -> tuple[int, list[str]]:
+    """Walk a leading run of ``[WS] # … \\n`` triples from offset 0.
+
+    Returns ``(end_index, raw_comment_texts)``. ``end_index`` is the
+    index of the first piece that is not part of the run.
+    """
+    n = len(pieces)
+    comments: list[str] = []
+    i = 0
+    while i < n:
+        j = i
+        if j < n and isinstance(pieces[j], WhitespaceNode):
+            j += 1
+        if (
+            j + 1 < n
+            and isinstance(pieces[j], CommentNode)
+            and isinstance(pieces[j + 1], NewlineNode)
+        ):
+            comments.append(pieces[j].text)
+            i = j + 2
+        else:
+            break
+    return i, comments
+
+
+def _scan_trailing_comment_run(pieces: list[TriviaPiece]) -> tuple[int, list[str]]:
+    """Mirror of :func:`_scan_leading_comment_run` reading from the end.
+
+    Returns ``(start_index, raw_comment_texts)``. ``start_index`` is the
+    index where the run begins; ``pieces[start_index:end]`` is the run
+    plus its anchoring whitespace.
+    """
+    n = len(pieces)
+    end = n
+    while end > 0 and isinstance(pieces[end - 1], WhitespaceNode):
+        end -= 1
+    comments: list[str] = []
+    i = end
+    while i >= 2:
+        nl = pieces[i - 1]
+        cm = pieces[i - 2]
+        if not (isinstance(nl, NewlineNode) and isinstance(cm, CommentNode)):
+            break
+        comments.append(cm.text)
+        i -= 2
+        if i > 0 and isinstance(pieces[i - 1], WhitespaceNode):
+            i -= 1
+    comments.reverse()
+    return i, comments
+
+
+def _extract_doc_preamble(trivia: Trivia, *, doc_has_content: bool) -> tuple[str, ...]:
+    """Extract the document-preamble comment block from ``trivia``.
+
+    The leading run of comment lines counts as preamble iff it is
+    blank-line-separated from any later content, OR the document has
+    no structural content (in which case the whole leading run is
+    considered preamble — there is nothing for it to be "attached" to).
+    """
+    pieces = trivia.pieces
+    end, comments = _scan_leading_comment_run(pieces)
+    if not comments:
+        return ()
+    has_separator = end < len(pieces) and isinstance(pieces[end], NewlineNode)
+    if has_separator or not doc_has_content:
+        return tuple(_strip_comment_marker(c) for c in comments)
+    return ()
+
+
+def _replace_doc_preamble(
+    trivia: Trivia,
+    lines: Sequence[str],
+    *,
+    doc_has_content: bool,
+) -> None:
+    """Replace the document preamble in ``trivia`` with ``lines``.
+
+    Preserves any "attached" leading-comment block when the original
+    preamble is blank-separated from it. When writing a non-empty
+    preamble into a doc that has structural content, ensures a
+    blank-line separator after the preamble.
+    """
+    pieces = trivia.pieces
+    run_end, _ = _scan_leading_comment_run(pieces)
+    sep_end = run_end
+    while sep_end < len(pieces) and isinstance(pieces[sep_end], NewlineNode):
+        sep_end += 1
+    has_separator = sep_end > run_end
+    is_preamble = has_separator or not doc_has_content
+    consume_end = (run_end + (1 if has_separator else 0)) if is_preamble else 0
+    new_preamble: list[TriviaPiece] = []
+    for line in lines:
+        new_preamble.append(CommentNode(text=_format_comment(line)))
+        new_preamble.append(NewlineNode("\n"))
+    if lines and doc_has_content:
+        new_preamble.append(NewlineNode("\n"))
+    trivia.pieces = new_preamble + list(pieces[consume_end:])
+
+
+def _extract_doc_epilogue(trivia: Trivia, *, doc_has_content: bool) -> tuple[str, ...]:
+    """Extract the document-epilogue comment block from ``trivia``.
+
+    Returns the trailing run of comment lines in the document's
+    ``trailing_trivia``. Empty when the document has no structural
+    content (in that case all comments are preamble).
+    """
+    if not doc_has_content:
+        return ()
+    _, comments = _scan_trailing_comment_run(trivia.pieces)
+    return tuple(_strip_comment_marker(c) for c in comments)
+
+
+def _replace_doc_epilogue(
+    trivia: Trivia,
+    lines: Sequence[str],
+    *,
+    doc_has_content: bool,
+) -> None:
+    """Replace the document epilogue in ``trivia`` with ``lines``.
+
+    Preserves any preceding preamble-territory comments and the
+    trailing whitespace anchor. No-op (write side) when the document
+    has no structural content.
+    """
+    if not doc_has_content:
+        # Empty doc: epilogue is conceptually empty; refuse silently to
+        # avoid clobbering preamble.
+        if lines:
+            msg = (
+                "cannot set epilogue on a document with no structural "
+                "content; use preamble instead"
+            )
+            raise TOMLError(msg)
+        return
+    pieces = trivia.pieces
+    n = len(pieces)
+    # Snapshot trailing whitespace anchor.
+    end = n
+    tail_ws: list[TriviaPiece] = []
+    while end > 0 and isinstance(pieces[end - 1], WhitespaceNode):
+        tail_ws.insert(0, pieces[end - 1])
+        end -= 1
+    start, _ = _scan_trailing_comment_run(pieces)
+    # Strip a single blank-line separator immediately before the run, if any.
+    sep_start = start
+    if sep_start > 0 and isinstance(pieces[sep_start - 1], NewlineNode):
+        sep_start -= 1
+    new_epilogue: list[TriviaPiece] = []
+    head = list(pieces[:sep_start])
+    if lines and head:
+        new_epilogue.append(NewlineNode("\n"))
+    for line in lines:
+        new_epilogue.append(CommentNode(text=_format_comment(line)))
+        new_epilogue.append(NewlineNode("\n"))
+    trivia.pieces = head + new_epilogue + tail_ws
+
+
 def _trivia_render_eq(a: Trivia, b: Trivia) -> bool:
     return a.render() == b.render()
 
@@ -1800,6 +1957,90 @@ class Document(_StdTable):
 
     def render(self) -> str:
         return self._node.render()
+
+    def _doc_has_content(self) -> bool:
+        return any(s.header is not None or s.entries for s in self._node.sections)
+
+    def _preamble_target(self) -> Trivia:
+        for sec in self._node.sections:
+            if sec.header is not None:
+                return sec.header.leading
+            if sec.entries:
+                return sec.entries[0].leading
+        return self._node.trailing_trivia
+
+    @property
+    def preamble(self) -> tuple[str, ...]:
+        """Comment block at the top of the document.
+
+        A "preamble" is the run of ``# …`` lines that opens the file
+        and is blank-line-separated from anything below. Comments that
+        sit directly above the first key (no blank line) are *not*
+        preamble — they are the leading comments of that key, accessed
+        via :attr:`leading_comments`. In a document with no structural
+        content, the entire opening comment block is treated as
+        preamble.
+
+        Setter accepts a sequence of bare comment texts (without the
+        leading ``#``) and replaces the current preamble. Setting an
+        empty sequence (or ``del``) removes it. Newlines inside any
+        line are rejected.
+        """
+        return _extract_doc_preamble(
+            self._preamble_target(),
+            doc_has_content=self._doc_has_content(),
+        )
+
+    @preamble.setter
+    def preamble(self, value: Sequence[str]) -> None:
+        _replace_doc_preamble(
+            self._preamble_target(),
+            value,
+            doc_has_content=self._doc_has_content(),
+        )
+
+    @preamble.deleter
+    def preamble(self) -> None:
+        _replace_doc_preamble(
+            self._preamble_target(),
+            (),
+            doc_has_content=self._doc_has_content(),
+        )
+
+    @property
+    def epilogue(self) -> tuple[str, ...]:
+        """Comment block at the very end of the document.
+
+        Returns the trailing run of ``# …`` lines that follows all
+        structural content. Empty when the document has no structural
+        content (in that case everything is :attr:`preamble`).
+
+        Setter accepts a sequence of bare comment texts and replaces
+        the current epilogue, ensuring a blank-line separator from any
+        earlier content. Setting an empty sequence (or ``del``) removes
+        it. Raises :class:`TOMLError` if called with non-empty value
+        on a document with no structural content.
+        """
+        return _extract_doc_epilogue(
+            self._node.trailing_trivia,
+            doc_has_content=self._doc_has_content(),
+        )
+
+    @epilogue.setter
+    def epilogue(self, value: Sequence[str]) -> None:
+        _replace_doc_epilogue(
+            self._node.trailing_trivia,
+            value,
+            doc_has_content=self._doc_has_content(),
+        )
+
+    @epilogue.deleter
+    def epilogue(self) -> None:
+        _replace_doc_epilogue(
+            self._node.trailing_trivia,
+            (),
+            doc_has_content=self._doc_has_content(),
+        )
 
 
 # ---------------------------------------------------------------------------
