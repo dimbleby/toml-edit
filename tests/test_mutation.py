@@ -322,3 +322,146 @@ def test_replace_scalar_with_array() -> None:
     doc["x"] = [True, False]
     out = tomlrt.dumps(doc)
     assert _reparses(out) == {"x": [True, False]}
+
+
+# ---------------------------------------------------------------------------
+# AoT mutators (pop / clear / __delitem__) — list-style mutation surface
+# ---------------------------------------------------------------------------
+
+
+def _aot_doc() -> tomlrt.Document:
+    return tomlrt.parse(
+        '[[pkg]]\nname = "a"\n\n'
+        "[pkg.dep]\nx = 1\n\n"
+        '[[pkg]]\nname = "b"\n\n'
+        '[[pkg]]\nname = "c"\n'
+    )
+
+
+def test_aot_pop_default_removes_last_entry_and_owned_subsections() -> None:
+    doc = _aot_doc()
+    aot = doc.aot("pkg")
+    popped = aot.pop()
+    assert isinstance(popped, tomlrt.Table)
+    assert popped["name"] == "c"
+    assert len(aot) == 2
+    out = tomlrt.dumps(doc)
+    assert _reparses(out) == {
+        "pkg": [
+            {"name": "a", "dep": {"x": 1}},
+            {"name": "b"},
+        ],
+    }
+
+
+def test_aot_pop_first_entry_takes_owned_subsections_with_it() -> None:
+    doc = _aot_doc()
+    aot = doc.aot("pkg")
+    popped = aot.pop(0)
+    assert popped["name"] == "a"
+    out = tomlrt.dumps(doc)
+    assert "[pkg.dep]" not in out  # the owned sub-section went with entry 0
+    assert _reparses(out) == {"pkg": [{"name": "b"}, {"name": "c"}]}
+
+
+def test_aot_pop_negative_index() -> None:
+    doc = _aot_doc()
+    aot = doc.aot("pkg")
+    popped = aot.pop(-2)
+    assert popped["name"] == "b"
+    assert _reparses(tomlrt.dumps(doc)) == {
+        "pkg": [{"name": "a", "dep": {"x": 1}}, {"name": "c"}],
+    }
+
+
+def test_aot_pop_index_out_of_range_raises() -> None:
+    doc = _aot_doc()
+    aot = doc.aot("pkg")
+    with pytest.raises(IndexError, match="pop index out of range"):
+        aot.pop(99)
+    with pytest.raises(IndexError, match="pop index out of range"):
+        aot.pop(-99)
+
+
+def test_aot_clear_removes_all_entries_and_owned_subsections() -> None:
+    doc = _aot_doc()
+    aot = doc.aot("pkg")
+    aot.clear()
+    assert len(aot) == 0
+    out = tomlrt.dumps(doc)
+    assert "[[pkg]]" not in out
+    assert "[pkg.dep]" not in out
+    assert _reparses(out) == {}
+
+
+def test_aot_delitem_index_pops_one() -> None:
+    doc = _aot_doc()
+    aot = doc.aot("pkg")
+    del aot[1]
+    assert _reparses(tomlrt.dumps(doc)) == {
+        "pkg": [{"name": "a", "dep": {"x": 1}}, {"name": "c"}],
+    }
+
+
+def test_aot_delitem_slice_removes_range() -> None:
+    doc = _aot_doc()
+    aot = doc.aot("pkg")
+    del aot[1:]
+    assert _reparses(tomlrt.dumps(doc)) == {"pkg": [{"name": "a", "dep": {"x": 1}}]}
+
+
+def test_aot_delitem_slice_with_step() -> None:
+    doc = tomlrt.parse(
+        "[[p]]\nn=1\n[[p]]\nn=2\n[[p]]\nn=3\n[[p]]\nn=4\n",
+    )
+    aot = doc.aot("p")
+    del aot[::2]
+    assert _reparses(tomlrt.dumps(doc)) == {"p": [{"n": 2}, {"n": 4}]}
+
+
+# ---------------------------------------------------------------------------
+# Array.sort(key=...), Array *= n, Array.table() type-error
+# ---------------------------------------------------------------------------
+
+
+def test_array_sort_with_key_callable() -> None:
+    doc = tomlrt.parse('xs = ["bb", "a", "ccc"]\n')
+    xs = doc.array("xs")
+    xs.sort(key=lambda v: len(str(v)))
+    assert _reparses(tomlrt.dumps(doc)) == {"xs": ["a", "bb", "ccc"]}
+
+
+def test_array_imul_zero_clears() -> None:
+    doc = tomlrt.parse("xs = [1, 2, 3]\n")
+    xs = doc.array("xs")
+    xs *= 0
+    assert list(xs) == []
+    assert _reparses(tomlrt.dumps(doc)) == {"xs": []}
+
+
+def test_array_imul_negative_clears() -> None:
+    doc = tomlrt.parse("xs = [1, 2]\n")
+    xs = doc.array("xs")
+    xs *= -3
+    assert list(xs) == []
+
+
+def test_array_imul_repeats_items() -> None:
+    doc = tomlrt.parse("xs = [1, 2]\n")
+    xs = doc.array("xs")
+    xs *= 3
+    assert _reparses(tomlrt.dumps(doc)) == {"xs": [1, 2, 1, 2, 1, 2]}
+
+
+def test_array_table_typed_accessor_raises_on_non_table_item() -> None:
+    doc = tomlrt.parse("xs = [1, 2]\n")
+    xs = doc.array("xs")
+    with pytest.raises(TypeError, match="not a Table"):
+        xs.table(0)
+
+
+def test_array_array_typed_accessor_raises_on_non_array_item() -> None:
+    doc = tomlrt.parse("xs = [1, 2]\n")
+    xs = doc.array("xs")
+    with pytest.raises(TypeError, match="not an Array"):
+        xs.array(0)
