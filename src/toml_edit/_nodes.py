@@ -236,8 +236,8 @@ class InlineTableEntry:
 
     leading: Trivia
     key: Key
-    pre_eq: Trivia
-    post_eq: Trivia
+    pre_eq: WhitespaceNode | None
+    post_eq: WhitespaceNode | None
     value: ValueNode
     trailing: Trivia
     has_comma: bool
@@ -247,9 +247,9 @@ class InlineTableEntry:
         out = (
             self.leading.render()
             + self.key.render()
-            + self.pre_eq.render()
+            + (self.pre_eq.text if self.pre_eq is not None else "")
             + "="
-            + self.post_eq.render()
+            + (self.post_eq.text if self.post_eq is not None else "")
             + render_value(self.value)
             + self.trailing.render()
         )
@@ -299,10 +299,10 @@ class KeyValueNode:
 
     leading: Trivia
     key: Key
-    pre_eq: Trivia
-    post_eq: Trivia
+    pre_eq: WhitespaceNode | None
+    post_eq: WhitespaceNode | None
     value: ValueNode
-    trailing: Trivia
+    trailing: WhitespaceNode | None
     trailing_comment: CommentNode | None
     newline: NewlineNode | None
 
@@ -310,11 +310,11 @@ class KeyValueNode:
         out = (
             self.leading.render()
             + self.key.render()
-            + self.pre_eq.render()
+            + (self.pre_eq.text if self.pre_eq is not None else "")
             + "="
-            + self.post_eq.render()
+            + (self.post_eq.text if self.post_eq is not None else "")
             + render_value(self.value)
-            + self.trailing.render()
+            + (self.trailing.text if self.trailing is not None else "")
         )
         if self.trailing_comment is not None:
             out += self.trailing_comment.render()
@@ -337,10 +337,10 @@ class TableHeaderNode:
 
     leading: Trivia
     kind: HeaderKind
-    inner_pre: Trivia
+    inner_pre: WhitespaceNode | None
     key: Key
-    inner_post: Trivia
-    trailing: Trivia
+    inner_post: WhitespaceNode | None
+    trailing: WhitespaceNode | None
     trailing_comment: CommentNode | None
     newline: NewlineNode | None
 
@@ -350,11 +350,11 @@ class TableHeaderNode:
         out = (
             self.leading.render()
             + open_tok
-            + self.inner_pre.render()
+            + (self.inner_pre.text if self.inner_pre is not None else "")
             + self.key.render()
-            + self.inner_post.render()
+            + (self.inner_post.text if self.inner_post is not None else "")
             + close_tok
-            + self.trailing.render()
+            + (self.trailing.text if self.trailing is not None else "")
         )
         if self.trailing_comment is not None:
             out += self.trailing_comment.render()

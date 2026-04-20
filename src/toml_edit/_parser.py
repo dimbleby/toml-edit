@@ -239,14 +239,13 @@ class _Parser:
         self._pos = end_pos
         return CommentNode(src[start:end_pos])
 
-    def _consume_inline_ws(self) -> Trivia:
+    def _consume_inline_ws(self) -> WhitespaceNode | None:
         """Whitespace (no newlines, no comments)."""
-        trivia = Trivia()
         m = _RE_INLINE_WS.match(self._src, self._pos)
-        if m is not None:
-            trivia.pieces.append(WhitespaceNode(m.group(0)))
-            self._pos = m.end()
-        return trivia
+        if m is None:
+            return None
+        self._pos = m.end()
+        return WhitespaceNode(m.group(0))
 
     def _consume_array_trivia(self) -> Trivia:
         """Whitespace, newlines and comments allowed inside arrays."""
@@ -277,7 +276,9 @@ class _Parser:
         self._pos = pos
         return trivia
 
-    def _consume_eol(self) -> tuple[Trivia, CommentNode | None, NewlineNode | None]:
+    def _consume_eol(
+        self,
+    ) -> tuple[WhitespaceNode | None, CommentNode | None, NewlineNode | None]:
         trailing = self._consume_inline_ws()
         comment: CommentNode | None = None
         if self._peek() == "#":
