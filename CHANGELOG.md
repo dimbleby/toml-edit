@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `tomlrt.document(data=None)` returns a fresh :class:`Document`,
+  optionally populated from a mapping. Without arguments, equivalent
+  to `tomlrt.parse("")` but more discoverable for the "build a TOML
+  file from scratch" use case. With a mapping, recursively walks the
+  data: nested mappings become `[section]` blocks, lists of mappings
+  become `[[array.of.tables]]` blocks, and leaf values use ordinary
+  key-value assignment. The resulting document shares no mutable
+  state with the input.
 - `Array.set_multiline(*, multiline, indent="    ")` and the
   read/write `Array.multiline` property toggle an inline array
   between single-line and multi-line layout.

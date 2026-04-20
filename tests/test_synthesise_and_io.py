@@ -258,3 +258,105 @@ def test_assign_aot_over_scalar() -> None:
     assert tomlrt.loads(tomlrt.dumps(dest)) == {
         "dest": [{"name": "a"}, {"name": "b"}],
     }
+
+
+def test_document_factory_returns_empty_document() -> None:
+    doc = tomlrt.document()
+    assert isinstance(doc, tomlrt.Document)
+    assert len(doc) == 0
+    assert tomlrt.dumps(doc) == ""
+
+
+def test_document_factory_is_independent_of_other_calls() -> None:
+    a = tomlrt.document()
+    b = tomlrt.document()
+    a["x"] = 1
+    assert "x" not in b
+    assert tomlrt.dumps(b) == ""
+
+
+def test_document_factory_supports_full_build_and_dump() -> None:
+    doc = tomlrt.document()
+    doc["title"] = "demo"
+    doc.set_table("server", {"port": 8080})
+    out = tomlrt.dumps(doc)
+    parsed = tomlrt.parse(out)
+    assert parsed["title"] == "demo"
+    server = parsed.table("server")
+    assert server["port"] == 8080
+
+
+def test_document_factory_with_data_uses_sections_for_nested_mappings() -> None:
+    doc = tomlrt.document({"server": {"port": 8080, "host": "localhost"}})
+    out = tomlrt.dumps(doc)
+    assert "[server]" in out
+    assert "{" not in out  # no inline tables
+    assert tomlrt.parse(out) == {"server": {"port": 8080, "host": "localhost"}}
+
+
+def test_document_factory_with_data_uses_aot_for_list_of_mappings() -> None:
+    doc = tomlrt.document(
+        {"package": [{"name": "foo"}, {"name": "bar"}]},
+    )
+    out = tomlrt.dumps(doc)
+    assert out.count("[[package]]") == 2
+    assert tomlrt.parse(out) == {"package": [{"name": "foo"}, {"name": "bar"}]}
+
+
+def test_document_factory_with_data_keeps_leaf_arrays_inline() -> None:
+    doc = tomlrt.document({"xs": [1, 2, 3]})
+    out = tomlrt.dumps(doc)
+    assert "[[" not in out  # not promoted to AoT
+    assert tomlrt.parse(out) == {"xs": [1, 2, 3]}
+
+
+def test_document_factory_with_data_keeps_top_level_scalars_at_top() -> None:
+    doc = tomlrt.document({"title": "demo", "server": {"port": 8080}})
+    out = tomlrt.dumps(doc)
+    # Top-level scalar must precede the [server] section header.
+    assert out.index('title = "demo"') < out.index("[server]")
+
+
+def test_document_factory_with_data_recurses_deeply() -> None:
+    data = {
+        "tool": {
+            "poetry": {
+                "name": "demo",
+                "dependencies": {"requests": "^2.0"},
+            },
+        },
+    }
+    doc = tomlrt.document(data)
+    out = tomlrt.dumps(doc)
+    assert "[tool.poetry]" in out
+    assert "[tool.poetry.dependencies]" in out
+    assert tomlrt.parse(out) == data
+
+
+def test_document_factory_with_data_aot_with_nested_table() -> None:
+    data = {
+        "package": [
+            {"name": "foo", "version": "1.0", "dep": {"x": 1}},
+            {"name": "bar", "version": "2.0"},
+        ],
+    }
+    doc = tomlrt.document(data)
+    out = tomlrt.dumps(doc)
+    assert tomlrt.parse(out) == data
+
+
+def test_document_factory_with_empty_list_stays_inline_empty_array() -> None:
+    doc = tomlrt.document({"xs": []})
+    out = tomlrt.dumps(doc)
+    assert "[[" not in out
+    assert tomlrt.parse(out) == {"xs": []}
+
+
+def test_document_factory_with_data_does_not_share_mutable_state() -> None:
+    data: dict[str, object] = {"server": {"port": 8080}}
+    doc = tomlrt.document(data)
+    server_dict = data["server"]
+    assert isinstance(server_dict, dict)
+    server_dict["port"] = 9999  # mutate the source after construction
+    server = doc.table("server")
+    assert server["port"] == 8080

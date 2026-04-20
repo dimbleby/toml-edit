@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from tomlrt._document import AoT, Array, Document, Table
 from tomlrt._errors import TOMLError, TOMLParseError
-from tomlrt._public import dump, dumps, load, loads, parse
+from tomlrt._public import document, dump, dumps, load, loads, parse
 
 __all__ = [
     "AoT",
@@ -13,6 +13,7 @@ __all__ = [
     "TOMLError",
     "TOMLParseError",
     "Table",
+    "document",
     "dump",
     "dumps",
     "load",
