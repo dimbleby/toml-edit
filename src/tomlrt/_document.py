@@ -750,11 +750,14 @@ class Table(dict[str, Any]):
 
     .. rubric:: Storage model
 
-    A :class:`Table` is a *view* over the CST: every mutation writes
-    to the CST first and the dict storage is then refreshed from
-    there. The CST is the single source of truth — :meth:`render` and
-    every iteration ultimately read from it; the dict storage is a
-    cache that mirrors the CST data and exists for two reasons:
+    A :class:`Table` is a *view* over the parsed concrete syntax
+    tree (CST) — the physical tree of nodes that records every
+    byte of the original document, including whitespace, comments,
+    quote style and key order. Every mutation writes to the CST
+    first and the dict storage is then refreshed from there. The
+    CST is the single source of truth — :meth:`render` and every
+    iteration ultimately read from it; the dict storage is a cache
+    that mirrors the CST data and exists for two reasons:
 
     * fast ``dict``-style lookup, ``len``, ``in``, iteration, and
       ``**`` unpacking; and
@@ -2051,7 +2054,12 @@ class Document(_StdTable):
 
     @property
     def cst(self) -> DocumentNode:
-        """The underlying physical CST (intended for tooling/debugging)."""
+        """The underlying concrete syntax tree (CST).
+
+        Returns the root :class:`~tomlrt._nodes.DocumentNode` that
+        records the document's exact byte layout. Intended for
+        tooling and debugging — most users will never need this.
+        """
         return self._doc_node
 
     def render(self) -> str:
