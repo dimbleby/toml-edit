@@ -589,3 +589,27 @@ def test_array_set_multiline_returns_self() -> None:
     doc = tomlrt.loads("a = [1]\n")
     arr = doc.array("a")
     assert arr.set_multiline(multiline=True) is arr
+
+
+def test_array_set_multiline_survives_view_refetch() -> None:
+    doc = tomlrt.loads("a = []\n")
+    doc.array("a").set_multiline(multiline=True)
+    refetched = doc.array("a")
+    assert refetched.multiline
+    refetched.append(1)
+    assert tomlrt.dumps(doc) == "a = [\n    1,\n]\n"
+
+
+def test_array_parsed_empty_with_newline_is_multiline() -> None:
+    doc = tomlrt.loads("a = [\n]\n")
+    arr = doc.array("a")
+    assert arr.multiline
+    arr.append(1)
+    assert tomlrt.dumps(doc) == "a = [\n    1,\n]\n"
+
+
+def test_array_parsed_empty_with_newline_indent_is_inferred() -> None:
+    doc = tomlrt.loads("a = [\n  ]\n")
+    arr = doc.array("a")
+    arr.append(1)
+    assert tomlrt.dumps(doc) == "a = [\n  1,\n]\n"

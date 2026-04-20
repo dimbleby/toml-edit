@@ -410,9 +410,20 @@ def _sample_separator_style(
     ``prev.post_comma_trivia`` (never ``next.leading``).
     """
     if not items:
+        pad_text = final_trivia.render()
+        if "\n" in pad_text:
+            # Multiline-intent empty container: infer indent from the
+            # whitespace following the (last) newline in the close pad.
+            indent_text = pad_text.rsplit("\n", 1)[1] or "    "
+            inter = Trivia([NewlineNode("\n"), WhitespaceNode(indent_text)])
+            return _SeparatorStyle(
+                open_pad=_clone_trivia(inter),
+                inter_separator=_clone_trivia(inter),
+                trailing_comma=True,
+                close_pad=Trivia([NewlineNode("\n")]),
+            )
         # Mirror a single-space internal pad (``[ ]`` / ``{ }``) into
         # both edges so first insertion preserves it as ``[ x ]``.
-        pad_text = final_trivia.render()
         single_pad = (
             Trivia([WhitespaceNode(" ")])
             if pad_text == " "
