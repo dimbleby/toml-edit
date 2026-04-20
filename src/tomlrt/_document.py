@@ -1835,6 +1835,40 @@ class Array(list[TomlValue]):
         """
         return _ArrayLeadingCommentsView(self)
 
+    @property
+    def multiline(self) -> bool:
+        """Whether the array currently renders across multiple lines."""
+        return "\n" in self._style.inter_separator.render()
+
+    @multiline.setter
+    def multiline(self, multiline: bool) -> None:
+        self.set_multiline(multiline=multiline)
+
+    def set_multiline(self, *, multiline: bool, indent: str = "    ") -> Array:
+        """Switch this array between single-line and multi-line layout.
+
+        ``indent`` controls the per-item indentation when ``multiline``
+        is true and is ignored otherwise. Returns ``self`` so calls may
+        be chained.
+        """
+        if multiline:
+            inter = Trivia([NewlineNode("\n"), WhitespaceNode(indent)])
+            self._style = _SeparatorStyle(
+                open_pad=_clone_trivia(inter),
+                inter_separator=_clone_trivia(inter),
+                trailing_comma=True,
+                close_pad=Trivia([NewlineNode("\n")]),
+            )
+        else:
+            self._style = _SeparatorStyle(
+                open_pad=Trivia(),
+                inter_separator=Trivia([WhitespaceNode(" ")]),
+                trailing_comma=False,
+                close_pad=Trivia(),
+            )
+        self._rebuild_separators()
+        return self
+
     # ------------------------------------------------------------------
     # Mutators (override every one)
     # ------------------------------------------------------------------
