@@ -62,17 +62,6 @@ TomlValue: TypeAlias = "Scalar | Array | AoT | Table"
 _MISSING: Any = object()
 
 
-def _to_python(value: object) -> Any:
-    """Recursively convert TOML-edit views to plain Python data."""
-    if isinstance(value, Table):
-        return {k: _to_python(v) for k, v in value.items()}
-    if isinstance(value, AoT):
-        return [_to_python(t) for t in value]
-    if isinstance(value, Array):
-        return [_to_python(v) for v in value]
-    return value
-
-
 # ---------------------------------------------------------------------------
 # Read-side helpers
 # ---------------------------------------------------------------------------
@@ -627,6 +616,21 @@ class Table(MutableMapping[str, TomlValue]):
     def __delitem__(self, key: str) -> None:
         self._delete_value(key)
 
+    @staticmethod
+    def _snapshot_for_pop(value: object) -> Any:
+        """Recursively convert TOML-edit views to plain Python data.
+
+        Used by :meth:`pop` and :meth:`popitem` so that the returned
+        value doesn't go stale when the underlying CST is removed.
+        """
+        if isinstance(value, Table):
+            return {k: Table._snapshot_for_pop(v) for k, v in value.items()}
+        if isinstance(value, AoT):
+            return [Table._snapshot_for_pop(t) for t in value]
+        if isinstance(value, Array):
+            return [Table._snapshot_for_pop(v) for v in value]
+        return value
+
     @override
     def pop(self, key: str, default: object = _MISSING) -> Any:
         """Remove ``key`` and return its value, like :meth:`dict.pop`.
@@ -641,7 +645,7 @@ class Table(MutableMapping[str, TomlValue]):
             if default is _MISSING:
                 raise
             return default
-        snapshot = _to_python(value)
+        snapshot = self._snapshot_for_pop(value)
         del self[key]
         return snapshot
 
@@ -801,19 +805,20 @@ class _InlineTable(Table):
     state (node, separator style, ``=`` padding) those views need.
     """
 
-    __slots__ = ("_node", "_post_eq_text", "_pre_eq_text", "_style")
+    __slots__ = ("_eq_padding", "_node", "_style")
 
     def __init__(self, node: InlineTableNode) -> None:
         self._node = node
         self._style = _sample_separator_style(node.entries, node.final_trivia)
-        # ``=``-padding is per-entry, not a separator concern. Store as raw
-        # text so each new entry gets a fresh WhitespaceNode without aliasing.
+        # ``=``-padding is per-entry, not a separator concern. Sample
+        # from the first existing entry; default to a single space.
         if node.entries:
-            self._pre_eq_text = node.entries[0].pre_eq.text if node.entries[0].pre_eq else ""
-            self._post_eq_text = node.entries[0].post_eq.text if node.entries[0].post_eq else ""
+            self._eq_padding: tuple[WhitespaceNode | None, WhitespaceNode | None] = (
+                node.entries[0].pre_eq,
+                node.entries[0].post_eq,
+            )
         else:
-            self._pre_eq_text = " "
-            self._post_eq_text = " "
+            self._eq_padding = (WhitespaceNode(" "), WhitespaceNode(" "))
 
     @override
     def _items(self) -> Iterator[tuple[str, TomlValue]]:
@@ -839,11 +844,12 @@ class _InlineTable(Table):
         return None
 
     def _make_entry(self, path: tuple[str, ...], value: object) -> InlineTableEntry:
+        pre, post = self._eq_padding
         return InlineTableEntry(
             leading=Trivia(),
             key=_make_dotted_key(path) if len(path) > 1 else make_simple_key(path[0]),
-            pre_eq=WhitespaceNode(self._pre_eq_text) if self._pre_eq_text else None,
-            post_eq=WhitespaceNode(self._post_eq_text) if self._post_eq_text else None,
+            pre_eq=deepcopy(pre),
+            post_eq=deepcopy(post),
             value=value_to_node(value),
             trailing=Trivia(),
             has_comma=False,
@@ -1210,25 +1216,32 @@ class _StdTable(Table):
         self._purge_conflicting(key)
 
     def _ensure_section(self) -> SectionNode:
-        """Materialise a section that holds direct entries for ``self._path``.
+        """Materialise a section that holds direct entries for ``self._path``."""
+        if self._path == ():
+            return self._ensure_root_section()
+        return self._ensure_nested_section()
 
-        For the document root this is an implicit pre-header section.
-        For nested paths it's a fresh ``[a.b.c]`` header inserted
-        immediately before the first descendant section (so the new
-        keys logically belong to the same place in the document).
+    def _ensure_root_section(self) -> SectionNode:
+        """Insert an implicit pre-header section at the top of the document."""
+        doc_node = self._doc_view._node  # noqa: SLF001
+        new_sec = SectionNode(header=None, entries=[])
+        # Ensure a blank line precedes the next section's header so the
+        # newly-inserted top-level keys aren't visually glued to it.
+        if doc_node.sections and doc_node.sections[0].header is not None:
+            next_header = doc_node.sections[0].header
+            if not next_header.leading.render().startswith("\n"):
+                next_header.leading.pieces.insert(0, NewlineNode("\n"))
+        doc_node.sections.insert(0, new_sec)
+        return new_sec
+
+    def _ensure_nested_section(self) -> SectionNode:
+        """Insert a fresh ``[a.b.c]`` header for a nested path.
+
+        Placement is immediately before the first descendant section so
+        the new keys logically belong to the same place in the document.
+        Falls back to appending when there is no descendant.
         """
         doc_node = self._doc_view._node  # noqa: SLF001
-        if self._path == ():
-            new_sec = SectionNode(header=None, entries=[])
-            # Ensure a blank line precedes the next section's header so the
-            # newly-inserted top-level keys aren't visually glued to it.
-            if doc_node.sections and doc_node.sections[0].header is not None:
-                next_header = doc_node.sections[0].header
-                leading_text = next_header.leading.render()
-                if not leading_text.startswith("\n"):
-                    next_header.leading.pieces.insert(0, NewlineNode("\n"))
-            doc_node.sections.insert(0, new_sec)
-            return new_sec
         parts = [make_key_part(p) for p in self._path]
         seps = ["."] * (len(parts) - 1)
         header = TableHeaderNode(
@@ -1251,8 +1264,6 @@ class _StdTable(Table):
                 header.leading.pieces.append(NewlineNode("\n"))
                 doc_node.sections.insert(i, new_sec)
                 return new_sec
-        # No descendants - shouldn't happen if we were classified as
-        # implicit, but fall back to appending.
         if doc_node.sections:
             header.leading.pieces.append(NewlineNode("\n"))
         doc_node.sections.append(new_sec)
