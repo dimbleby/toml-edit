@@ -447,7 +447,9 @@ class _Parser:
             raise self._error(msg, at=at)
         if path in self._dotted_paths:
             joined = ".".join(path)
-            msg = f"cannot define {joined!r} as a table: already created via dotted keys"
+            msg = (
+                f"cannot define {joined!r} as a table: already created via dotted keys"
+            )
             raise self._error(msg, at=at)
         if kind == "table":
             if path in self._explicit_table_paths:
@@ -558,7 +560,9 @@ class _Parser:
             for i in range(1, len(path)):
                 sub = path[:i]
                 if sub in local_values:
-                    msg = f"inline-table key {'.'.join(sub)!r} already defined as a value"
+                    msg = (
+                        f"inline-table key {'.'.join(sub)!r} already defined as a value"
+                    )
                     raise self._error(msg, at=at)
                 local_prefixes.add(sub)
             local_values.add(path)
@@ -701,7 +705,9 @@ class _Parser:
                     # Skip trailing inline ws on this line.
                     while self._peek() in (" ", "\t"):
                         self._pos += 1
-                    if self._peek() == "\n" or (self._peek() == "\r" and self._peek(1) == "\n"):
+                    if self._peek() == "\n" or (
+                        self._peek() == "\r" and self._peek(1) == "\n"
+                    ):
                         # Eat one or more whitespace lines.
                         while True:
                             if self._peek() == "\n":

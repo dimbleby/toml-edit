@@ -88,7 +88,9 @@ def test_aot_insert_into_mixed_does_not_add_blank() -> None:
     aot = doc["i"]
     assert isinstance(aot, toml_edit.AoT)
     aot.append({"x": 5})
-    assert toml_edit.dumps(doc) == ("[[i]]\nx = 1\n[[i]]\nx = 2\n\n[[i]]\nx = 4\n[[i]]\nx = 5\n")
+    assert toml_edit.dumps(doc) == (
+        "[[i]]\nx = 1\n[[i]]\nx = 2\n\n[[i]]\nx = 4\n[[i]]\nx = 5\n"
+    )
 
 
 def test_aot_append_to_single_entry_does_not_add_blank() -> None:

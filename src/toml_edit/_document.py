@@ -38,7 +38,12 @@ from toml_edit._nodes import (
     Trivia,
     WhitespaceNode,
 )
-from toml_edit._synthesise import make_key_part, make_keyvalue_node, make_simple_key, value_to_node
+from toml_edit._synthesise import (
+    make_key_part,
+    make_keyvalue_node,
+    make_simple_key,
+    value_to_node,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Sequence
@@ -409,7 +414,9 @@ def _sample_separator_style(
         # both edges so first insertion preserves it as ``[ x ]``.
         pad_text = final_trivia.render()
         single_pad = (
-            Trivia([WhitespaceNode(" ")]) if pad_text == " " else _clone_trivia(final_trivia)
+            Trivia([WhitespaceNode(" ")])
+            if pad_text == " "
+            else _clone_trivia(final_trivia)
         )
         return _SeparatorStyle(
             open_pad=_clone_trivia(single_pad),
@@ -439,7 +446,9 @@ def _sample_separator_style(
             [deepcopy(p) for p in last.trailing.pieces]
             + [deepcopy(p) for p in final_trivia.pieces],
         )
-        close_pad = combined if _is_pure_whitespace(combined) else _derive_close_pad(sep)
+        close_pad = (
+            combined if _is_pure_whitespace(combined) else _derive_close_pad(sep)
+        )
     return _SeparatorStyle(
         open_pad=open_pad,
         inter_separator=sep,
@@ -873,14 +882,18 @@ class _InlineTable(Table):
         _apply_separator_style(self._node, self._style)
 
     def del_prefix(self, prefix: tuple[str, ...]) -> bool:
-        kept = [e for e in self._node.entries if not _path_has_prefix(e.key.path, prefix)]
+        kept = [
+            e for e in self._node.entries if not _path_has_prefix(e.key.path, prefix)
+        ]
         if len(kept) == len(self._node.entries):
             return False
         self._node.entries[:] = kept
         _apply_separator_style(self._node, self._style)
         return True
 
-    def entries_under(self, prefix: tuple[str, ...]) -> list[tuple[tuple[str, ...], ValueNode]]:
+    def entries_under(
+        self, prefix: tuple[str, ...]
+    ) -> list[tuple[tuple[str, ...], ValueNode]]:
         plen = len(prefix)
         return [
             (e.key.path, e.value)
@@ -916,7 +929,9 @@ class _DottedHost(Protocol):
 
     def del_prefix(self, prefix: tuple[str, ...]) -> bool: ...
 
-    def entries_under(self, prefix: tuple[str, ...]) -> list[tuple[tuple[str, ...], ValueNode]]: ...
+    def entries_under(
+        self, prefix: tuple[str, ...]
+    ) -> list[tuple[tuple[str, ...], ValueNode]]: ...
 
 
 def _make_dotted_key(path: tuple[str, ...]) -> Key:
@@ -975,13 +990,17 @@ class _SectionDottedHost:
     def del_prefix(self, prefix: tuple[str, ...]) -> bool:
         any_removed = False
         for sec in self._sections:
-            kept = [kv for kv in sec.entries if not _path_has_prefix(kv.key.path, prefix)]
+            kept = [
+                kv for kv in sec.entries if not _path_has_prefix(kv.key.path, prefix)
+            ]
             if len(kept) != len(sec.entries):
                 sec.entries[:] = kept
                 any_removed = True
         return any_removed
 
-    def entries_under(self, prefix: tuple[str, ...]) -> list[tuple[tuple[str, ...], ValueNode]]:
+    def entries_under(
+        self, prefix: tuple[str, ...]
+    ) -> list[tuple[tuple[str, ...], ValueNode]]:
         plen = len(prefix)
         out: list[tuple[tuple[str, ...], ValueNode]] = []
         for sec in self._sections:
@@ -1092,7 +1111,9 @@ class _StdTable(Table):
             return [
                 s
                 for s in self._owned_scope
-                if s.header is not None and s.header.kind == "table" and s.header.key.path == path
+                if s.header is not None
+                and s.header.kind == "table"
+                and s.header.key.path == path
             ]
         return self._doc_view._direct_sections(self._path)  # noqa: SLF001
 
@@ -1181,8 +1202,11 @@ class _StdTable(Table):
                 return
             if idx + 1 < len(doc_node.sections):
                 next_header = doc_node.sections[idx + 1].header
-                if next_header is not None and not next_header.leading.render().startswith(
-                    "\n",
+                if (
+                    next_header is not None
+                    and not next_header.leading.render().startswith(
+                        "\n",
+                    )
                 ):
                     next_header.leading.pieces.insert(0, NewlineNode("\n"))
 
@@ -1258,7 +1282,11 @@ class _StdTable(Table):
         plen = len(self._path)
         for i, sec in enumerate(doc_node.sections):
             h = sec.header
-            if h is not None and len(h.key.path) > plen and h.key.path[:plen] == self._path:
+            if (
+                h is not None
+                and len(h.key.path) > plen
+                and h.key.path[:plen] == self._path
+            ):
                 # Insert a leading newline so the new header doesn't
                 # glue against the previous section's last entry.
                 header.leading.pieces.append(NewlineNode("\n"))
@@ -1502,7 +1530,9 @@ class _TableLeadingCommentsView(MutableMapping[str, "tuple[str, ...]"]):
     def __iter__(self) -> Iterator[str]:
         for sec in self._table._direct_sections():  # noqa: SLF001
             for kv in sec.entries:
-                if len(kv.key.path) == 1 and _extract_trailing_comment_block(kv.leading):
+                if len(kv.key.path) == 1 and _extract_trailing_comment_block(
+                    kv.leading
+                ):
                     yield kv.key.path[0]
 
     @override
@@ -1823,7 +1853,9 @@ class Array(list[TomlValue]):
 
     @override
     def insert(self, index: SupportsIndex, value: TomlValue) -> None:
-        self._node.items.insert(operator.index(index), self._make_item(value, with_comma=False))
+        self._node.items.insert(
+            operator.index(index), self._make_item(value, with_comma=False)
+        )
         self._rebuild_separators()
         self._resync()
 
@@ -1933,7 +1965,9 @@ class Array(list[TomlValue]):
         """Return ``self[index]`` typed as a nested :class:`Table`."""
         value = self[index]
         if not isinstance(value, Table):
-            msg = f"item {operator.index(index)} is a {type(value).__name__}, not a Table"
+            msg = (
+                f"item {operator.index(index)} is a {type(value).__name__}, not a Table"
+            )
             raise TypeError(msg)
         return value
 
@@ -1967,7 +2001,9 @@ class AoT(list[Table]):
         return [
             s
             for s in self._doc_view._node.sections  # noqa: SLF001
-            if s.header is not None and s.header.kind == "array" and s.header.key.path == self._path
+            if s.header is not None
+            and s.header.kind == "array"
+            and s.header.key.path == self._path
         ]
 
     def _resync(self) -> None:
@@ -2064,7 +2100,9 @@ class AoT(list[Table]):
         py_index = max(0, min(py_index, n))
         new_sec = self._make_header_section()
         self._populate_section(new_sec, value)
-        own_header_leadings = [sec.header.leading for sec in own[1:] if sec.header is not None]
+        own_header_leadings = [
+            sec.header.leading for sec in own[1:] if sec.header is not None
+        ]
         if _gaps_uniformly_blank(own_header_leadings):
             assert new_sec.header is not None
             new_sec.header.leading.pieces.insert(0, NewlineNode("\n"))
@@ -2176,7 +2214,9 @@ class _DocumentView:
         return [
             sec
             for sec in self._node.sections
-            if sec.header is not None and sec.header.kind == "array" and sec.header.key.path == path
+            if sec.header is not None
+            and sec.header.kind == "array"
+            and sec.header.key.path == path
         ]
 
     def _child_table_paths(self, path: tuple[str, ...]) -> list[tuple[str, ...]]:
@@ -2249,7 +2289,9 @@ class _DocumentView:
             direct_secs = [
                 s
                 for s in section_pool
-                if s.header is not None and s.header.kind == "table" and s.header.key.path == path
+                if s.header is not None
+                and s.header.kind == "table"
+                and s.header.key.path == path
             ]
         direct_ids = {id(s) for s in direct_secs}
 
@@ -2337,7 +2379,12 @@ class _DocumentView:
                 else:
                     nested_extras.append((rel_path, kv))
 
-            if terminal is not None and not nested_kvs and not nested_extras and not sub_secs:
+            if (
+                terminal is not None
+                and not nested_kvs
+                and not nested_extras
+                and not sub_secs
+            ):
                 yield head, _value_for(terminal.value)
                 continue
 
@@ -2360,7 +2407,9 @@ class _DocumentView:
             child_extras: list[tuple[tuple[str, ...], KeyValueNode]] = [
                 (kv.key.path[1:], kv) for kv in nested_kvs
             ]
-            child_extras.extend((rel_path[1:], entry) for rel_path, entry in nested_extras)
+            child_extras.extend(
+                (rel_path[1:], entry) for rel_path, entry in nested_extras
+            )
 
             if owned_scope is not None:
                 child_path = (*path, head)

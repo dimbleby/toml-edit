@@ -80,7 +80,6 @@ enable_error_code = [
 ]
 
 [tool.ruff]
-line-length = 100
 src = ["src", "tests"]
 
 [tool.ruff.lint]

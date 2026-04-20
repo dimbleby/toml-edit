@@ -210,7 +210,9 @@ class ArrayItem:
     post_comma_trivia: Trivia
 
     def render(self) -> str:
-        out = f"{self.leading.render()}{render_value(self.value)}{self.trailing.render()}"
+        out = (
+            f"{self.leading.render()}{render_value(self.value)}{self.trailing.render()}"
+        )
         if self.has_comma:
             out += f",{self.post_comma_trivia.render()}"
         return out
@@ -267,7 +269,13 @@ class InlineTableNode:
 
 
 ValueNode = (
-    StringNode | IntegerNode | FloatNode | BoolNode | DateTimeNode | ArrayNode | InlineTableNode
+    StringNode
+    | IntegerNode
+    | FloatNode
+    | BoolNode
+    | DateTimeNode
+    | ArrayNode
+    | InlineTableNode
 )
 
 
@@ -379,7 +387,9 @@ class DocumentNode:
     """Trivia after the final structural node up to EOF."""
 
     def render(self) -> str:
-        return "".join(s.render() for s in self.sections) + self.trailing_trivia.render()
+        return (
+            "".join(s.render() for s in self.sections) + self.trailing_trivia.render()
+        )
 
 
 __all__ = [

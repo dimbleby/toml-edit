@@ -213,7 +213,9 @@ def test_aot_modify_field_in_middle_entry() -> None:
     assert isinstance(users, toml_edit.AoT)
     users[1]["name"] = "B"
     out = toml_edit.dumps(doc)
-    assert out == '[[users]]\nname = "a"\n[[users]]\nname = "B"\n[[users]]\nname = "c"\n'
+    assert (
+        out == '[[users]]\nname = "a"\n[[users]]\nname = "B"\n[[users]]\nname = "c"\n'
+    )
 
 
 def test_aot_entry_sub_section_read() -> None:
@@ -242,7 +244,9 @@ def test_aot_entry_sub_section_modify_value() -> None:
     assert isinstance(sub, toml_edit.Table)
     sub["y"] = 999
     out = toml_edit.dumps(doc)
-    assert out == ("[[arr]]\nx = 1\n[arr.sub]\ny = 2\n[[arr]]\nx = 10\n[arr.sub]\ny = 999\n")
+    assert out == (
+        "[[arr]]\nx = 1\n[arr.sub]\ny = 2\n[[arr]]\nx = 10\n[arr.sub]\ny = 999\n"
+    )
     assert _reparses(out) == {
         "arr": [
             {"x": 1, "sub": {"y": 2}},
