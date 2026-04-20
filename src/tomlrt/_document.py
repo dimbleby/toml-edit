@@ -620,6 +620,27 @@ def _build_promoted_aot_section(
     return section
 
 
+def _insert_aot_block(
+    sections: list[SectionNode],
+    insert_at: int,
+    new_secs: Sequence[SectionNode],
+) -> None:
+    """Splice a freshly-built ``[[ ... ]]`` block into ``sections``.
+
+    Entries are blank-separated from each other, and a blank line is
+    inserted before the block whenever ``sections[:insert_at]`` already
+    holds rendered content.
+    """
+    preceding_has_content = any(
+        s.header is not None or s.entries for s in sections[:insert_at]
+    )
+    for i, ns in enumerate(new_secs):
+        if i > 0 or preceding_has_content:
+            assert ns.header is not None
+            ns.header.leading.pieces.insert(0, NewlineNode("\n"))
+    sections[insert_at:insert_at] = new_secs
+
+
 # ---------------------------------------------------------------------------
 # Tables
 # ---------------------------------------------------------------------------
@@ -1522,14 +1543,10 @@ class _StdTable(Table):
         parent_secs = self._direct_sections()
         if parent_secs:
             anchor = parent_secs[-1]
-            anchor_idx = next(
-                (i for i, s in enumerate(sections) if s is anchor),
-                len(sections) - 1,
-            )
-            for offset, ns in enumerate(new_secs, start=1):
-                sections.insert(anchor_idx + offset, ns)
+            insert_at = next(i for i, s in enumerate(sections) if s is anchor) + 1
         else:
-            sections.extend(new_secs)
+            insert_at = len(sections)
+        _insert_aot_block(sections, insert_at, new_secs)
         aot = AoT(self._doc_view, child_path, [])
         aot._resync()  # noqa: SLF001
         return aot
@@ -1544,8 +1561,14 @@ class _StdTable(Table):
         if kind != "absent":
             self._purge_conflicting(key)
         aot = AoT(self._doc_view, (*self._path, key), [])
+        new_secs: list[SectionNode] = []
         for entry in entries:
-            aot.append(entry)
+            sec = aot._make_header_section()  # noqa: SLF001
+            aot._populate_section(sec, entry)  # noqa: SLF001
+            new_secs.append(sec)
+        sections = self._doc_view._node.sections  # noqa: SLF001
+        _insert_aot_block(sections, len(sections), new_secs)
+        aot._resync()  # noqa: SLF001
         return aot
 
 

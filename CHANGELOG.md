@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An empty array whose source contains a newline inside the brackets
   (`a = [\n]`) now round-trips and accepts subsequent `append` calls
   while preserving its multi-line shape.
+- `Table.set_aot` and `Table.promote_array` now lay their `[[ ... ]]`
+  blocks out with blank-line separators between entries, and with a
+  blank line between the block and any preceding content.
 
 ## [0.1.0] - 2026-04-20
 
