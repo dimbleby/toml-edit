@@ -41,8 +41,9 @@ def test_add_top_level_key_when_only_section_exists() -> None:
     doc = toml_edit.parse(src)
     doc["name"] = "demo"
     out = toml_edit.dumps(doc)
-    # Pre-header section is created at index 0
-    assert out == 'name = "demo"\n[srv]\nport = 8080\n'
+    # Pre-header section is created at index 0; a blank line separates
+    # the new top-level key from the following ``[srv]`` header.
+    assert out == 'name = "demo"\n\n[srv]\nport = 8080\n'
     assert _reparses(out) == {"name": "demo", "srv": {"port": 8080}}
 
 
