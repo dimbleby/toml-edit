@@ -784,7 +784,7 @@ class _InlineTable(Table):
             if len(entries) == 1 and len(entries[0][0]) == 1:
                 yield head, _value_for(entries[0][1])
             else:
-                yield head, _DottedInlineSubTable(entries, depth=1)
+                yield head, _DottedSubTable(entries, depth=1)
 
     def _find_entry(self, key: str) -> InlineTableEntry | None:
         for entry in self._node.entries:
@@ -836,8 +836,15 @@ class _InlineTable(Table):
         _apply_separator_style(self._node.entries, self._style, self._set_final_trivia)
 
 
-class _DottedInlineSubTable(Table):
-    """Inline view for the tail of a dotted-key chain."""
+class _DottedSubTable(Table):
+    """Synthetic table aggregating dotted-key entries.
+
+    Used by both inline tables (whose entries carry full ``(path, value)``
+    pairs) and standard tables (which feed in ``(kv.key.path, kv.value)``).
+    The parser guarantees that, for valid documents, every path here has
+    length ``>= depth + 1`` — paths of exactly ``depth + 1`` are leaves
+    at this level; longer paths recurse one level deeper.
+    """
 
     __slots__ = ("_depth", "_entries")
 
@@ -856,12 +863,12 @@ class _DottedInlineSubTable(Table):
         order: list[str] = []
         terminals: dict[str, ValueNode] = {}
         for path, value in self._entries:
-            if len(path) <= self._depth + 1:
-                terminals[path[-1]] = value
-                if path[-1] not in order:
-                    order.append(path[-1])
-                continue
             head = path[self._depth]
+            if len(path) == self._depth + 1:
+                terminals[head] = value
+                if head not in order:
+                    order.append(head)
+                continue
             if head not in groups:
                 groups[head] = []
                 if head not in order:
@@ -871,7 +878,7 @@ class _DottedInlineSubTable(Table):
             if head in terminals:
                 yield head, _value_for(terminals[head])
             else:
-                yield head, _DottedInlineSubTable(groups[head], depth=self._depth + 1)
+                yield head, _DottedSubTable(groups[head], depth=self._depth + 1)
 
 
 class _StdTable(Table):
@@ -1241,16 +1248,6 @@ class _TableCommentsView(MutableMapping[str, str]):
         return sum(1 for _ in self._commented_kvs())
 
     @override
-    def __contains__(self, key: object) -> bool:
-        if not isinstance(key, str):
-            return False
-        try:
-            _, kv = self._table._find_direct_kv(key)  # noqa: SLF001
-        except KeyError:
-            return False
-        return kv.trailing_comment is not None
-
-    @override
     def __repr__(self) -> str:
         body = ", ".join(f"{k!r}: {v!r}" for k, v in self.items())
         return f"{type(self).__name__}({{{body}}})"
@@ -1304,16 +1301,6 @@ class _TableLeadingCommentsView(MutableMapping[str, "tuple[str, ...]"]):
     @override
     def __len__(self) -> int:
         return sum(1 for _ in self)
-
-    @override
-    def __contains__(self, key: object) -> bool:
-        if not isinstance(key, str):
-            return False
-        try:
-            _, kv = self._table._find_direct_kv(key)  # noqa: SLF001
-        except KeyError:
-            return False
-        return bool(_extract_trailing_comment_block(kv.leading))
 
     @override
     def __repr__(self) -> str:
@@ -2152,7 +2139,7 @@ class _DocumentView:
 
             if not sub_secs and not nested_extras:
                 # Pure dotted from this section level.
-                yield head, _DottedKvSubTable(nested_kvs, depth=1)
+                yield head, _DottedSubTable([(kv.key.path, kv.value) for kv in nested_kvs], depth=1)
                 continue
 
             # Merged view at path + (head,): combines sub-section content with
@@ -2190,40 +2177,6 @@ class _DocumentView:
                         extra_kvs=child_extras or None,
                     ),
                 )
-
-
-class _DottedKvSubTable(Table):
-    """Synthetic table aggregating dotted-key entries from a section."""
-
-    __slots__ = ("_depth", "_entries")
-
-    def __init__(self, entries: list[KeyValueNode], *, depth: int) -> None:
-        self._entries = entries
-        self._depth = depth
-
-    @override
-    def _items(self) -> Iterator[tuple[str, TomlValue]]:
-        order: list[str] = []
-        groups: dict[str, list[KeyValueNode]] = {}
-        terminals: dict[str, KeyValueNode] = {}
-        for entry in self._entries:
-            path = entry.key.path
-            if len(path) == self._depth + 1:
-                terminals[path[-1]] = entry
-                if path[-1] not in order:
-                    order.append(path[-1])
-                continue
-            head = path[self._depth]
-            if head not in groups:
-                groups[head] = []
-                if head not in order:
-                    order.append(head)
-            groups[head].append(entry)
-        for head in order:
-            if head in terminals:
-                yield head, _value_for(terminals[head].value)
-            else:
-                yield head, _DottedKvSubTable(groups[head], depth=self._depth + 1)
 
 
 __all__ = [
