@@ -836,18 +836,12 @@ class _InlineTable(Table):
 
     @override
     def _set_value(self, key: str, value: object) -> None:
-        # Reject conflict with dotted entries.
-        for entry in self._node.entries:
-            if entry.key.path[0] == key and len(entry.key.path) > 1:
-                msg = (
-                    f"cannot assign to {key!r} inside an inline table: "
-                    "conflicts with an existing dotted-key entry."
-                )
-                raise TOMLEditError(msg)
         existing = self._find_entry(key)
         if existing is not None:
             existing.value = value_to_node(value)
             return
+        # Auto-purge any dotted-key entries with this head segment.
+        self._node.entries[:] = [e for e in self._node.entries if e.key.path[0] != key]
         new_entry = InlineTableEntry(
             leading=Trivia(),
             key=make_simple_key(key),
@@ -863,15 +857,10 @@ class _InlineTable(Table):
 
     @override
     def _delete_value(self, key: str) -> None:
-        existing = self._find_entry(key)
-        if existing is None:
-            for entry in self._node.entries:
-                if entry.key.path[0] == key:
-                    msg = f"cannot delete dotted-key entry {key!r} from inline table"
-                    raise TOMLEditError(msg)
+        before = len(self._node.entries)
+        self._node.entries[:] = [e for e in self._node.entries if e.key.path[0] != key]
+        if len(self._node.entries) == before:
             raise KeyError(key)
-        idx = self._node.entries.index(existing)
-        self._node.entries.pop(idx)
         _apply_separator_style(self._node.entries, self._style, self._set_final_trivia)
 
 
@@ -1116,11 +1105,7 @@ class _StdTable(Table):
         plen = len(self._path)
         for i, sec in enumerate(doc_node.sections):
             h = sec.header
-            if (
-                h is not None
-                and len(h.key.path) > plen
-                and h.key.path[:plen] == self._path
-            ):
+            if h is not None and len(h.key.path) > plen and h.key.path[:plen] == self._path:
                 # Insert a leading newline so the new header doesn't
                 # glue against the previous section's last entry.
                 header.leading.pieces.append(NewlineNode("\n"))

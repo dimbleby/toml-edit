@@ -415,6 +415,31 @@ def test_setitem_into_implicit_grandparent() -> None:
     assert _reparses(out) == {"a": {"b": {"new": 1, "c": {"z": 3}}}}
 
 
+def test_inline_table_setitem_overwrites_dotted_group() -> None:
+    src = 'config = { server.host = "x", server.port = 80, name = "y" }\n'
+    doc = toml_edit.parse(src)
+    config = doc.table("config")
+    config["server"] = "newval"
+    out = toml_edit.dumps(doc)
+    assert _reparses(out) == {"config": {"name": "y", "server": "newval"}}
+
+
+def test_inline_table_delitem_removes_dotted_group() -> None:
+    src = 'config = { server.host = "x", server.port = 80, name = "y" }\n'
+    doc = toml_edit.parse(src)
+    config = doc.table("config")
+    del config["server"]
+    out = toml_edit.dumps(doc)
+    assert _reparses(out) == {"config": {"name": "y"}}
+
+
+def test_inline_table_delitem_missing_raises_keyerror() -> None:
+    doc = toml_edit.parse("config = { a = 1 }\n")
+    config = doc.table("config")
+    with pytest.raises(KeyError):
+        del config["missing"]
+
+
 # ---------------------------------------------------------------------------
 # Sub-table access through AoT entry (uses the new owned_scope path)
 # ---------------------------------------------------------------------------
