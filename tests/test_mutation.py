@@ -565,3 +565,105 @@ def test_array_setitem_replaces_with_dict() -> None:
     arr[1] = {"k": "v"}
     parsed = _reparses(tomlrt.dumps(doc))
     assert parsed == {"xs": [1, {"k": "v"}, 3]}
+
+
+# ---------------------------------------------------------------------------
+# to_dict / to_list: deep snapshot helpers
+# ---------------------------------------------------------------------------
+
+
+def test_table_to_dict_returns_plain_dict() -> None:
+    doc = tomlrt.parse(
+        """
+        title = "demo"
+        [owner]
+        name = "alice"
+        """
+    )
+    snap = doc.to_dict()
+    assert type(snap) is dict
+    assert type(snap["owner"]) is dict
+    assert snap == {"title": "demo", "owner": {"name": "alice"}}
+
+
+def test_table_to_dict_recursively_flattens_aot_and_array() -> None:
+    doc = tomlrt.parse(
+        """
+        xs = [1, [2, 3], { k = "v" }]
+
+        [[pkg]]
+        name = "a"
+        deps = ["x", "y"]
+
+        [[pkg]]
+        name = "b"
+        """
+    )
+    snap = doc.to_dict()
+    assert snap == {
+        "xs": [1, [2, 3], {"k": "v"}],
+        "pkg": [
+            {"name": "a", "deps": ["x", "y"]},
+            {"name": "b"},
+        ],
+    }
+    # Every container is a real dict/list, not a tomlrt view.
+    assert type(snap["xs"]) is list
+    assert type(snap["xs"][2]) is dict
+    assert type(snap["pkg"]) is list
+    assert type(snap["pkg"][0]) is dict
+    assert type(snap["pkg"][0]["deps"]) is list
+
+
+def test_table_to_dict_isinstance_dict() -> None:
+    doc = tomlrt.parse("[tool]\nname = 'x'\n")
+    snap = doc.to_dict()
+    assert isinstance(snap, dict)
+    assert isinstance(snap["tool"], dict)
+
+
+def test_table_to_dict_independent_of_document_mutations() -> None:
+    doc = tomlrt.parse("a = 1\n[t]\nb = 2\n")
+    snap = doc.to_dict()
+    doc["a"] = 99
+    doc.table("t")["b"] = 99
+    assert snap == {"a": 1, "t": {"b": 2}}
+
+
+def test_array_to_list_returns_plain_list() -> None:
+    doc = tomlrt.parse('xs = [1, "two", { k = "v" }]\n')
+    snap = doc.array("xs").to_list()
+    assert type(snap) is list
+    assert type(snap[2]) is dict
+    assert snap == [1, "two", {"k": "v"}]
+
+
+def test_aot_to_list_returns_list_of_dicts() -> None:
+    doc = tomlrt.parse(
+        """
+        [[pkg]]
+        name = "a"
+
+        [[pkg]]
+        name = "b"
+        nested = { x = 1 }
+        """
+    )
+    snap = doc.aot("pkg").to_list()
+    assert type(snap) is list
+    assert all(type(t) is dict for t in snap)
+    assert snap == [{"name": "a"}, {"name": "b", "nested": {"x": 1}}]
+
+
+def test_to_dict_round_trip_is_data_equivalent_to_tomllib() -> None:
+    src = """
+    title = "demo"
+    xs = [1, 2, 3]
+
+    [owner]
+    name = "alice"
+
+    [[pkg]]
+    name = "a"
+    """
+    assert tomlrt.parse(src).to_dict() == _reparses(src)

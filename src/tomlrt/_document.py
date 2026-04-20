@@ -69,6 +69,23 @@ TomlValue: TypeAlias = "Scalar | Array | AoT | Table"
 _MISSING: Any = object()
 
 
+def _to_plain(value: object) -> Any:
+    """Recursively convert tomlrt views to plain Python data.
+
+    Tables become ``dict``s, AoTs and Arrays become ``list``s, scalars
+    are returned as-is. The result shares no mutable state with the
+    underlying document and is safe to hand to consumers that expect
+    real ``dict``/``list`` objects.
+    """
+    if isinstance(value, Table):
+        return {k: _to_plain(v) for k, v in value.items()}
+    if isinstance(value, AoT):
+        return [_to_plain(t) for t in value]
+    if isinstance(value, Array):
+        return [_to_plain(v) for v in value]
+    return value
+
+
 # ---------------------------------------------------------------------------
 # Read-side helpers
 # ---------------------------------------------------------------------------
@@ -825,20 +842,21 @@ class Table(MutableMapping[str, TomlValue]):
     def __delitem__(self, key: str) -> None:
         self._delete_value(key)
 
-    @staticmethod
-    def _snapshot_for_pop(value: object) -> Any:
-        """Recursively convert tomlrt views to plain Python data.
+    def to_dict(self) -> dict[str, Any]:
+        """Return a deep, plain-Python copy of this table.
 
-        Used by :meth:`pop` and :meth:`popitem` so that the returned
-        value doesn't go stale when the underlying CST is removed.
+        Walks the table recursively and converts every nested
+        :class:`Table` / :class:`AoT` / :class:`Array` view into an
+        ordinary :class:`dict` / :class:`list`. The result shares no
+        mutable state with the document and is safe to hand to
+        consumers that expect real ``dict``/``list`` objects -- JSON
+        encoders, ``fastjsonschema``, ``pydantic``, anything that
+        does ``isinstance(x, dict)``, etc.
+
+        Scalar values (strings, ints, floats, bools, datetimes) are
+        returned as-is; they are immutable so aliasing is harmless.
         """
-        if isinstance(value, Table):
-            return {k: Table._snapshot_for_pop(v) for k, v in value.items()}
-        if isinstance(value, AoT):
-            return [Table._snapshot_for_pop(t) for t in value]
-        if isinstance(value, Array):
-            return [Table._snapshot_for_pop(v) for v in value]
-        return value
+        return {k: _to_plain(v) for k, v in self.items()}
 
     @override
     def pop(self, key: str, default: object = _MISSING) -> Any:
@@ -854,7 +872,7 @@ class Table(MutableMapping[str, TomlValue]):
             if default is _MISSING:
                 raise
             return default
-        snapshot = self._snapshot_for_pop(value)
+        snapshot = _to_plain(value)
         del self[key]
         return snapshot
 
@@ -2474,6 +2492,16 @@ class Array(list[TomlValue]):
             self._resync()
         return self
 
+    def to_list(self) -> list[Any]:
+        """Return a deep, plain-Python copy of this array.
+
+        Walks recursively, converting nested :class:`Table` /
+        :class:`AoT` / :class:`Array` views into ordinary
+        :class:`dict` / :class:`list` containers. Scalars are
+        returned as-is.
+        """
+        return [_to_plain(v) for v in self]
+
     # ------------------------------------------------------------------
     # Typed accessors for nested values. Mirror Table.array/.table.
     # ------------------------------------------------------------------
@@ -2594,6 +2622,15 @@ class AoT(list[Table]):
         """
         self._insert_at(len(self), entry)
         return self[-1]
+
+    def to_list(self) -> list[dict[str, Any]]:
+        """Return a deep, plain-Python copy of this array-of-tables.
+
+        Each entry is converted to an ordinary :class:`dict` (with
+        nested views recursively flattened to plain containers). The
+        result shares no mutable state with the document.
+        """
+        return [t.to_dict() for t in self]
 
     @override
     def insert(
