@@ -762,22 +762,26 @@ def _section_insert_index(
 # ---------------------------------------------------------------------------
 
 
-class _SectionSpec(dict[str, Any]):
-    """Internal: spec object produced by :meth:`Table.section`.
+class SectionSpec(dict[str, Any]):
+    """Tag telling ``__setitem__`` to install a ``[k]`` standard section.
 
-    When assigned into a document via ``doc[k] = Table.section({...})``,
-    ``__setitem__`` installs a ``[k]`` standard section.
+    Produced by :meth:`Table.section`; used only at assignment sites::
+
+        doc["tool"] = Table.section({"version": 1})  # [tool] section
+
+    A plain ``dict`` assignment would instead produce an inline table
+    (``tool = { version = 1 }``).
     """
 
     __slots__ = ()
 
 
-class _InlineSpec(dict[str, Any]):
-    """Internal: spec object produced by :meth:`Table.inline`.
+class InlineSpec(dict[str, Any]):
+    """Tag telling ``__setitem__`` to install an inline ``k = { ... }`` table.
 
-    Indistinguishable from a plain :class:`dict` at runtime apart from
-    the class identity, which makes the "explicit inline" intent
-    visible at the assignment site.
+    Produced by :meth:`Table.inline`. Plain ``dict`` assignment already
+    renders inline, so this exists mainly to make the intent explicit
+    at the call site and to stay symmetric with :class:`SectionSpec`.
     """
 
     __slots__ = ()
@@ -838,7 +842,7 @@ class Table(dict[str, Any]):
     def section(
         cls,
         mapping: Mapping[str, object] | None = None,
-    ) -> _SectionSpec:
+    ) -> SectionSpec:
         """Return a spec that installs as a ``[k]`` standard section.
 
         Use from an assignment site: ``doc[k] = Table.section({...})``.
@@ -846,7 +850,7 @@ class Table(dict[str, Any]):
         assignment (``spec["sub"] = ...``). Nested dicts in the mapping
         remain inline unless they are themselves :meth:`section` specs.
         """
-        spec = _SectionSpec()
+        spec = SectionSpec()
         if mapping is not None:
             spec.update(mapping)
         return spec
@@ -855,7 +859,7 @@ class Table(dict[str, Any]):
     def inline(
         cls,
         mapping: Mapping[str, object] | None = None,
-    ) -> _InlineSpec:
+    ) -> InlineSpec:
         """Return a spec that installs as an inline ``k = { ... }`` table.
 
         Use when you want to force the inline flavour explicitly; a
@@ -863,7 +867,7 @@ class Table(dict[str, Any]):
         useful for readability or when a path otherwise prefers the
         section flavour.
         """
-        spec = _InlineSpec()
+        spec = InlineSpec()
         if mapping is not None:
             spec.update(mapping)
         return spec
@@ -932,9 +936,9 @@ class Table(dict[str, Any]):
         # Flavour-bearing values drive structural installation rather
         # than a raw value write. Attached Arrays/AoTs from another
         # document fall through to the deepcopy path so their full CST
-        # (comments, formatting) survives the copy; only _SectionSpec,
+        # (comments, formatting) survives the copy; only SectionSpec,
         # standalone AoTs, and standalone Arrays need structural work.
-        if isinstance(value, _SectionSpec) or (
+        if isinstance(value, SectionSpec) or (
             isinstance(value, (AoT, Array)) and not value._attached  # noqa: SLF001
         ):
             self._install_flavoured((key,), value)
@@ -952,7 +956,7 @@ class Table(dict[str, Any]):
         self,
         path: str | tuple[str, ...],
         value: object,
-    ) -> None:
+    ) -> Any:
         """Install a flavour-bearing ``value`` at ``path``.
 
         ``path`` accepts a dotted string (split on ``.``) or a tuple
@@ -961,8 +965,8 @@ class Table(dict[str, Any]):
 
         ``value`` should be one of:
 
-        * a :class:`_SectionSpec` from :meth:`Table.section` — installs
-          a ``[...]`` standard section;
+        * a spec from :meth:`Table.section` or :meth:`Table.inline`
+          — installs a ``[...]`` standard section / inline table;
         * an :class:`AoT` built standalone (``AoT([{...}])``) — installs
           ``[[...]]`` array-of-tables entries;
         * an :class:`Array` built standalone (``Array([...],
@@ -973,11 +977,16 @@ class Table(dict[str, Any]):
         replaced. Implicit intermediate tables are left implicit, so
         ``install(("tool", "poetry"), Table.section({}))`` produces a
         single ``[tool.poetry]`` header, not a ``[tool]`` + nested.
+
+        Returns the freshly-installed live view (:class:`Table`,
+        :class:`AoT`, or :class:`Array`) for further mutation.
         """
-        if not self._attached:
-            msg = "cannot install into a detached table"
-            raise TOMLError(msg)
-        self._install_flavoured(_parse_key_path(path), value)
+        parts = _parse_key_path(path)
+        self._install_flavoured(parts, value)
+        cur: Any = self
+        for part in parts:
+            cur = cur[part]
+        return cur
 
     def _install_flavoured(
         self,
@@ -992,7 +1001,7 @@ class Table(dict[str, Any]):
         ``[k]`` sections or ``[[k]]`` array-of-tables.
         """
         del parts
-        if isinstance(value, _SectionSpec):
+        if isinstance(value, SectionSpec):
             msg = (
                 "cannot assign a Table.section() spec here: the containing "
                 "table is not section-backed"
@@ -1319,38 +1328,6 @@ class Table(dict[str, Any]):
         msg = "this table flavour does not support array-of-tables promotion"
         raise TOMLError(msg)
 
-    def set_aot(
-        self,
-        key: str,  # noqa: ARG002
-        entries: Iterable[Mapping[str, object]] = (),  # noqa: ARG002
-    ) -> AoT:
-        """Set ``key`` to an array-of-tables containing ``entries``.
-
-        ``key`` accepts a dotted path (e.g. ``"tool.poetry.source"``);
-        intermediate tables are kept implicit (no ``[tool]`` /
-        ``[tool.poetry]`` headers are emitted). Replaces any existing
-        value at the destination path. The returned :class:`AoT` is a
-        live view; appending to it adds further sections.
-        """
-        msg = "this table flavour does not support array-of-tables assignment"
-        raise TOMLError(msg)
-
-    def set_table(
-        self,
-        key: str,  # noqa: ARG002
-        value: Mapping[str, object] = MappingProxyType({}),  # noqa: ARG002
-    ) -> Table:
-        """Set ``key`` to a standard table containing ``value``'s entries.
-
-        ``key`` accepts a dotted path (e.g. ``"tool.poetry"``);
-        intermediate tables are kept implicit, so no ``[tool]`` super-
-        table header is emitted. Replaces any existing value (including
-        sub-sections) at the destination path. The returned
-        :class:`Table` is a live view of the newly-created section.
-        """
-        msg = "this table flavour does not support standard-table assignment"
-        raise TOMLError(msg)
-
     def _install_section(
         self,
         parts: tuple[str, ...],  # noqa: ARG002
@@ -1386,30 +1363,6 @@ class Table(dict[str, Any]):
             else:
                 return cur._install_section(parts[i:], {})  # noqa: SLF001
         return cur
-
-    def set_array(
-        self,
-        key: str,
-        items: Iterable[object] = (),
-        *,
-        multiline: bool = False,
-        indent: str = "    ",
-    ) -> Array:
-        """Set ``key`` to an inline array containing ``items``.
-
-        ``key`` accepts a dotted path; intermediate tables are created
-        as needed (with implicit super-tables left implicit, mirroring
-        :meth:`set_table`). Replaces any existing value at the
-        destination. Pass ``multiline=True`` to lay the array out one
-        item per line with ``indent`` indentation. The returned
-        :class:`Array` is a live view of the new array.
-        """
-        return self._install_array(
-            _parse_key_path(key),
-            items,
-            multiline=multiline,
-            indent=indent,
-        )
 
     def _install_array(
         self,
@@ -2246,7 +2199,7 @@ class _StdTable(Table):
 
     @override
     def _install_flavoured(self, parts: tuple[str, ...], value: object) -> None:
-        if isinstance(value, _SectionSpec):
+        if isinstance(value, SectionSpec):
             self._install_section(parts, value)
             return
         if isinstance(value, AoT):
@@ -2261,23 +2214,16 @@ class _StdTable(Table):
             # with the requested layout. Attached Arrays take the
             # deepcopy path below so comments/formatting survive.
             multiline = value.multiline
+            indent = value._indent  # noqa: SLF001
             items = list(value)
             self._install_array(
                 parts,
                 items,
                 multiline=multiline,
-                indent="    ",
+                indent=indent,
             )
             return
         super()._install_flavoured(parts, value)  # pragma: no cover
-
-    @override
-    def set_aot(
-        self,
-        key: str,
-        entries: Iterable[Mapping[str, object]] = (),
-    ) -> AoT:
-        return self._install_aot(_parse_key_path(key), entries)
 
     def _install_aot(
         self,
@@ -2310,14 +2256,6 @@ class _StdTable(Table):
         # identity across re-reads.
         self._install_at_path(parts, aot)
         return aot
-
-    @override
-    def set_table(
-        self,
-        key: str,
-        value: Mapping[str, object] = MappingProxyType({}),
-    ) -> Table:
-        return self._install_section(_parse_key_path(key), value)
 
     @override
     def _install_section(
@@ -2812,7 +2750,7 @@ class Array(list[Any]):
     elements become detached.
     """
 
-    __slots__ = ("_attached", "_node", "_style")
+    __slots__ = ("_attached", "_indent", "_node", "_style")
 
     def __init__(
         self,
@@ -2843,6 +2781,7 @@ class Array(list[Any]):
             self._node.items,
             self._node.final_trivia,
         )
+        self._indent = indent
         super().__init__(_materialise_array(self._node))
         if not self._attached and multiline:
             self.set_multiline(multiline=True, indent=indent)

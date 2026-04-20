@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 import tomlrt
+from tomlrt import Table
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -278,7 +279,7 @@ def test_document_factory_is_independent_of_other_calls() -> None:
 def test_document_factory_supports_full_build_and_dump() -> None:
     doc = tomlrt.document()
     doc["title"] = "demo"
-    doc.set_table("server", {"port": 8080})
+    doc.install("server", Table.section({"port": 8080}))
     out = tomlrt.dumps(doc)
     parsed = tomlrt.parse(out)
     assert parsed["title"] == "demo"
