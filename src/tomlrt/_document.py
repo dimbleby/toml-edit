@@ -709,33 +709,6 @@ def _parse_key_path(path: str) -> tuple[str, ...]:
     return tuple(parts)
 
 
-def _purge_path(doc_node: DocumentNode, full_path: tuple[str, ...]) -> None:
-    """Remove every node addressable as ``full_path``.
-
-    Drops sections whose header is at or under ``full_path`` (purging
-    children too, mirroring :meth:`_StdTable._purge_conflicting`), and
-    drops KV entries in ancestor sections whose head key would steer
-    descent into ``full_path``.
-    """
-    plen = len(full_path)
-    sections = doc_node.sections
-    sections[:] = [
-        sec
-        for sec in sections
-        if not (
-            sec.header is not None
-            and len(sec.header.key.path) >= plen
-            and sec.header.key.path[:plen] == full_path
-        )
-    ]
-    for sec in sections:
-        sec_path: tuple[str, ...] = () if sec.header is None else sec.header.key.path
-        if len(sec_path) >= plen or full_path[: len(sec_path)] != sec_path:
-            continue
-        conflict_key = full_path[len(sec_path)]
-        sec.entries[:] = [kv for kv in sec.entries if kv.key.path[0] != conflict_key]
-
-
 def _section_insert_index(
     sections: list[SectionNode],
     full_path: tuple[str, ...],
@@ -1995,7 +1968,7 @@ class _StdTable(Table):
             if kind != "absent":
                 self._purge_conflicting(parts[0])
         else:
-            _purge_path(self._doc_node, full_path)
+            self._doc_node.purge_path(full_path)
         aot = AoT(self._doc_node, full_path, [])
         new_secs: list[SectionNode] = []
         for entry in entries:
@@ -2029,7 +2002,7 @@ class _StdTable(Table):
             if kind != "absent":
                 self._purge_conflicting(parts[0])
         else:
-            _purge_path(self._doc_node, full_path)
+            self._doc_node.purge_path(full_path)
         new_sec = _new_section(full_path)
         sections = self._doc_node.sections
         insert_at = _section_insert_index(sections, full_path)
@@ -2077,17 +2050,6 @@ class Document(_StdTable):
     def render(self) -> str:
         return self._doc_node.render()
 
-    def _doc_has_content(self) -> bool:
-        return any(s.header is not None or s.entries for s in self._doc_node.sections)
-
-    def _preamble_target(self) -> Trivia:
-        for sec in self._doc_node.sections:
-            if sec.header is not None:
-                return sec.header.leading
-            if sec.entries:
-                return sec.entries[0].leading
-        return self._doc_node.trailing_trivia
-
     @property
     def preamble(self) -> tuple[str, ...]:
         """Comment block at the top of the document.
@@ -2104,21 +2066,21 @@ class Document(_StdTable):
         leading ``#``) and replaces the current preamble; assign ``()``
         to remove. Newlines inside any line are rejected.
         """
-        target = self._preamble_target()
+        target = self._doc_node.preamble_target()
         pieces = target.pieces
         end, comments = _scan_leading_comment_run(pieces)
         if not comments:
             return ()
         has_separator = end < len(pieces) and isinstance(pieces[end], NewlineNode)
-        if has_separator or not self._doc_has_content():
+        if has_separator or not self._doc_node.has_content():
             return tuple(_strip_comment_marker(c) for c in comments)
         return ()
 
     @preamble.setter
     def preamble(self, value: Sequence[str]) -> None:
-        target = self._preamble_target()
+        target = self._doc_node.preamble_target()
         pieces = target.pieces
-        has_content = self._doc_has_content()
+        has_content = self._doc_node.has_content()
         run_end, _ = _scan_leading_comment_run(pieces)
         has_separator = run_end < len(pieces) and isinstance(
             pieces[run_end], NewlineNode
@@ -2147,13 +2109,13 @@ class Document(_StdTable):
         :class:`TOMLError` if called with a non-empty value on a
         document with no structural content.
         """
-        if not self._doc_has_content():
+        if not self._doc_node.has_content():
             return ()
         return _extract_trailing_comment_block(self._doc_node.trailing_trivia)
 
     @epilogue.setter
     def epilogue(self, value: Sequence[str]) -> None:
-        if not self._doc_has_content():
+        if not self._doc_node.has_content():
             if value:
                 msg = (
                     "cannot set epilogue on a document with no structural "
@@ -2826,7 +2788,7 @@ class AoT(list[Table]):
                 if id(s) not in seen:
                     captured.append(s)
                     seen.add(id(s))
-                for sub in _aot_owned_range(self._doc_node, s):
+                for sub in self._doc_node.aot_owned_range(s):
                     if id(sub) not in seen:
                         captured.append(sub)
                         seen.add(id(sub))
@@ -2860,7 +2822,7 @@ class AoT(list[Table]):
         new_entries: list[Table] = []
         kept: set[int] = set()
         for s in own:
-            owned = _aot_owned_range(self._doc_node, s)
+            owned = self._doc_node.aot_owned_range(s)
             cached = existing.get(id(s))
             if cached is not None:
                 kept.add(id(cached))
@@ -2973,7 +2935,7 @@ class AoT(list[Table]):
             # or at end of doc if no entries exist yet.
             if own:
                 last = own[-1]
-                owned = _aot_owned_range(self._doc_node, last)
+                owned = self._doc_node.aot_owned_range(last)
                 tail = owned[-1] if owned else last
                 insert_idx = _index_of(sections, tail) + 1
             else:
@@ -3011,7 +2973,7 @@ class AoT(list[Table]):
             msg = "pop index out of range"
             raise IndexError(msg)
         target = own[i]
-        owned = _aot_owned_range(self._doc_node, target)
+        owned = self._doc_node.aot_owned_range(target)
         sections = self._doc_node.sections
         to_remove = {id(target), *(id(s) for s in owned)}
         # Use the live entry as the popped object to preserve identity.
@@ -3027,7 +2989,7 @@ class AoT(list[Table]):
         to_remove: set[int] = set()
         for s in own:
             to_remove.add(id(s))
-            for sub in _aot_owned_range(self._doc_node, s):
+            for sub in self._doc_node.aot_owned_range(s):
                 to_remove.add(id(sub))
         sections = self._doc_node.sections
         self._doc_node.sections = [s for s in sections if id(s) not in to_remove]
@@ -3054,46 +3016,6 @@ def _index_of(sections: list[SectionNode], target: SectionNode) -> int:
 # ---------------------------------------------------------------------------
 # View / aggregator
 # ---------------------------------------------------------------------------
-
-
-def _aot_owned_range(
-    doc_node: DocumentNode,
-    aot_sec: SectionNode,
-) -> list[SectionNode]:
-    """Sections owned by this AoT entry.
-
-    Owned = sections that come *after* ``aot_sec`` in document order
-    and whose header path strictly extends this AoT's path. The range
-    ends at the next [[same-path]] header or any other section that
-    doesn't extend ``aot_sec``'s path.
-    """
-    if aot_sec.header is None:
-        return []
-    aot_path = aot_sec.header.key.path
-    sections = doc_node.sections
-    i = -1
-    for idx, candidate in enumerate(sections):
-        if candidate is aot_sec:
-            i = idx
-            break
-    if i < 0:
-        return []
-    owned: list[SectionNode] = []
-    for j in range(i + 1, len(sections)):
-        sec = sections[j]
-        hdr = sec.header
-        if hdr is None:
-            # The synthetic root section appears only at index 0; safe to stop.
-            break
-        hpath = hdr.key.path
-        if hdr.kind == "array" and hpath == aot_path:
-            break  # next AoT entry of same path — terminate
-        if len(hpath) > len(aot_path) and hpath[: len(aot_path)] == aot_path:
-            owned.append(sec)
-        else:
-            # sibling or outer section — terminate ownership
-            break
-    return owned
 
 
 def _iter_table(
@@ -3181,7 +3103,7 @@ def _iter_table(
         if aot_secs:
             tables: list[Table] = []
             for s in aot_secs:
-                owned = _aot_owned_range(doc_node, s)
+                owned = doc_node.aot_owned_range(s)
                 tables.append(
                     _StdTable(
                         doc_node,
