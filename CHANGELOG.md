@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Import of `assert_never` no longer breaks on Python 3.10. The
+  symbol is now sourced from `typing_extensions` on interpreters
+  older than 3.11, mirroring the existing `override` import.
+
 ## [0.2.0] - 2026-04-20
 
 ### Changed
