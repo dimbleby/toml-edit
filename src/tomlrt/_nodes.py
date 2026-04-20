@@ -120,6 +120,7 @@ class Key:
 
     parts: list[KeyPart]
     separators: list[str] = field(default_factory=list)
+    _path_cache: tuple[str, ...] | None = field(default=None, repr=False, compare=False)
 
     def render(self) -> str:
         out: list[str] = []
@@ -131,7 +132,12 @@ class Key:
 
     @property
     def path(self) -> tuple[str, ...]:
-        return tuple(p.value for p in self.parts)
+        cached = self._path_cache
+        if cached is not None:
+            return cached
+        computed = tuple(p.value for p in self.parts)
+        self._path_cache = computed
+        return computed
 
 
 # ---------------------------------------------------------------------------
