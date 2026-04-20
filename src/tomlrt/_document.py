@@ -2674,7 +2674,7 @@ def _index_of(sections: list[SectionNode], target: SectionNode) -> int:
         if s is target:
             return i
     msg = "section not found in document (internal error)"
-    raise RuntimeError(msg)
+    raise RuntimeError(msg)  # pragma: no cover
 
 
 # ---------------------------------------------------------------------------

@@ -800,3 +800,111 @@ def test_preamble_rejects_embedded_newline() -> None:
     doc = tomlrt.loads("")
     with pytest.raises(tomlrt.TOMLError, match="line terminator"):
         doc.preamble = ("a\nb",)
+
+
+# ---------------------------------------------------------------------------
+# Comment-view error & repr paths (Array + Table)
+# ---------------------------------------------------------------------------
+
+
+def test_table_comments_delitem_missing_raises_keyerror() -> None:
+    doc = tomlrt.parse("a = 1\n")
+    with pytest.raises(KeyError, match="a"):
+        del doc.comments["a"]
+
+
+def test_table_leading_comments_delitem_missing_raises_keyerror() -> None:
+    doc = tomlrt.parse("a = 1\n")
+    with pytest.raises(KeyError, match="a"):
+        del doc.leading_comments["a"]
+
+
+def test_table_comments_repr_lists_only_present_keys() -> None:
+    doc = tomlrt.parse("a = 1  # alpha\nb = 2\n")
+    body = repr(doc.comments)
+    assert "'a': 'alpha'" in body
+    assert "'b'" not in body
+
+
+def test_array_comments_typeerror_on_non_int_key() -> None:
+    doc = tomlrt.parse("xs = [1, 2, 3]\n")
+    arr = doc.array("xs")
+    with pytest.raises(TypeError, match="must be int"):
+        _ = arr.comments["zero"]  # type: ignore[index]
+
+
+def test_array_comments_keyerror_on_out_of_range() -> None:
+    doc = tomlrt.parse("xs = [1, 2]\n")
+    arr = doc.array("xs")
+    with pytest.raises(KeyError):
+        _ = arr.comments[5]
+
+
+def test_array_comments_delitem_missing_raises_keyerror() -> None:
+    doc = tomlrt.parse("xs = [1, 2]\n")
+    arr = doc.array("xs")
+    with pytest.raises(KeyError):
+        del arr.comments[0]
+
+
+def test_array_comments_setitem_empty_string_removes() -> None:
+    doc = tomlrt.parse("xs = [\n  1,\n  2,  # tail\n]\n")
+    arr = doc.array("xs")
+    assert arr.comments[1] == "tail"
+    arr.comments[1] = ""
+    assert 1 not in arr.comments
+    out = tomlrt.dumps(doc)
+    assert "# tail" not in out
+
+
+def test_array_comments_repr_lists_only_present_indices() -> None:
+    doc = tomlrt.parse("xs = [1, 2  # mid\n]\n")
+    arr = doc.array("xs")
+    body = repr(arr.comments)
+    assert "1: 'mid'" in body
+    assert "0:" not in body
+
+
+def test_array_leading_comments_typeerror_on_non_int_key() -> None:
+    doc = tomlrt.parse("xs = [1, 2]\n")
+    arr = doc.array("xs")
+    with pytest.raises(TypeError, match="must be int"):
+        _ = arr.leading_comments["zero"]  # type: ignore[index]
+
+
+def test_array_leading_comments_keyerror_out_of_range() -> None:
+    doc = tomlrt.parse("xs = [1, 2]\n")
+    arr = doc.array("xs")
+    with pytest.raises(KeyError):
+        _ = arr.leading_comments[5]
+
+
+def test_array_leading_comments_keyerror_when_absent() -> None:
+    doc = tomlrt.parse("xs = [1, 2]\n")
+    arr = doc.array("xs")
+    with pytest.raises(KeyError):
+        _ = arr.leading_comments[1]
+
+
+def test_array_leading_comments_delitem_missing_raises_keyerror() -> None:
+    doc = tomlrt.parse("xs = [1, 2]\n")
+    arr = doc.array("xs")
+    with pytest.raises(KeyError):
+        del arr.leading_comments[0]
+
+
+def test_array_leading_comments_repr_lists_only_present_indices() -> None:
+    doc = tomlrt.parse("xs = [\n  # first\n  1,\n  2,\n]\n")
+    arr = doc.array("xs")
+    body = repr(arr.leading_comments)
+    assert "0:" in body
+    assert "['first']" in body
+
+
+def test_array_comments_on_last_no_comma_forces_bracket_to_new_line() -> None:
+    doc = tomlrt.parse("xs = [1, 2]\n")
+    arr = doc.array("xs")
+    arr.comments[1] = "tail"
+    out = tomlrt.dumps(doc)
+    # ] must drop to its own line so the EOL comment doesn't swallow it.
+    assert "# tail\n]" in out
