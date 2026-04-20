@@ -28,6 +28,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ``Table`` / ``AoT`` / ``Array`` for container values) rather than
   a deep plain-Python snapshot. Use ``Table.to_dict()`` /
   ``Array.to_list()`` first if you need a snapshot.
+- Detached tables and AoTs are now isolated from the original
+  document. Structural mutations on a held container after its
+  parent removed it (``set_table``, ``set_aot``, ``promote_inline``,
+  ``promote_array``, ``AoT.add``, ``AoT.append``, ``AoT.insert`` …)
+  no longer leak back into the document by re-creating the
+  removed sections.
+- ``AoT.pop`` now returns the live entry object that was at the
+  given index (then orphans it), mirroring ``Table.pop`` and
+  preserving identity with whatever the caller previously read out
+  of the AoT.
 - `Table` now subclasses `MutableMapping[str, Any]` (was
   `MutableMapping[str, TomlValue]`), and `Table.__getitem__` returns
   `Any` (was the strict `Scalar | Array | AoT | Table` union).
