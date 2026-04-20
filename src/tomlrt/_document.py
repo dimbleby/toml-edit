@@ -800,13 +800,12 @@ class Table(MutableMapping[str, Any]):
       view is bound to the path, not to the original table's
       identity.
 
-    This is essentially forced by TOML's data model: a single logical
-    table can be assembled from multiple ``[a]`` sections, sit under
-    an implicit super-table with no header of its own, or come from
-    a dotted-key fragment of a larger key/value. There is no single
-    node a :class:`Table` could "wrap" the way a :class:`dict` owns
-    its storage, and there is no stable cell-identity a held view
-    could be pinned to.
+    This is a deliberate design choice: the underlying CST is the
+    single source of truth, and a :class:`Table` resolves itself
+    against it on every operation rather than mirroring a copy of
+    the data into per-table dict storage. The trade-off is that a
+    held reference behaves like a path-shaped pointer rather than
+    an independent dict.
 
     The practical rule is: **treat a :class:`Table` like a path-
     shaped pointer into the document, not like an independent
