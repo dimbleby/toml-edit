@@ -12,7 +12,7 @@ import sys
 from collections.abc import Mapping, MutableMapping
 from copy import deepcopy
 from datetime import date, datetime, time
-from typing import TYPE_CHECKING, Protocol, SupportsIndex, TypeAlias, overload
+from typing import TYPE_CHECKING, Any, Protocol, SupportsIndex, TypeAlias, overload
 
 if sys.version_info >= (3, 12):
     from typing import override
@@ -58,6 +58,19 @@ if TYPE_CHECKING:
 
 Scalar: TypeAlias = str | int | float | bool | datetime | date | time
 TomlValue: TypeAlias = "Scalar | Array | AoT | Table"
+
+_MISSING: Any = object()
+
+
+def _to_python(value: object) -> Any:
+    """Recursively convert TOML-edit views to plain Python data."""
+    if isinstance(value, Table):
+        return {k: _to_python(v) for k, v in value.items()}
+    if isinstance(value, AoT):
+        return [_to_python(t) for t in value]
+    if isinstance(value, Array):
+        return [_to_python(v) for v in value]
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -612,6 +625,34 @@ class Table(MutableMapping[str, TomlValue]):
     def __delitem__(self, key: str) -> None:
         self._delete_value(key)
 
+    @override
+    def pop(self, key: str, default: object = _MISSING) -> Any:
+        """Remove ``key`` and return its value, like :meth:`dict.pop`.
+
+        Sub-tables, AoTs and inline arrays are returned as plain Python
+        snapshots (``dict`` / ``list``) since the original CST nodes
+        are about to be deleted.
+        """
+        try:
+            value = self[key]
+        except KeyError:
+            if default is _MISSING:
+                raise
+            return default
+        snapshot = _to_python(value)
+        del self[key]
+        return snapshot
+
+    @override
+    def popitem(self) -> tuple[str, Any]:
+        last: str | None = None
+        for key in self:
+            last = key
+        if last is None:
+            msg = "table is empty"
+            raise KeyError(msg)
+        return last, self.pop(last)
+
     # Subclasses override these.
     def _set_value(self, key: str, value: object) -> None:  # noqa: ARG002, pragma: no cover
         msg = "this table flavour does not support mutation"
@@ -1040,27 +1081,56 @@ class _StdTable(Table):
         self._purge_conflicting(key)
 
     def _ensure_section(self) -> SectionNode:
-        """Create an implicit pre-header section for the document root.
+        """Materialise a section that holds direct entries for ``self._path``.
 
-        Only valid for the top-level Document; sub-tables created via
-        ``__setitem__`` raise above.
+        For the document root this is an implicit pre-header section.
+        For nested paths it's a fresh ``[a.b.c]`` header inserted
+        immediately before the first descendant section (so the new
+        keys logically belong to the same place in the document).
         """
-        if self._path != ():  # pragma: no cover - defensive
-            msg = (
-                f"no [{'.'.join(self._path)}] section exists; creating "
-                "new sub-tables via assignment is not supported."
-            )
-            raise TOMLEditError(msg)
         doc_node = self._doc_view._node  # noqa: SLF001
-        new_sec = SectionNode(header=None, entries=[])
-        # Ensure a blank line precedes the next section's header so the
-        # newly-inserted top-level keys aren't visually glued to it.
-        if doc_node.sections and doc_node.sections[0].header is not None:
-            next_header = doc_node.sections[0].header
-            leading_text = next_header.leading.render()
-            if not leading_text.startswith("\n"):
-                next_header.leading.pieces.insert(0, NewlineNode("\n"))
-        doc_node.sections.insert(0, new_sec)
+        if self._path == ():
+            new_sec = SectionNode(header=None, entries=[])
+            # Ensure a blank line precedes the next section's header so the
+            # newly-inserted top-level keys aren't visually glued to it.
+            if doc_node.sections and doc_node.sections[0].header is not None:
+                next_header = doc_node.sections[0].header
+                leading_text = next_header.leading.render()
+                if not leading_text.startswith("\n"):
+                    next_header.leading.pieces.insert(0, NewlineNode("\n"))
+            doc_node.sections.insert(0, new_sec)
+            return new_sec
+        parts = [make_key_part(p) for p in self._path]
+        seps = ["."] * (len(parts) - 1)
+        header = TableHeaderNode(
+            leading=Trivia(),
+            kind="table",
+            inner_pre=None,
+            key=Key(parts=parts, separators=seps),
+            inner_post=None,
+            trailing=None,
+            trailing_comment=None,
+            newline=NewlineNode("\n"),
+        )
+        new_sec = SectionNode(header=header, entries=[])
+        plen = len(self._path)
+        for i, sec in enumerate(doc_node.sections):
+            h = sec.header
+            if (
+                h is not None
+                and len(h.key.path) > plen
+                and h.key.path[:plen] == self._path
+            ):
+                # Insert a leading newline so the new header doesn't
+                # glue against the previous section's last entry.
+                header.leading.pieces.append(NewlineNode("\n"))
+                doc_node.sections.insert(i, new_sec)
+                return new_sec
+        # No descendants - shouldn't happen if we were classified as
+        # implicit, but fall back to appending.
+        if doc_node.sections:
+            header.leading.pieces.append(NewlineNode("\n"))
+        doc_node.sections.append(new_sec)
         return new_sec
 
     # ------------------------------------------------------------------

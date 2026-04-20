@@ -358,6 +358,63 @@ def test_del_missing_raises_keyerror() -> None:
         del a["missing"]
 
 
+def test_pop_returns_subtable_snapshot() -> None:
+    src = "[a]\nx = 1\n[a.b]\ny = 2\n[a.b.c]\nz = 3\n"
+    doc = toml_edit.parse(src)
+    a = doc["a"]
+    assert isinstance(a, toml_edit.Table)
+    popped = a.pop("b")
+    assert popped == {"y": 2, "c": {"z": 3}}
+    assert _reparses(toml_edit.dumps(doc)) == {"a": {"x": 1}}
+
+
+def test_pop_returns_aot_snapshot() -> None:
+    doc = toml_edit.parse('[[items]]\nname = "a"\n[[items]]\nname = "b"\n')
+    popped = doc.pop("items")
+    assert popped == [{"name": "a"}, {"name": "b"}]
+    assert toml_edit.dumps(doc) == ""
+
+
+def test_pop_with_default() -> None:
+    doc = toml_edit.parse("")
+    assert doc.pop("missing", "fallback") == "fallback"
+    with pytest.raises(KeyError):
+        doc.pop("missing")
+
+
+def test_popitem_is_lifo() -> None:
+    doc = toml_edit.parse("a = 1\nb = 2\nc = 3\n")
+    assert doc.popitem() == ("c", 3)
+    assert doc.popitem() == ("b", 2)
+    assert _reparses(toml_edit.dumps(doc)) == {"a": 1}
+
+
+def test_popitem_empty_raises() -> None:
+    doc = toml_edit.parse("")
+    with pytest.raises(KeyError):
+        doc.popitem()
+
+
+def test_setitem_into_implicit_parent() -> None:
+    """Adding a new key to an implicit-only parent materialises [a]."""
+    src = "[a.b]\ny = 2\n"
+    doc = toml_edit.parse(src)
+    a = doc["a"]
+    assert isinstance(a, toml_edit.Table)
+    a["new"] = 1
+    out = toml_edit.dumps(doc)
+    assert _reparses(out) == {"a": {"new": 1, "b": {"y": 2}}}
+
+
+def test_setitem_into_implicit_grandparent() -> None:
+    src = "[a.b.c]\nz = 3\n"
+    doc = toml_edit.parse(src)
+    ab = doc.table("a").table("b")
+    ab["new"] = 1
+    out = toml_edit.dumps(doc)
+    assert _reparses(out) == {"a": {"b": {"new": 1, "c": {"z": 3}}}}
+
+
 # ---------------------------------------------------------------------------
 # Sub-table access through AoT entry (uses the new owned_scope path)
 # ---------------------------------------------------------------------------
