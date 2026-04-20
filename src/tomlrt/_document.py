@@ -707,12 +707,22 @@ def _insert_section_block(
     sections[insert_at:insert_at] = new_secs
 
 
-def _parse_key_path(path: str) -> tuple[str, ...]:
+def _parse_key_path(path: str | tuple[str, ...]) -> tuple[str, ...]:
     """Split a dotted key path string into its bare segments.
 
-    Quoted segments are not currently supported; callers with exotic
-    keys should chain single-segment calls instead.
+    A string is split on ``.`` (``"a.b.c"`` → ``("a", "b", "c")``).
+    A tuple is taken verbatim: use this form to express a single
+    segment containing a literal dot (e.g. ``("foo.bar",)`` to name a
+    table whose only key is the quoted name ``"foo.bar"``).
     """
+    if isinstance(path, tuple):
+        if not path:
+            msg = "key path must not be empty"
+            raise TOMLError(msg)
+        if any(not p for p in path):
+            msg = f"key path {path!r} contains an empty segment"
+            raise TOMLError(msg)
+        return path
     if not path:
         msg = "key path must not be empty"
         raise TOMLError(msg)
@@ -927,7 +937,7 @@ class Table(dict[str, Any]):
         if isinstance(value, _SectionSpec) or (
             isinstance(value, (AoT, Array)) and not value._attached  # noqa: SLF001
         ):
-            self._install_flavoured(key, value)
+            self._install_flavoured((key,), value)
             return
         # If we're replacing an existing container, detach the old one
         # so any held references stop reflecting later edits.
@@ -938,7 +948,42 @@ class Table(dict[str, Any]):
         self._set_value(key, value)
         self._refresh_key(key)
 
-    def _install_flavoured(self, key: str, value: object) -> None:  # noqa: ARG002
+    def install(
+        self,
+        path: str | tuple[str, ...],
+        value: object,
+    ) -> None:
+        """Install a flavour-bearing ``value`` at ``path``.
+
+        ``path`` accepts a dotted string (split on ``.``) or a tuple
+        of literal segments (use the tuple form to express a single
+        segment containing a literal dot, e.g. ``("foo.bar",)``).
+
+        ``value`` should be one of:
+
+        * a :class:`_SectionSpec` from :meth:`Table.section` — installs
+          a ``[...]`` standard section;
+        * an :class:`AoT` built standalone (``AoT([{...}])``) — installs
+          ``[[...]]`` array-of-tables entries;
+        * an :class:`Array` built standalone (``Array([...],
+          multiline=...)``) — installs an inline array with the
+          requested layout.
+
+        Existing values at ``path`` (including sub-sections) are
+        replaced. Implicit intermediate tables are left implicit, so
+        ``install(("tool", "poetry"), Table.section({}))`` produces a
+        single ``[tool.poetry]`` header, not a ``[tool]`` + nested.
+        """
+        if not self._attached:
+            msg = "cannot install into a detached table"
+            raise TOMLError(msg)
+        self._install_flavoured(_parse_key_path(path), value)
+
+    def _install_flavoured(
+        self,
+        parts: tuple[str, ...],
+        value: object,
+    ) -> None:
         """Route a flavour-bearing value through the structural installers.
 
         Subclasses that support structural assignment (``_StdTable``,
@@ -946,6 +991,7 @@ class Table(dict[str, Any]):
         the assignment because inline/dotted-sub tables cannot hold
         ``[k]`` sections or ``[[k]]`` array-of-tables.
         """
+        del parts
         if isinstance(value, _SectionSpec):
             msg = (
                 "cannot assign a Table.section() spec here: the containing "
@@ -1305,14 +1351,24 @@ class Table(dict[str, Any]):
         msg = "this table flavour does not support standard-table assignment"
         raise TOMLError(msg)
 
-    def ensure_table(self, key: str) -> Table:
+    def _install_section(
+        self,
+        parts: tuple[str, ...],  # noqa: ARG002
+        value: Mapping[str, object] = MappingProxyType({}),  # noqa: ARG002
+    ) -> Table:
+        msg = "this table flavour does not support standard-table assignment"
+        raise TOMLError(msg)
+
+    def ensure_table(self, key: str | tuple[str, ...]) -> Table:
         """Return the table at ``key``, creating an empty one if absent.
 
-        ``key`` accepts a dotted path. If the destination already exists
-        and is table-shaped (an explicit section, an implicit super-
-        table, or an inline table), the existing live view is returned
-        and no mutation occurs. Raises :class:`TOMLError` when the path
-        names a non-table value.
+        ``key`` accepts a dotted path as a string, or a tuple of
+        literal segments (use the tuple form to express a segment
+        containing a literal dot, e.g. ``("foo.bar",)``). If the
+        destination already exists and is table-shaped (an explicit
+        section, an implicit super-table, or an inline table), the
+        existing live view is returned and no mutation occurs. Raises
+        :class:`TOMLError` when the path names a non-table value.
         """
         parts = _parse_key_path(key)
         cur: Table = self
@@ -1328,8 +1384,7 @@ class Table(dict[str, Any]):
                     raise TOMLError(msg)
                 cur = child
             else:
-                tail = ".".join(parts[i:])
-                return cur.set_table(tail)
+                return cur._install_section(parts[i:], {})  # noqa: SLF001
         return cur
 
     def set_array(
@@ -1367,13 +1422,16 @@ class Table(dict[str, Any]):
         if len(parts) == 1:
             target: Table = self
         else:
-            target = self.ensure_table(".".join(parts[:-1]))
+            target = self.ensure_table(parts[:-1])
         leaf = parts[-1]
         target[leaf] = list(items)
-        arr = target.array(leaf)
+        value = dict.__getitem__(target, leaf)
+        if not isinstance(value, Array):  # pragma: no cover - defensive
+            msg = f"expected Array after install, got {type(value).__name__}"
+            raise TOMLError(msg)
         if multiline:
-            arr.set_multiline(multiline=True, indent=indent)
-        return arr
+            value.set_multiline(multiline=True, indent=indent)
+        return value
 
 
 class _InlineTable(Table):
@@ -2187,8 +2245,7 @@ class _StdTable(Table):
         return aot
 
     @override
-    def _install_flavoured(self, key: str, value: object) -> None:
-        parts = _parse_key_path(key)
+    def _install_flavoured(self, parts: tuple[str, ...], value: object) -> None:
         if isinstance(value, _SectionSpec):
             self._install_section(parts, value)
             return
@@ -2212,7 +2269,7 @@ class _StdTable(Table):
                 indent="    ",
             )
             return
-        super()._install_flavoured(key, value)  # pragma: no cover
+        super()._install_flavoured(parts, value)  # pragma: no cover
 
     @override
     def set_aot(
@@ -2262,10 +2319,11 @@ class _StdTable(Table):
     ) -> Table:
         return self._install_section(_parse_key_path(key), value)
 
+    @override
     def _install_section(
         self,
         parts: tuple[str, ...],
-        value: Mapping[str, object],
+        value: Mapping[str, object] = MappingProxyType({}),
     ) -> Table:
         full_path = (*self._path, *parts)
         if len(parts) == 1:
