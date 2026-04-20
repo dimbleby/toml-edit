@@ -395,6 +395,40 @@ class DocumentNode:
         """True if the document has any header or KV entry."""
         return any(s.header is not None or s.entries for s in self.sections)
 
+    def adopt_preamble_into(self, target: Trivia) -> None:
+        """Migrate ``trailing_trivia`` to ``target`` if the doc is empty.
+
+        While the document has no structural content, the preamble
+        setter parks comments in ``trailing_trivia`` (the only trivia
+        slot that exists). When the first structural element is about
+        to be inserted, callers invoke this so those comments end up
+        ahead of that element instead of after it. A blank-line
+        separator is appended if the parked content looks like a
+        comment run, so the migrated text still reads as preamble.
+        """
+        if self.has_content():
+            return
+        pieces = self.trailing_trivia.pieces
+        if not pieces:
+            return
+        moved = list(pieces)
+        # Ensure a blank line separates preamble from the structural
+        # element that's about to be inserted, so the comment run
+        # remains recognisable as preamble after the migration.
+        has_comment = any(isinstance(p, CommentNode) for p in moved)
+        if has_comment:
+            ends_with_blank = (
+                len(moved) >= 2
+                and isinstance(moved[-1], NewlineNode)
+                and isinstance(moved[-2], NewlineNode)
+            )
+            if not ends_with_blank:
+                if not (moved and isinstance(moved[-1], NewlineNode)):
+                    moved.append(NewlineNode("\n"))
+                moved.append(NewlineNode("\n"))
+        target.pieces[:0] = moved
+        self.trailing_trivia.pieces = []
+
     def preamble_target(self) -> Trivia:
         """Trivia block that holds the document's preamble comments.
 

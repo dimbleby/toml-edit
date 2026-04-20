@@ -24,6 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ``doc["tool"]["poetry"]["name"] = "y"`` previously raised
   ``KeyError`` or duplicated the key in a new section; both now edit
   the original entry in place.
+- Setting :attr:`Document.preamble` on an empty document and then
+  adding content now renders the preamble at the top of the file. It
+  was previously parked in the document's trailing trivia and emitted
+  *after* the new content (so ``dumps`` produced ``x = 1\n# c\n``
+  instead of ``# c\n\nx = 1\n``); the comment also became invisible
+  to the getter once content arrived. Migration now happens at the
+  insertion site for any of ``doc[k] = …``, :meth:`set_table`,
+  :meth:`set_aot`, or AoT assignment.
 - Import of `assert_never` no longer breaks on Python 3.10. The
   symbol is now sourced from `typing_extensions` on interpreters
   older than 3.11, mirroring the existing `override` import.
