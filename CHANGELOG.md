@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replaced with on-demand derivation from the surrounding AoT entry
   (when there is one), so dict reads and ``dumps`` output are always
   consistent.
+- Mutations on a sub-table reached via a dotted key from an ancestor
+  section now work correctly. Given ``poetry.name = "x"`` written
+  inside ``[tool]``, ``doc["tool"]["poetry"].pop("name")`` and
+  ``doc["tool"]["poetry"]["name"] = "y"`` previously raised
+  ``KeyError`` or duplicated the key in a new section; both now edit
+  the original entry in place.
 - Import of `assert_never` no longer breaks on Python 3.10. The
   symbol is now sourced from `typing_extensions` on interpreters
   older than 3.11, mirroring the existing `override` import.

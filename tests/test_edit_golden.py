@@ -945,3 +945,30 @@ def test_pop_then_assign_keeps_dict_view_in_sync() -> None:
     extras = poetry["extras"]
     assert isinstance(extras, tomlrt.Table)
     assert dict(extras) == {"a-norm": ["one"], "b-norm": ["two"]}
+
+
+def test_pop_inherited_dotted_key_from_ancestor_section() -> None:
+    """Regression: ``poetry.name = "x"`` in [tool] reads via doc['tool']['poetry']
+    but ``pop('name')`` used to KeyError because the mutation paths ignored
+    inherited (extras) entries.
+    """
+    src = '[tool]\npoetry.name = "x"\n\n[tool.poetry.extras]\na = ["one"]\n'
+    doc = tomlrt.loads(src)
+    poetry = doc["tool"]["poetry"]
+    assert poetry["name"] == "x"
+    poetry.pop("name")
+    assert "name" not in poetry
+    rendered = tomlrt.dumps(doc)
+    assert "poetry.name" not in rendered
+    assert "[tool.poetry.extras]" in rendered
+
+
+def test_set_inherited_dotted_key_mutates_in_place() -> None:
+    """Assigning to an inherited dotted entry should update the existing KV,
+    not create a duplicate in a new section.
+    """
+    src = '[tool]\npoetry.name = "x"\n'
+    doc = tomlrt.loads(src)
+    doc["tool"]["poetry"]["name"] = "y"
+    rendered = tomlrt.dumps(doc)
+    assert rendered == '[tool]\npoetry.name = "y"\n'
