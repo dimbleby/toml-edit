@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from tomlrt._document import AoT, Array, Document, InlineSpec, SectionSpec, Table
+from tomlrt._document import AoT, Array, Document, SectionSpec, Table
 from tomlrt._errors import TOMLError, TOMLParseError
 from tomlrt._public import document, dump, dumps, load, loads, parse
 
@@ -10,7 +10,6 @@ __all__ = [
     "AoT",
     "Array",
     "Document",
-    "InlineSpec",
     "SectionSpec",
     "TOMLError",
     "TOMLParseError",

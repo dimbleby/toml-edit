@@ -37,7 +37,7 @@ flavoured value:
 from tomlrt import AoT, Array, Table
 
 doc["tool"] = Table.section({"version": 1})      # [tool] section
-doc["xy"]   = Table.inline({"x": 1, "y": 2})     # xy = { x = 1, y = 2 }
+doc["xy"]   = {"x": 1, "y": 2}                    # xy = { x = 1, y = 2 }
 doc["pkgs"] = AoT([{"name": "a"}, {"name": "b"}])# [[pkgs]] … [[pkgs]]
 doc["tags"] = Array(["a", "b"], multiline=True)  # multi-line array
 ```
