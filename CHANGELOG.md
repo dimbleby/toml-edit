@@ -23,6 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Table.to_dict()` / `Array.to_list()` / `AoT.to_list()` return a deep,
+  plain-Python copy of the view, walking nested tomlrt views into real
+  `dict` / `list` containers. Intended for the interop boundary with
+  consumers that expect actual `dict` objects (`fastjsonschema`,
+  `pydantic`, JSON encoders, code that does `isinstance(x, dict)`).
+  Scalars are returned as-is; the result shares no mutable state with
+  the document.
 - `AoT.add(entry={})` appends ``entry`` and returns the new
   :class:`Table` view, sparing users the ``aot.append(...);
   aot[-1]`` two-step when they need a handle to the freshly-added
