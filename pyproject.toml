@@ -17,7 +17,7 @@ keywords = [
   "configuration",
   "pyproject",
 ]
-dependencies = []
+dependencies = ["typing_extensions>=4; python_version < '3.12'"]
 classifiers = [
   "Intended Audience :: Developers",
   "License :: OSI Approved :: MIT License",
@@ -37,6 +37,7 @@ dev = [
   "pytest-cov>=5",
   "hypothesis>=6",
   "mypy>=1.11",
+  "tomli>=2; python_version < '3.11'",
 ]
 
 [build-system]
@@ -80,7 +81,6 @@ enable_error_code = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
 src = ["src", "tests"]
 
 [tool.ruff.lint]

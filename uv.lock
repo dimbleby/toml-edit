@@ -396,6 +396,9 @@ wheels = [
 name = "toml-edit"
 version = "0.1.0"
 source = { editable = "." }
+dependencies = [
+    { name = "typing-extensions", marker = "python_full_version < '3.12'" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -403,9 +406,11 @@ dev = [
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-cov" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
 ]
 
 [package.metadata]
+requires-dist = [{ name = "typing-extensions", marker = "python_full_version < '3.12'", specifier = ">=4" }]
 
 [package.metadata.requires-dev]
 dev = [
@@ -413,6 +418,7 @@ dev = [
     { name = "mypy", specifier = ">=1.11" },
     { name = "pytest", specifier = ">=9" },
     { name = "pytest-cov", specifier = ">=5" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2" },
 ]
 
 [[package]]

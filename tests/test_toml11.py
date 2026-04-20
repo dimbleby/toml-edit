@@ -7,11 +7,13 @@ explicitly because that is the whole point of this library.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 
 import pytest
 
 import toml_edit
+
+UTC = timezone.utc
 
 # ---------------------------------------------------------------------------
 # String escapes: \xHH and \e
