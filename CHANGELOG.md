@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- ``AoT.insert(0, …)`` now adds a blank-line separator between the
+  newly inserted ``[[..]]`` entry and the existing one that follows
+  it (matching sibling spacing, defaulting to blank-separated). The
+  policy previously only looked at *preceding* content, so inserting
+  before existing entries glued two ``[[..]]`` headers together.
 - The dict-style view of a parsed :class:`Document` no longer goes
   stale relative to :func:`dumps` after structural mutations.
   Assigning over an array-of-tables, deleting then re-binding a key,

@@ -176,6 +176,15 @@ def _gaps_uniformly_blank(leadings: Sequence[Trivia]) -> bool:
     return all(_starts_with_blank_line(t) for t in leadings)
 
 
+def _prepend_blank_line(trivia: Trivia) -> None:
+    """Prepend a blank-line ``NewlineNode`` to ``trivia`` if missing.
+
+    Idempotent: a no-op when ``trivia`` already starts with a newline.
+    """
+    if not _starts_with_blank_line(trivia):
+        trivia.pieces.insert(0, NewlineNode("\n"))
+
+
 def _strip_comment_marker(text: str) -> str:
     """``"# foo "`` → ``"foo"``.
 
@@ -3070,20 +3079,25 @@ class AoT(list[Table]):
         # is already rendered content preceding it. When existing
         # siblings already share a uniform spacing style, copy that;
         # otherwise default to blank-separated (canonical TOML style).
+        sibling_leadings = [
+            sec.header.leading for sec in own[1:] if sec.header is not None
+        ]
+        add_blank = (
+            _gaps_uniformly_blank(sibling_leadings) if sibling_leadings else True
+        )
         preceding_has_content = any(
             s.header is not None or s.entries for s in sections[:insert_idx]
         )
-        if preceding_has_content:
-            sibling_leadings = [
-                sec.header.leading for sec in own[1:] if sec.header is not None
-            ]
-            add_blank = (
-                _gaps_uniformly_blank(sibling_leadings) if sibling_leadings else True
-            )
-            if add_blank:
-                assert new_sec.header is not None
-                new_sec.header.leading.pieces.insert(0, NewlineNode("\n"))
         assert new_sec.header is not None
+        if preceding_has_content and add_blank:
+            _prepend_blank_line(new_sec.header.leading)
+        # Symmetric: when inserting before existing content, ensure the
+        # next section's header carries a blank-line separator from the
+        # new one so two ``[[..]]`` headers don't render glued together.
+        if py_index < n and add_blank:
+            next_hdr = sections[insert_idx].header
+            if next_hdr is not None:
+                _prepend_blank_line(next_hdr.leading)
         self._doc_node.adopt_preamble_into(new_sec.header.leading)
         sections.insert(insert_idx, new_sec)
         self._resync()
