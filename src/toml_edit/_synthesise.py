@@ -157,8 +157,8 @@ def _mapping_to_inline_table_node(mapping: Mapping[str, TomlValue]) -> InlineTab
             InlineTableEntry(
                 leading=Trivia([WhitespaceNode(" ")]) if i == 0 else Trivia(),
                 key=make_simple_key(k),
-                pre_eq=Trivia([WhitespaceNode(" ")]),
-                post_eq=Trivia([WhitespaceNode(" ")]),
+                pre_eq=WhitespaceNode(" "),
+                post_eq=WhitespaceNode(" "),
                 value=value_to_node(v),
                 trailing=Trivia(),
                 has_comma=not is_last,
@@ -225,10 +225,10 @@ def make_keyvalue_node(
     return KeyValueNode(
         leading=leading,
         key=make_simple_key(key_name),
-        pre_eq=Trivia([WhitespaceNode(" ")]),
-        post_eq=Trivia([WhitespaceNode(" ")]),
+        pre_eq=WhitespaceNode(" "),
+        post_eq=WhitespaceNode(" "),
         value=value_to_node(value),
-        trailing=Trivia(),
+        trailing=None,
         trailing_comment=None,
         newline=NewlineNode("\n"),
     )

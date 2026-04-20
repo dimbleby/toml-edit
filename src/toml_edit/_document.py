@@ -168,13 +168,6 @@ def _format_comment(text: str) -> str:
     return "# " + text
 
 
-def _trivia_ends_with_space(trivia: Trivia) -> bool:
-    if not trivia.pieces:
-        return False
-    last = trivia.pieces[-1]
-    return isinstance(last, WhitespaceNode) and last.text.endswith((" ", "\t"))
-
-
 def _indent_after_last_newline(trivia: Trivia, *, require_newline: bool = False) -> str:
     """Indent (run of spaces/tabs) after the trivia's last newline, if any.
 
@@ -195,7 +188,7 @@ def _indent_after_last_newline(trivia: Trivia, *, require_newline: bool = False)
 
 
 class _HasEolComment(Protocol):
-    trailing: Trivia
+    trailing: WhitespaceNode | None
     trailing_comment: CommentNode | None
     newline: NewlineNode | None
 
@@ -208,14 +201,10 @@ def _set_eol_comment(node: _HasEolComment, value: str | None) -> None:
     """
     if value is None or value == "":
         node.trailing_comment = None
-        while node.trailing.pieces and isinstance(
-            node.trailing.pieces[-1],
-            WhitespaceNode,
-        ):
-            node.trailing.pieces.pop()
+        node.trailing = None
         return
-    if not _trivia_ends_with_space(node.trailing):
-        node.trailing.pieces.append(WhitespaceNode(" "))
+    if node.trailing is None:
+        node.trailing = WhitespaceNode(" ")
     node.trailing_comment = CommentNode(text=_format_comment(value))
     if node.newline is None:
         node.newline = NewlineNode("\n")
@@ -537,10 +526,10 @@ def _build_promoted_section(
     header = TableHeaderNode(
         leading=Trivia(list(source_kv.leading.pieces)),
         kind="table",
-        inner_pre=Trivia(),
+        inner_pre=None,
         key=Key(parts=parts, separators=seps),
-        inner_post=Trivia(),
-        trailing=Trivia(list(source_kv.trailing.pieces)),
+        inner_post=None,
+        trailing=source_kv.trailing,
         trailing_comment=source_kv.trailing_comment,
         newline=NewlineNode("\n"),
     )
@@ -550,10 +539,10 @@ def _build_promoted_section(
             KeyValueNode(
                 leading=Trivia(),
                 key=entry.key,
-                pre_eq=Trivia([WhitespaceNode(" ")]),
-                post_eq=Trivia([WhitespaceNode(" ")]),
+                pre_eq=WhitespaceNode(" "),
+                post_eq=WhitespaceNode(" "),
                 value=entry.value,
-                trailing=Trivia(),
+                trailing=None,
                 trailing_comment=None,
                 newline=NewlineNode("\n"),
             ),
@@ -756,18 +745,19 @@ class Table(MutableMapping[str, TomlValue]):
 class _InlineTable(Table):
     """Mapping view over an :class:`InlineTableNode`."""
 
-    __slots__ = ("_node", "_post_eq", "_pre_eq", "_style")
+    __slots__ = ("_node", "_post_eq_text", "_pre_eq_text", "_style")
 
     def __init__(self, node: InlineTableNode) -> None:
         self._node = node
         self._style = _sample_separator_style(node.entries, node.final_trivia)
-        # ``=``-padding is per-entry, not a separator concern.
+        # ``=``-padding is per-entry, not a separator concern. Store as raw
+        # text so each new entry gets a fresh WhitespaceNode without aliasing.
         if node.entries:
-            self._pre_eq = _clone_trivia(node.entries[0].pre_eq)
-            self._post_eq = _clone_trivia(node.entries[0].post_eq)
+            self._pre_eq_text = node.entries[0].pre_eq.text if node.entries[0].pre_eq else ""
+            self._post_eq_text = node.entries[0].post_eq.text if node.entries[0].post_eq else ""
         else:
-            self._pre_eq = Trivia([WhitespaceNode(" ")])
-            self._post_eq = Trivia([WhitespaceNode(" ")])
+            self._pre_eq_text = " "
+            self._post_eq_text = " "
 
     @override
     def _items(self) -> Iterator[tuple[str, TomlValue]]:
@@ -812,8 +802,8 @@ class _InlineTable(Table):
         new_entry = InlineTableEntry(
             leading=Trivia(),
             key=make_simple_key(key),
-            pre_eq=_clone_trivia(self._pre_eq),
-            post_eq=_clone_trivia(self._post_eq),
+            pre_eq=WhitespaceNode(self._pre_eq_text) if self._pre_eq_text else None,
+            post_eq=WhitespaceNode(self._post_eq_text) if self._post_eq_text else None,
             value=value_to_node(value),
             trailing=Trivia(),
             has_comma=False,
@@ -1789,10 +1779,10 @@ class AoT(list[Table]):
         header = TableHeaderNode(
             leading=Trivia(),
             kind="array",
-            inner_pre=Trivia(),
+            inner_pre=None,
             key=key,
-            inner_post=Trivia(),
-            trailing=Trivia(),
+            inner_post=None,
+            trailing=None,
             trailing_comment=None,
             newline=NewlineNode("\n"),
         )
