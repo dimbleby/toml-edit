@@ -31,7 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of ``# c\n\nx = 1\n``); the comment also became invisible
   to the getter once content arrived. Migration now happens at the
   insertion site for any of ``doc[k] = …``, :meth:`set_table`,
-  :meth:`set_aot`, or AoT assignment.
+  :meth:`set_aot`, :meth:`AoT.insert`, or AoT assignment.
+- :meth:`Table.promote_array` now carries the source inline-table
+  KV's leading comments / blank lines onto the first new ``[[..]]``
+  header, and any trailing EOL comment onto the last new entry. The
+  trivia was previously discarded outright, so promoting an inline
+  array silently dropped any authoring comments around it.
 - Import of `assert_never` no longer breaks on Python 3.10. The
   symbol is now sourced from `typing_extensions` on interpreters
   older than 3.11, mirroring the existing `override` import.
