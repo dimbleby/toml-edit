@@ -16,6 +16,7 @@ else:
 import pytest
 
 import tomlrt
+from tomlrt import AoT, Table
 
 
 def _reparses(src: str) -> dict[str, Any]:
@@ -477,7 +478,7 @@ def test_array_array_typed_accessor_raises_on_non_array_item() -> None:
 
 def test_aot_add_returns_new_table_view() -> None:
     doc = tomlrt.parse("")
-    aot = doc.set_aot("pkg")
+    aot = doc.install("pkg", AoT())
     pkg = aot.add({"name": "foo"})
     assert isinstance(pkg, tomlrt.Table)
     assert pkg["name"] == "foo"
@@ -486,11 +487,11 @@ def test_aot_add_returns_new_table_view() -> None:
 
 def test_aot_add_default_empty_returns_blank_entry_for_population() -> None:
     doc = tomlrt.parse("")
-    aot = doc.set_aot("pkg")
+    aot = doc.install("pkg", AoT())
     pkg = aot.add()
     assert dict(pkg) == {}
     pkg["name"] = "bar"
-    pkg.set_table("dep", {"x": 1})
+    pkg.install("dep", Table.section({"x": 1}))
     assert _reparses(tomlrt.dumps(doc)) == {
         "pkg": [{"name": "bar", "dep": {"x": 1}}],
     }
@@ -498,7 +499,7 @@ def test_aot_add_default_empty_returns_blank_entry_for_population() -> None:
 
 def test_aot_add_returned_view_stays_live_across_subsequent_adds() -> None:
     doc = tomlrt.parse("")
-    aot = doc.set_aot("pkg")
+    aot = doc.install("pkg", AoT())
     first = aot.add({"name": "a"})
     aot.add({"name": "b"})
     aot.add({"name": "c"})
@@ -515,7 +516,7 @@ def test_aot_add_returned_view_stays_live_across_subsequent_adds() -> None:
 
 def test_aot_add_blank_separates_consecutive_entries() -> None:
     doc = tomlrt.parse("")
-    aot = doc.set_aot("pkg")
+    aot = doc.install("pkg", AoT())
     aot.add({"name": "a"})
     aot.add({"name": "b"})
     out = tomlrt.dumps(doc)

@@ -14,6 +14,7 @@ import json
 import pytest
 
 import tomlrt
+from tomlrt import AoT, Table
 
 
 def _src() -> str:
@@ -91,19 +92,19 @@ def test_held_reference_does_not_resurrect() -> None:
 
 def test_set_table_returns_object_stored_in_dict() -> None:
     doc = tomlrt.parse("")
-    t = doc.set_table("a.b")
+    t = doc.install("a.b", Table.section())
     assert t is doc["a"]["b"]
 
 
 def test_set_aot_returns_object_stored_in_dict() -> None:
     doc = tomlrt.parse("")
-    aot = doc.set_aot("things")
+    aot = doc.install("things", AoT())
     assert aot is doc["things"]
 
 
 def test_empty_aot_appendable_after_set() -> None:
     doc = tomlrt.parse("")
-    aot = doc.set_aot("things")
+    aot = doc.install("things", AoT())
     aot.add({"k": 1})
     assert tomlrt.dumps(doc).strip().endswith("k = 1")
     # And still the same object.
@@ -242,7 +243,7 @@ def test_del_then_set_table_does_not_revive_held_ref() -> None:
     doc = tomlrt.parse("[a]\nx = 1\n")
     held = doc["a"]
     del doc["a"]
-    new = doc.set_table("a")
+    new = doc.install("a", Table.section())
     assert new is doc["a"]
     assert held is not new
 
@@ -270,7 +271,7 @@ def test_detached_set_table_does_not_revive_in_doc() -> None:
     held = doc["outer"]
     del doc["outer"]
     assert isinstance(held, tomlrt.Table)
-    held.set_table("nested", {"deep": "data"})
+    held.install("nested", Table.section({"deep": "data"}))
     assert tomlrt.dumps(doc) == ""
     # Held subtree still reflects its own structural changes.
     assert dict(held["nested"]) == {"deep": "data"}
@@ -290,7 +291,7 @@ def test_detached_aot_entry_set_table_does_not_revive() -> None:
     held_aot = doc.aot("entries")
     held_entry = held_aot[0]
     del doc["entries"]
-    held_entry.set_table("sub", {"a": 1})
+    held_entry.install("sub", Table.section({"a": 1}))
     held_entry["new"] = 42
     assert tomlrt.dumps(doc) == ""
     assert held_entry["new"] == 42

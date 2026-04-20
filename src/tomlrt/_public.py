@@ -3,28 +3,28 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import IO, TYPE_CHECKING
+from typing import IO
 
-from tomlrt._document import Document
+from tomlrt._document import Document, Table
 from tomlrt._nodes import DocumentNode
 from tomlrt._parser import parse as _parse_to_cst
-
-if TYPE_CHECKING:
-    from tomlrt._document import Table
 
 
 def _populate(table: Table, data: Mapping[str, object]) -> None:
     """Recursively pour ``data`` into ``table`` using section/AoT shapes
     for nested mappings and lists-of-mappings, scalars for leaves."""
+    from tomlrt._document import AoT  # noqa: PLC0415
+
     for key, value in data.items():
         if isinstance(value, Mapping):
-            _populate(table.set_table(key), value)
+            sub = table.install(key, Table.section())
+            _populate(sub, value)
         elif (
             isinstance(value, list)
             and value
             and all(isinstance(item, Mapping) for item in value)
         ):
-            aot = table.set_aot(key)
+            aot = table.install(key, AoT())
             for entry in value:
                 assert isinstance(entry, Mapping)
                 _populate(aot.add(), entry)
