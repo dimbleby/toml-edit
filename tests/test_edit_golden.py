@@ -25,7 +25,6 @@ else:
 import pytest
 
 import toml_edit
-from toml_edit import TOMLEditError
 
 
 def _reparses(src: str) -> dict[str, Any]:
@@ -89,20 +88,89 @@ def test_dotted_key_table_read() -> None:
     assert dict(a) == {"b": 1, "c": 2}
 
 
-def test_dotted_key_table_set_via_subtable_raises() -> None:
-    """Adding a key to a logical table that exists only as dotted entries.
-
-    The current mutation policy doesn't synthesize new dotted-key entries
-    (it would need to choose where to put them). Document this with a
-    raised error so we can revisit when the comments/inline-promotion
-    work lands.
-    """
+def test_dotted_key_table_set_via_subtable_adds_dotted_entry() -> None:
+    """Setting a new key on a dotted-only table appends a new dotted KV."""
     src = "a.b = 1\na.c = 2\n"
     doc = toml_edit.parse(src)
     a = doc["a"]
     assert isinstance(a, toml_edit.Table)
-    with pytest.raises(TOMLEditError):
-        a["d"] = 3
+    a["d"] = 3
+    assert dict(a) == {"b": 1, "c": 2, "d": 3}
+    assert toml_edit.dumps(doc) == "a.b = 1\na.c = 2\na.d = 3\n"
+
+
+def test_dotted_key_table_overwrite_via_subtable() -> None:
+    src = "a.b = 1\na.c = 2\n"
+    doc = toml_edit.parse(src)
+    a = doc["a"]
+    assert isinstance(a, toml_edit.Table)
+    a["b"] = 99
+    assert dict(a) == {"c": 2, "b": 99}
+
+
+def test_dotted_key_table_delete_via_subtable() -> None:
+    src = "a.b = 1\na.c = 2\na.d = 3\n"
+    doc = toml_edit.parse(src)
+    a = doc["a"]
+    assert isinstance(a, toml_edit.Table)
+    del a["c"]
+    assert dict(a) == {"b": 1, "d": 3}
+    assert "c" not in toml_edit.dumps(doc)
+
+
+def test_dotted_key_table_delete_missing_raises() -> None:
+    src = "a.b = 1\n"
+    doc = toml_edit.parse(src)
+    a = doc["a"]
+    assert isinstance(a, toml_edit.Table)
+    with pytest.raises(KeyError):
+        del a["nope"]
+
+
+def test_dotted_key_table_set_overwrites_subtree() -> None:
+    src = "a.b.x = 1\na.b.y = 2\na.c = 3\n"
+    doc = toml_edit.parse(src)
+    a = doc["a"]
+    assert isinstance(a, toml_edit.Table)
+    a["b"] = 99
+    assert dict(a) == {"c": 3, "b": 99}
+
+
+def test_dotted_key_nested_subtable_set() -> None:
+    """Setting a key on a deeply-nested dotted view works too."""
+    src = "a.b.x = 1\na.b.y = 2\n"
+    doc = toml_edit.parse(src)
+    a = doc["a"]
+    assert isinstance(a, toml_edit.Table)
+    b = a["b"]
+    assert isinstance(b, toml_edit.Table)
+    b["z"] = 3
+    assert dict(b) == {"x": 1, "y": 2, "z": 3}
+    assert toml_edit.dumps(doc) == "a.b.x = 1\na.b.y = 2\na.b.z = 3\n"
+
+
+def test_inline_dotted_subtable_set() -> None:
+    """Same thing inside an inline table."""
+    src = "t = { a.b = 1, a.c = 2 }\n"
+    doc = toml_edit.parse(src)
+    t = doc["t"]
+    assert isinstance(t, toml_edit.Table)
+    a = t["a"]
+    assert isinstance(a, toml_edit.Table)
+    a["d"] = 3
+    assert dict(a) == {"b": 1, "c": 2, "d": 3}
+    assert toml_edit.dumps(doc) == "t = { a.b = 1, a.c = 2, a.d = 3 }\n"
+
+
+def test_inline_dotted_subtable_delete() -> None:
+    src = "t = { a.b = 1, a.c = 2 }\n"
+    doc = toml_edit.parse(src)
+    t = doc["t"]
+    assert isinstance(t, toml_edit.Table)
+    a = t["a"]
+    assert isinstance(a, toml_edit.Table)
+    del a["b"]
+    assert dict(a) == {"c": 2}
 
 
 # ---------------------------------------------------------------------------
