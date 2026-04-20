@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from tomlrt._document import AoT, Array, Document, Table
-from tomlrt._errors import TOMLEditError, TOMLParseError
+from tomlrt._errors import TOMLError, TOMLParseError
 from tomlrt._public import dump, dumps, load, loads, parse
 
 __all__ = [
     "AoT",
     "Array",
     "Document",
-    "TOMLEditError",
+    "TOMLError",
     "TOMLParseError",
     "Table",
     "dump",

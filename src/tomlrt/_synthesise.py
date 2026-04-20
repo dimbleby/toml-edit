@@ -15,7 +15,7 @@ from copy import deepcopy
 from datetime import date, datetime, time
 from typing import TYPE_CHECKING
 
-from tomlrt._errors import TOMLEditError
+from tomlrt._errors import TOMLError
 from tomlrt._nodes import (
     ArrayItem,
     ArrayNode,
@@ -192,7 +192,7 @@ def value_to_node(value: object) -> ValueNode:
             "assign it at the table-key level so it can be emitted as "
             "[[ ... ]] sections."
         )
-        raise TOMLEditError(msg)
+        raise TOMLError(msg)
     if isinstance(value, Table):
         node = getattr(value, "_node", None)
         if isinstance(node, InlineTableNode):

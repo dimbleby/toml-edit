@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 
-class TOMLEditError(Exception):
+class TOMLError(Exception):
     """Base class for all tomlrt errors."""
 
 
-class TOMLParseError(TOMLEditError):
+class TOMLParseError(TOMLError):
     """Raised when a TOML document cannot be parsed.
 
     Attributes:

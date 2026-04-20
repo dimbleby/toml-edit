@@ -101,7 +101,7 @@ def test_set_eol_comment_accepts_text_with_hash_prefix() -> None:
 
 def test_set_eol_comment_rejects_newline() -> None:
     doc = tomlrt.parse("a = 1\n")
-    with pytest.raises(tomlrt.TOMLEditError):
+    with pytest.raises(tomlrt.TOMLError):
         doc.comments["a"] = "no\nway"
 
 
@@ -173,9 +173,9 @@ def test_comments_on_inline_table_raises_with_helpful_message() -> None:
     doc = tomlrt.parse(src)
     pkg = doc["pkg"]
     assert isinstance(pkg, tomlrt.Table)
-    with pytest.raises(tomlrt.TOMLEditError, match="comment API"):
+    with pytest.raises(tomlrt.TOMLError, match="comment API"):
         pkg.comments["name"] = "x"
-    with pytest.raises(tomlrt.TOMLEditError, match="comment API"):
+    with pytest.raises(tomlrt.TOMLError, match="comment API"):
         _ = pkg.leading_comments
 
 
@@ -226,7 +226,7 @@ def test_inline_promotion_inserts_after_parent_block() -> None:
 
 def test_promote_non_inline_raises() -> None:
     doc = tomlrt.parse("a = 1\n")
-    with pytest.raises(tomlrt.TOMLEditError, match="not an inline table"):
+    with pytest.raises(tomlrt.TOMLError, match="not an inline table"):
         doc.promote_inline("a")
 
 
@@ -354,11 +354,11 @@ def test_header_comment_on_aot_entry() -> None:
 
 def test_header_comment_on_document_raises() -> None:
     doc = tomlrt.parse("a = 1\n")
-    with pytest.raises(tomlrt.TOMLEditError):
+    with pytest.raises(tomlrt.TOMLError):
         _ = doc.header_comment
-    with pytest.raises(tomlrt.TOMLEditError):
+    with pytest.raises(tomlrt.TOMLError):
         doc.header_comment = "x"
-    with pytest.raises(tomlrt.TOMLEditError):
+    with pytest.raises(tomlrt.TOMLError):
         _ = doc.header_leading_comments
 
 
@@ -366,9 +366,9 @@ def test_header_comment_on_inline_table_raises() -> None:
     doc = tomlrt.parse("a = { x = 1, y = 2 }\n")
     a = doc["a"]
     assert isinstance(a, tomlrt.Table)
-    with pytest.raises(tomlrt.TOMLEditError):
+    with pytest.raises(tomlrt.TOMLError):
         _ = a.header_comment
-    with pytest.raises(tomlrt.TOMLEditError):
+    with pytest.raises(tomlrt.TOMLError):
         _ = a.header_leading_comments
 
 
@@ -377,9 +377,9 @@ def test_header_comment_on_implicit_parent_raises() -> None:
     doc = tomlrt.parse("[parent.child]\nx = 1\n")
     parent = doc["parent"]
     assert isinstance(parent, tomlrt.Table)
-    with pytest.raises(tomlrt.TOMLEditError):
+    with pytest.raises(tomlrt.TOMLError):
         _ = parent.header_comment
-    with pytest.raises(tomlrt.TOMLEditError):
+    with pytest.raises(tomlrt.TOMLError):
         _ = parent.header_leading_comments
 
 
