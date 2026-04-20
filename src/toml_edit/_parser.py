@@ -651,7 +651,7 @@ class _Parser:
                 self._pos += 1
                 return StringNode(raw="", value="".join(out), style="basic")
             if ch == "\\":
-                out.append(self._parse_escape(multiline=False))
+                out.append(self._parse_escape())
                 continue
             if ch == "\n" or ch == "\r":
                 msg = "newline in basic string"
@@ -721,7 +721,7 @@ class _Parser:
                     # Not actually a line-ending backslash; rewind and
                     # treat as a normal escape.
                     self._pos = save
-                out.append(self._parse_escape(multiline=True))
+                out.append(self._parse_escape())
                 continue
             if ch == "\r":
                 if self._peek(1) != "\n":
@@ -825,8 +825,7 @@ class _Parser:
             msg = f"invalid control character U+{cp:04X} in string"
             raise self._error(msg)
 
-    def _parse_escape(self, *, multiline: bool) -> str:
-        del multiline  # behaviour identical for non-line-ending escapes
+    def _parse_escape(self) -> str:
         assert self._peek() == "\\"
         self._advance(1)
         ch = self._peek()
@@ -1034,9 +1033,6 @@ class _Parser:
             if not int_part or not frac_part:
                 msg = f"invalid float {token!r}"
                 raise self._error(msg, at=at)
-            if not int_part.lstrip("0").isdigit() and int_part != "0" and not int_part.isdigit():
-                msg = f"invalid float {token!r}"
-                raise self._error(msg, at=at)
             if not int_part.isdigit() or not frac_part.isdigit():
                 msg = f"invalid float {token!r}"
                 raise self._error(msg, at=at)
@@ -1071,14 +1067,13 @@ class _Parser:
             and self._pos + 3 < len(self._src)
             and self._src[self._pos + 3] == ":"
         ):
-            extra_start = self._pos
             self._pos += 1  # consume the space
             extra_end = self._scan_value_end(self._pos)
             extra = self._src[self._pos : extra_end]
             self._pos = extra_end
             full = token + " " + extra
-            return self._parse_datetime_text(full, at=at, raw=full, src_space_offset=extra_start)
-        return self._parse_datetime_text(token, at=at, raw=token, src_space_offset=None)
+            return self._parse_datetime_text(full, at=at, raw=full)
+        return self._parse_datetime_text(token, at=at, raw=token)
 
     def _parse_datetime_text(
         self,
@@ -1086,9 +1081,7 @@ class _Parser:
         *,
         at: int,
         raw: str,
-        src_space_offset: int | None,
     ) -> DateTimeNode:
-        del src_space_offset  # only needed for diagnostics
         # Local time?
         if len(text) >= 3 and text[2] == ":":
             try:
