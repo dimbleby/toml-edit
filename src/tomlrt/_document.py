@@ -776,17 +776,6 @@ class SectionSpec(dict[str, Any]):
     __slots__ = ()
 
 
-class InlineSpec(dict[str, Any]):
-    """Tag telling ``__setitem__`` to install an inline ``k = { ... }`` table.
-
-    Produced by :meth:`Table.inline`. Plain ``dict`` assignment already
-    renders inline, so this exists mainly to make the intent explicit
-    at the call site and to stay symmetric with :class:`SectionSpec`.
-    """
-
-    __slots__ = ()
-
-
 class Table(dict[str, Any]):
     """A logical TOML table.
 
@@ -851,23 +840,6 @@ class Table(dict[str, Any]):
         remain inline unless they are themselves :meth:`section` specs.
         """
         spec = SectionSpec()
-        if mapping is not None:
-            spec.update(mapping)
-        return spec
-
-    @classmethod
-    def inline(
-        cls,
-        mapping: Mapping[str, object] | None = None,
-    ) -> InlineSpec:
-        """Return a spec that installs as an inline ``k = { ... }`` table.
-
-        Use when you want to force the inline flavour explicitly; a
-        plain ``dict`` value already renders inline, so this is mostly
-        useful for readability or when a path otherwise prefers the
-        section flavour.
-        """
-        spec = InlineSpec()
         if mapping is not None:
             spec.update(mapping)
         return spec
@@ -965,8 +937,8 @@ class Table(dict[str, Any]):
 
         ``value`` should be one of:
 
-        * a spec from :meth:`Table.section` or :meth:`Table.inline`
-          — installs a ``[...]`` standard section / inline table;
+        * a spec from :meth:`Table.section` — installs a
+          ``[...]`` standard section;
         * an :class:`AoT` built standalone (``AoT([{...}])``) — installs
           ``[[...]]`` array-of-tables entries;
         * an :class:`Array` built standalone (``Array([...],
@@ -997,20 +969,27 @@ class Table(dict[str, Any]):
 
         Subclasses that support structural assignment (``_StdTable``,
         ``Document``) override this. The base implementation rejects
-        the assignment because inline/dotted-sub tables cannot hold
-        ``[k]`` sections or ``[[k]]`` array-of-tables.
+        ``SectionSpec`` / ``AoT`` because inline/dotted-sub tables
+        cannot hold ``[k]`` sections or ``[[k]]`` array-of-tables.
+        Standalone :class:`Array` is accepted at a single-segment
+        path and installed as a plain list value (the ``multiline``
+        layout request is dropped; inline tables do not admit
+        multi-line array values).
         """
-        del parts
+        if (
+            isinstance(value, Array)
+            and not value._attached  # noqa: SLF001
+            and len(parts) == 1
+        ):
+            self[parts[0]] = list(value)
+            return
         if isinstance(value, SectionSpec):
-            msg = (
-                "cannot assign a Table.section() spec here: the containing "
-                "table is not section-backed"
-            )
+            what = "a Table.section() spec"
+        elif isinstance(value, AoT):
+            what = "an array-of-tables"
         else:
-            msg = (
-                "cannot assign an array-of-tables here: the containing "
-                "table is not section-backed"
-            )
+            what = "a multi-segment path"
+        msg = f"cannot assign {what} here: the containing table is not section-backed"
         raise TOMLError(msg)
 
     @override
@@ -1333,7 +1312,10 @@ class Table(dict[str, Any]):
         parts: tuple[str, ...],  # noqa: ARG002
         value: Mapping[str, object] = MappingProxyType({}),  # noqa: ARG002
     ) -> Table:
-        msg = "this table flavour does not support standard-table assignment"
+        msg = (
+            "cannot install a standard table here: this table flavour "
+            "is not section-backed"
+        )
         raise TOMLError(msg)
 
     def ensure_table(self, key: str | tuple[str, ...]) -> Table:
@@ -2225,11 +2207,17 @@ class _StdTable(Table):
             return
         super()._install_flavoured(parts, value)  # pragma: no cover
 
-    def _install_aot(
+    def _prepare_section_slot(
         self,
         parts: tuple[str, ...],
-        entries: Iterable[Mapping[str, object]],
-    ) -> AoT:
+    ) -> tuple[tuple[str, ...], int]:
+        """Purge any conflicting value at ``parts`` and pick an insert index.
+
+        Returns ``(full_path, insert_at)`` where ``full_path`` is the
+        absolute CST path (``self._path + parts``) and ``insert_at`` is
+        the position in ``self._doc_node.sections`` where a new block
+        for ``full_path`` should be spliced in.
+        """
         full_path = (*self._path, *parts)
         if len(parts) == 1:
             kind, _ = self._classify(parts[0])
@@ -2237,18 +2225,20 @@ class _StdTable(Table):
                 self._purge_conflicting(parts[0])
         else:
             self._doc_node.purge_path(full_path)
+        return full_path, _section_insert_index(self._doc_node.sections, full_path)
+
+    def _install_aot(
+        self,
+        parts: tuple[str, ...],
+        entries: Iterable[Mapping[str, object]],
+    ) -> AoT:
+        full_path, insert_at = self._prepare_section_slot(parts)
         aot = AoT._attached_to(self._doc_node, full_path, [])  # noqa: SLF001
         new_secs: list[SectionNode] = []
         for entry in entries:
             sec = aot._make_header_section()  # noqa: SLF001
             aot._populate_section(sec, entry)  # noqa: SLF001
             new_secs.append(sec)
-        sections = self._doc_node.sections
-        insert_at = (
-            len(sections)
-            if len(parts) == 1
-            else _section_insert_index(sections, full_path)
-        )
         _insert_section_block(self._doc_node, insert_at, new_secs)
         aot._resync()  # noqa: SLF001
         # Make sure the AoT is reachable through dict storage even when it is
@@ -2263,16 +2253,8 @@ class _StdTable(Table):
         parts: tuple[str, ...],
         value: Mapping[str, object] = MappingProxyType({}),
     ) -> Table:
-        full_path = (*self._path, *parts)
-        if len(parts) == 1:
-            kind, _ = self._classify(parts[0])
-            if kind != "absent":
-                self._purge_conflicting(parts[0])
-        else:
-            self._doc_node.purge_path(full_path)
+        full_path, insert_at = self._prepare_section_slot(parts)
         new_sec = _new_section(full_path)
-        sections = self._doc_node.sections
-        insert_at = _section_insert_index(sections, full_path)
         _insert_section_block(self._doc_node, insert_at, [new_sec])
         view = _StdTable(self._doc_node, full_path)
         self._install_at_path(parts, view)

@@ -16,7 +16,7 @@ else:
 import pytest
 
 import tomlrt
-from tomlrt import AoT, Table
+from tomlrt import AoT, Array, Table
 
 
 def _reparses(src: str) -> dict[str, Any]:
@@ -143,6 +143,28 @@ def test_inline_table_delete_last_clears_trailing_comma() -> None:
     del obj["b"]
     out = tomlrt.dumps(doc)
     assert _reparses(out) == {"obj": {"a": 1}}
+
+
+def test_inline_table_accepts_standalone_array_as_plain_list() -> None:
+    # Standalone Array assigned into an inline table is installed as a
+    # plain list value; the multiline layout request is dropped, since
+    # inline tables cannot contain multi-line arrays.
+    src = "obj = { a = 1 }\n"
+    doc = tomlrt.parse(src)
+    obj = doc["obj"]
+    assert isinstance(obj, tomlrt.Table)
+    obj["xs"] = Array([1, 2, 3], multiline=True)
+    out = tomlrt.dumps(doc)
+    assert _reparses(out) == {"obj": {"a": 1, "xs": [1, 2, 3]}}
+    assert "\n" not in out.rstrip("\n")
+
+
+def test_inline_table_rejects_section_spec() -> None:
+    doc = tomlrt.parse("obj = { a = 1 }\n")
+    obj = doc["obj"]
+    assert isinstance(obj, tomlrt.Table)
+    with pytest.raises(tomlrt.TOMLError, match="not section-backed"):
+        obj["bad"] = Table.section({"x": 1})
 
 
 # ---------------------------------------------------------------------------

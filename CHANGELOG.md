@@ -15,14 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   ```python
   doc[k] = Table.section({...})          # [k] standard section
-  doc[k] = Table.inline({...})           # k = { ... } inline table
+  doc[k] = {...}                         # k = { ... } inline table
   doc[k] = AoT([{...}, {...}])           # [[k]] array of tables
   doc[k] = Array([...], multiline=True)  # multi-line array value
   ```
 
-  ``Table.section`` / ``Table.inline`` are classmethod factories
-  returning the public tag types :class:`SectionSpec` and
-  :class:`InlineSpec`. :class:`AoT` and :class:`Array` can now be
+  ``Table.section`` is a classmethod factory returning the public tag
+  type :class:`SectionSpec`. :class:`AoT` and :class:`Array` can now be
   constructed standalone and then assigned.
 
 - **New ``Table.install(path, value)``** accepts either a dotted
