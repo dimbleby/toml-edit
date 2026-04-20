@@ -2,10 +2,60 @@
 
 from __future__ import annotations
 
-from typing import IO
+from collections.abc import Mapping
+from typing import IO, TYPE_CHECKING
 
 from tomlrt._document import Document
+from tomlrt._nodes import DocumentNode
 from tomlrt._parser import parse as _parse_to_cst
+
+if TYPE_CHECKING:
+    from tomlrt._document import Table
+
+
+def _populate(table: Table, data: Mapping[str, object]) -> None:
+    """Recursively pour ``data`` into ``table`` using section/AoT shapes
+    for nested mappings and lists-of-mappings, scalars for leaves."""
+    for key, value in data.items():
+        if isinstance(value, Mapping):
+            _populate(table.set_table(key), value)
+        elif (
+            isinstance(value, list)
+            and value
+            and all(isinstance(item, Mapping) for item in value)
+        ):
+            aot = table.set_aot(key)
+            for entry in value:
+                assert isinstance(entry, Mapping)
+                aot.append({})
+                _populate(aot[-1], entry)
+        else:
+            table[key] = value
+
+
+def document(data: Mapping[str, object] | None = None) -> Document:
+    """Return a fresh :class:`Document`, optionally populated from ``data``.
+
+    Without arguments, returns an empty document — equivalent to
+    ``parse("")`` but more discoverable when the intent is "build a
+    TOML file from scratch".
+
+    With a mapping, recursively populates the document so that:
+
+    * nested mappings become standard ``[section]`` blocks (not
+      inline tables);
+    * lists of mappings become ``[[array.of.tables]]`` blocks;
+    * everything else is set with ordinary key-value assignment
+      (so leaf lists become inline arrays, leaf dicts can't appear).
+
+    Existing :class:`Table` / :class:`AoT` / :class:`Array` views are
+    deep-cloned, so the returned document shares no mutable state
+    with ``data``.
+    """
+    doc = Document(DocumentNode())
+    if data is not None:
+        _populate(doc, data)
+    return doc
 
 
 def parse(text: str) -> Document:
@@ -60,4 +110,4 @@ def dump(doc: Document, fp: IO[bytes]) -> None:
     fp.write(dumps(doc).encode("utf-8"))
 
 
-__all__ = ["dump", "dumps", "load", "loads", "parse"]
+__all__ = ["document", "dump", "dumps", "load", "loads", "parse"]
