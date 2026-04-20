@@ -750,13 +750,20 @@ class Table(dict[str, Any]):
 
     .. rubric:: Storage model
 
-    Each :class:`Table` keeps its own dict storage of children
-    (populated from the CST at parse time, then synced on every
-    mutation). The CST remains the single source of truth for
-    *layout* (whitespace, comments, key order, table-shape choices);
-    the dict storage is the source of truth for *data* and provides
-    object identity. ``doc["foo"] is doc["foo"]`` and the same goes
-    for nested children.
+    A :class:`Table` is a *view* over the CST: every mutation writes
+    to the CST first and the dict storage is then refreshed from
+    there. The CST is the single source of truth — :meth:`render` and
+    every iteration ultimately read from it; the dict storage is a
+    cache that mirrors the CST data and exists for two reasons:
+
+    * fast ``dict``-style lookup, ``len``, ``in``, iteration, and
+      ``**`` unpacking; and
+    * stable object identity for nested containers, so that
+      ``doc["foo"] is doc["foo"]``.
+
+    Once a :class:`Table` is *detached* (see below) the CST link is
+    severed and the dict storage takes over as the only source of
+    truth for that orphan subtree.
 
     .. rubric:: Held references
 
