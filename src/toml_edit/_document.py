@@ -344,22 +344,19 @@ def _clone_trivia(t: Trivia) -> Trivia:
     return Trivia([deepcopy(p) for p in t.pieces])
 
 
-class _ArrayStyle:
-    """Snapshot of an inline array's spacing/comma style.
+class _SeparatorStyle:
+    """Snapshot of comma-separated container spacing (arrays & inline tables).
 
-    Used by :meth:`Array._rebuild_separators` to keep formatting
-    consistent across structural mutations.
-
-    Layout invariants applied to a non-empty array:
+    Layout invariants applied to a non-empty container:
 
     * ``items[0].leading`` carries ``open_pad``; other items' ``leading``
-      is empty.
+      is empty whitespace.
     * Each non-last item has ``has_comma=True``; ``post_comma_trivia``
       holds the inter-item separator (or a user-supplied comment).
     * The last item's comma + trailing trivia render the close-pad
       (with or without trailing comma per ``trailing_comma``).
-    * ``ArrayNode.final_trivia`` is empty (close-pad lives on the last
-      item to keep parser/synthesiser representations aligned).
+    * The container's ``final_trivia`` is empty (close-pad lives on the
+      last item to keep parser/synthesiser representations aligned).
     """
 
     __slots__ = ("close_pad", "inter_separator", "open_pad", "trailing_comma")
@@ -378,16 +375,44 @@ class _ArrayStyle:
         self.close_pad = close_pad
 
 
-def _sample_array_style(node: ArrayNode) -> _ArrayStyle:
-    items = node.items
+class _Separated(Protocol):
+    """Structural protocol satisfied by ArrayItem and InlineTableEntry."""
+
+    leading: Trivia
+    trailing: Trivia
+    has_comma: bool
+    post_comma_trivia: Trivia
+
+
+def _derive_close_pad(inter: Trivia) -> Trivia:
+    """Best-guess close-pad when the source had a comment in the close slot.
+
+    Multi-line containers (separator contains a newline) close with a
+    bare newline; single-line containers close flush.
+    """
+    if "\n" in inter.render():
+        return Trivia([NewlineNode("\n")])
+    return Trivia()
+
+
+def _sample_separator_style(
+    items: Sequence[_Separated],
+    final_trivia: Trivia,
+) -> _SeparatorStyle:
+    """Snapshot the spacing style of a comma-separated container.
+
+    Works for both inline arrays and inline tables because the parser
+    and the synthesiser both put inter-item whitespace in
+    ``prev.post_comma_trivia`` (never ``next.leading``).
+    """
     if not items:
-        # Mirror a single internal-padding space (``[ ]``) on both sides
-        # so first insertion preserves it as ``[ x ]``.
-        pad_text = node.final_trivia.render()
+        # Mirror a single-space internal pad (``[ ]`` / ``{ }``) into
+        # both edges so first insertion preserves it as ``[ x ]``.
+        pad_text = final_trivia.render()
         single_pad = (
-            Trivia([WhitespaceNode(" ")]) if pad_text == " " else _clone_trivia(node.final_trivia)
+            Trivia([WhitespaceNode(" ")]) if pad_text == " " else _clone_trivia(final_trivia)
         )
-        return _ArrayStyle(
+        return _SeparatorStyle(
             open_pad=_clone_trivia(single_pad),
             inter_separator=Trivia([WhitespaceNode(" ")]),
             trailing_comma=False,
@@ -407,16 +432,16 @@ def _sample_array_style(node: ArrayNode) -> _ArrayStyle:
         close_pad = _clone_trivia(last.post_comma_trivia)
     else:
         trailing_comma = False
-        # Close-pad combines items[-1].trailing + final_trivia (parser
-        # and synthesiser disagree on which slot holds it). If those
-        # slots carry a comment, that comment belongs to the item, not
-        # to the close-pad — derive a sensible pad from the separator.
+        # Close-pad combines last.trailing + final_trivia (parser and
+        # synthesiser disagree on which slot holds it). If a comment is
+        # in either slot it belongs to the item, not the pad — derive a
+        # sensible pad from the inter-separator instead.
         combined = Trivia(
             [deepcopy(p) for p in last.trailing.pieces]
-            + [deepcopy(p) for p in node.final_trivia.pieces],
+            + [deepcopy(p) for p in final_trivia.pieces],
         )
         close_pad = combined if _is_pure_whitespace(combined) else _derive_close_pad(sep)
-    return _ArrayStyle(
+    return _SeparatorStyle(
         open_pad=open_pad,
         inter_separator=sep,
         trailing_comma=trailing_comma,
@@ -424,103 +449,60 @@ def _sample_array_style(node: ArrayNode) -> _ArrayStyle:
     )
 
 
-def _derive_close_pad(inter: Trivia) -> Trivia:
-    """Best-guess close-pad when the source had a comment in the close slot.
+def _apply_separator_style(
+    items: Sequence[_Separated],
+    style: _SeparatorStyle,
+    set_final_trivia: Callable[[Trivia], None],
+) -> None:
+    """Re-apply a sampled :class:`_SeparatorStyle` to the items.
 
-    Multi-line arrays (separator contains a newline) close with a bare
-    newline; single-line arrays close flush against the bracket.
+    Items whose separator slot contains a non-whitespace token (e.g. an
+    inline ``# comment``) are left alone so authoring intent is preserved.
     """
-    if "\n" in inter.render():
-        return Trivia([NewlineNode("\n")])
-    return Trivia()
-
-
-class _InlineTableStyle:
-    """Snapshot of an inline table's spacing/comma style."""
-
-    __slots__ = (
-        "close_pad",
-        "inter_separator",
-        "open_pad",
-        "post_eq",
-        "pre_eq",
-        "trailing_comma",
-    )
-
-    def __init__(
-        self,
-        *,
-        open_pad: Trivia,
-        inter_separator: Trivia,
-        trailing_comma: bool,
-        close_pad: Trivia,
-        pre_eq: Trivia,
-        post_eq: Trivia,
-    ) -> None:
-        self.open_pad = open_pad
-        self.inter_separator = inter_separator
-        self.trailing_comma = trailing_comma
-        self.close_pad = close_pad
-        self.pre_eq = pre_eq
-        self.post_eq = post_eq
-
-
-def _sample_inline_table_style(node: InlineTableNode) -> _InlineTableStyle:
-    entries = node.entries
-    if not entries:
-        # Empty inline table: a single internal-padding space (``{ }``)
-        # becomes both open and close pad on first insertion. ``{}`` stays
-        # flush.
-        pad_text = node.final_trivia.render()
-        single_pad = (
-            Trivia([WhitespaceNode(" ")]) if pad_text == " " else _clone_trivia(node.final_trivia)
-        )
-        return _InlineTableStyle(
-            open_pad=_clone_trivia(single_pad),
-            inter_separator=Trivia([WhitespaceNode(" ")]),
-            trailing_comma=False,
-            close_pad=_clone_trivia(single_pad),
-            pre_eq=Trivia([WhitespaceNode(" ")]),
-            post_eq=Trivia([WhitespaceNode(" ")]),
-        )
-    open_pad = _clone_trivia(entries[0].leading)
-    pre_eq = _clone_trivia(entries[0].pre_eq)
-    post_eq = _clone_trivia(entries[0].post_eq)
-    # Inter-separator: the synthesised CST puts the separator space in
-    # ``next.leading`` while the parser puts it in ``prev.post_comma``;
-    # combine both slots when sampling so either source canonicalises.
-    sep: Trivia | None = None
-    for i in range(len(entries) - 1):
-        prev, nxt = entries[i], entries[i + 1]
-        if prev.has_comma:
-            combined = Trivia(
-                [deepcopy(p) for p in prev.post_comma_trivia.pieces]
-                + [deepcopy(p) for p in nxt.leading.pieces],
-            )
-            if _is_pure_whitespace(combined):
-                sep = combined
-                break
-    if sep is None:
-        sep = Trivia([WhitespaceNode(" ")])
-    last = entries[-1]
-    if last.has_comma:
-        trailing_comma = True
-        close_pad = _clone_trivia(last.post_comma_trivia)
-    else:
-        trailing_comma = False
-        combined = Trivia(
-            [deepcopy(p) for p in last.trailing.pieces]
-            + [deepcopy(p) for p in node.final_trivia.pieces],
-        )
-        close_pad = combined if _is_pure_whitespace(combined) else _derive_close_pad(sep)
-    return _InlineTableStyle(
-        open_pad=open_pad,
-        inter_separator=sep,
-        trailing_comma=trailing_comma,
-        close_pad=close_pad,
-        pre_eq=pre_eq,
-        post_eq=post_eq,
-    )
+    n = len(items)
+    if n == 0:
+        set_final_trivia(_clone_trivia(style.close_pad))
+        return
+    items[0].leading = _clone_trivia(style.open_pad)
+    for it in items[1:]:
+        if _is_pure_whitespace(it.leading):
+            it.leading = Trivia()
+    set_final_trivia(Trivia())
+    for i, item in enumerate(items):
+        if i < n - 1:
+            if not item.has_comma:
+                eol = _extract_eol_comment(item.trailing)
+                item.trailing = Trivia()
+                item.has_comma = True
+                item.post_comma_trivia = _clone_trivia(style.inter_separator)
+                if eol is not None:
+                    _replace_eol_comment(
+                        item.post_comma_trivia,
+                        eol,
+                        force_newline=True,
+                    )
+            elif _is_pure_whitespace(item.post_comma_trivia) and not _trivia_render_eq(
+                item.post_comma_trivia,
+                style.inter_separator,
+            ):
+                item.post_comma_trivia = _clone_trivia(style.inter_separator)
+            if _is_pure_whitespace(item.trailing) and item.trailing.pieces:
+                item.trailing = Trivia()
+        elif style.trailing_comma:
+            item.has_comma = True
+            if _is_pure_whitespace(item.post_comma_trivia):
+                item.post_comma_trivia = _clone_trivia(style.close_pad)
+            if _is_pure_whitespace(item.trailing):
+                item.trailing = Trivia()
+        else:
+            if item.has_comma and _is_pure_whitespace(item.post_comma_trivia):
+                item.has_comma = False
+                item.post_comma_trivia = Trivia()
+            if _is_pure_whitespace(item.trailing) and not _trivia_render_eq(
+                item.trailing,
+                style.close_pad,
+            ):
+                item.trailing = _clone_trivia(style.close_pad)
 
 
 def _array_indent(arr: ArrayNode) -> str:
@@ -774,11 +756,18 @@ class Table(MutableMapping[str, TomlValue]):
 class _InlineTable(Table):
     """Mapping view over an :class:`InlineTableNode`."""
 
-    __slots__ = ("_node", "_style")
+    __slots__ = ("_node", "_post_eq", "_pre_eq", "_style")
 
     def __init__(self, node: InlineTableNode) -> None:
         self._node = node
-        self._style = _sample_inline_table_style(node)
+        self._style = _sample_separator_style(node.entries, node.final_trivia)
+        # ``=``-padding is per-entry, not a separator concern.
+        if node.entries:
+            self._pre_eq = _clone_trivia(node.entries[0].pre_eq)
+            self._post_eq = _clone_trivia(node.entries[0].post_eq)
+        else:
+            self._pre_eq = Trivia([WhitespaceNode(" ")])
+            self._post_eq = Trivia([WhitespaceNode(" ")])
 
     @override
     def _items(self) -> Iterator[tuple[str, TomlValue]]:
@@ -803,6 +792,9 @@ class _InlineTable(Table):
                 return entry
         return None
 
+    def _set_final_trivia(self, t: Trivia) -> None:
+        self._node.final_trivia = t
+
     @override
     def _set_value(self, key: str, value: object) -> None:
         # Reject conflict with dotted entries.
@@ -820,15 +812,15 @@ class _InlineTable(Table):
         new_entry = InlineTableEntry(
             leading=Trivia(),
             key=_make_simple_key_for_inline(key),
-            pre_eq=_clone_trivia(self._style.pre_eq),
-            post_eq=_clone_trivia(self._style.post_eq),
+            pre_eq=_clone_trivia(self._pre_eq),
+            post_eq=_clone_trivia(self._post_eq),
             value=value_to_node(value),
             trailing=Trivia(),
             has_comma=False,
             post_comma_trivia=Trivia(),
         )
         self._node.entries.append(new_entry)
-        self._rebuild_separators()
+        _apply_separator_style(self._node.entries, self._style, self._set_final_trivia)
 
     @override
     def _delete_value(self, key: str) -> None:
@@ -841,57 +833,7 @@ class _InlineTable(Table):
             raise KeyError(key)
         idx = self._node.entries.index(existing)
         self._node.entries.pop(idx)
-        self._rebuild_separators()
-
-    def _rebuild_separators(self) -> None:
-        """Re-apply the snapshotted style to the inline-table entries."""
-        entries = self._node.entries
-        n = len(entries)
-        style = self._style
-        if not entries:
-            self._node.final_trivia = _clone_trivia(style.close_pad)
-            return
-        entries[0].leading = _clone_trivia(style.open_pad)
-        for e in entries[1:]:
-            if _is_pure_whitespace(e.leading):
-                e.leading = Trivia()
-        self._node.final_trivia = Trivia()
-        for i, entry in enumerate(entries):
-            if i < n - 1:
-                if not entry.has_comma:
-                    eol = _extract_eol_comment(entry.trailing)
-                    entry.trailing = Trivia()
-                    entry.has_comma = True
-                    entry.post_comma_trivia = _clone_trivia(style.inter_separator)
-                    if eol is not None:
-                        _replace_eol_comment(
-                            entry.post_comma_trivia,
-                            eol,
-                            force_newline=True,
-                        )
-                elif _is_pure_whitespace(entry.post_comma_trivia) and not _trivia_render_eq(
-                    entry.post_comma_trivia,
-                    style.inter_separator,
-                ):
-                    entry.post_comma_trivia = _clone_trivia(style.inter_separator)
-                if _is_pure_whitespace(entry.trailing) and entry.trailing.pieces:
-                    entry.trailing = Trivia()
-            else:
-                if style.trailing_comma:
-                    entry.has_comma = True
-                    if _is_pure_whitespace(entry.post_comma_trivia):
-                        entry.post_comma_trivia = _clone_trivia(style.close_pad)
-                    if _is_pure_whitespace(entry.trailing):
-                        entry.trailing = Trivia()
-                else:
-                    if entry.has_comma and _is_pure_whitespace(entry.post_comma_trivia):
-                        entry.has_comma = False
-                        entry.post_comma_trivia = Trivia()
-                    if _is_pure_whitespace(entry.trailing) and not _trivia_render_eq(
-                        entry.trailing,
-                        style.close_pad,
-                    ):
-                        entry.trailing = _clone_trivia(style.close_pad)
+        _apply_separator_style(self._node.entries, self._style, self._set_final_trivia)
 
 
 def _make_simple_key_for_inline(name: str) -> Key:
@@ -1630,7 +1572,7 @@ class Array(list[TomlValue]):
 
     def __init__(self, node: ArrayNode) -> None:
         self._node = node
-        self._style = _sample_array_style(node)
+        self._style = _sample_separator_style(node.items, node.final_trivia)
         super().__init__(_materialise_array(node))
 
     # ------------------------------------------------------------------
@@ -1641,6 +1583,12 @@ class Array(list[TomlValue]):
         """Rebuild the public list from the CST after a structural change."""
         list.clear(self)
         list.extend(self, _materialise_array(self._node))
+
+    def _set_final_trivia(self, t: Trivia) -> None:
+        self._node.final_trivia = t
+
+    def _rebuild_separators(self) -> None:
+        _apply_separator_style(self._node.items, self._style, self._set_final_trivia)
 
     @staticmethod
     def _make_item(value: TomlValue, *, with_comma: bool) -> ArrayItem:
@@ -1653,65 +1601,6 @@ class Array(list[TomlValue]):
             has_comma=with_comma,
             post_comma_trivia=Trivia(),
         )
-
-    def _rebuild_separators(self) -> None:
-        """Normalise commas/spacing across the underlying ArrayItems.
-
-        Samples the array's source style (open/close padding, inter-item
-        separator, trailing-comma flag) and re-applies it. Items that
-        carry a non-whitespace separator (e.g. an inline ``# comment``)
-        are left alone so authoring intent is preserved.
-        """
-        items = self._node.items
-        n = len(items)
-        style = self._style
-        if not items:
-            self._node.final_trivia = _clone_trivia(style.close_pad)
-            return
-        # Outer-edge pad: only items[0] keeps a leading; others are cleared
-        # if they're whitespace-only (don't drop a leading comment block).
-        items[0].leading = _clone_trivia(style.open_pad)
-        for it in items[1:]:
-            if _is_pure_whitespace(it.leading):
-                it.leading = Trivia()
-        # Final-trivia is always cleared; close-pad lives on items[-1].
-        self._node.final_trivia = Trivia()
-        for i, item in enumerate(items):
-            if i < n - 1:
-                if not item.has_comma:
-                    eol = _extract_eol_comment(item.trailing)
-                    item.trailing = Trivia()
-                    item.has_comma = True
-                    item.post_comma_trivia = _clone_trivia(style.inter_separator)
-                    if eol is not None:
-                        _replace_eol_comment(
-                            item.post_comma_trivia,
-                            eol,
-                            force_newline=True,
-                        )
-                elif _is_pure_whitespace(item.post_comma_trivia) and not _trivia_render_eq(
-                    item.post_comma_trivia,
-                    style.inter_separator,
-                ):
-                    item.post_comma_trivia = _clone_trivia(style.inter_separator)
-                if _is_pure_whitespace(item.trailing) and item.trailing.pieces:
-                    item.trailing = Trivia()
-            else:
-                if style.trailing_comma:
-                    item.has_comma = True
-                    if _is_pure_whitespace(item.post_comma_trivia):
-                        item.post_comma_trivia = _clone_trivia(style.close_pad)
-                    if _is_pure_whitespace(item.trailing):
-                        item.trailing = Trivia()
-                else:
-                    if item.has_comma and _is_pure_whitespace(item.post_comma_trivia):
-                        item.has_comma = False
-                        item.post_comma_trivia = Trivia()
-                    if _is_pure_whitespace(item.trailing) and not _trivia_render_eq(
-                        item.trailing,
-                        style.close_pad,
-                    ):
-                        item.trailing = _clone_trivia(style.close_pad)
 
     @property
     def comments(self) -> MutableMapping[int, str]:
