@@ -460,24 +460,26 @@ def _sample_separator_style(
 
 
 def _apply_separator_style(
-    items: Sequence[_Separated],
+    container: ArrayNode | InlineTableNode,
     style: _SeparatorStyle,
-    set_final_trivia: Callable[[Trivia], None],
 ) -> None:
     """Re-apply a sampled :class:`_SeparatorStyle` to the items.
 
     Items whose separator slot contains a non-whitespace token (e.g. an
     inline ``# comment``) are left alone so authoring intent is preserved.
     """
+    items: Sequence[_Separated] = (
+        container.items if isinstance(container, ArrayNode) else container.entries
+    )
     n = len(items)
     if n == 0:
-        set_final_trivia(_clone_trivia(style.close_pad))
+        container.final_trivia = _clone_trivia(style.close_pad)
         return
     items[0].leading = _clone_trivia(style.open_pad)
     for it in items[1:]:
         if _is_pure_whitespace(it.leading):
             it.leading = Trivia()
-    set_final_trivia(Trivia())
+    container.final_trivia = Trivia()
     for i, item in enumerate(items):
         if i < n - 1:
             if not item.has_comma:
@@ -836,9 +838,6 @@ class _InlineTable(Table):
                 return entry
         return None
 
-    def _set_final_trivia(self, t: Trivia) -> None:
-        self._node.final_trivia = t
-
     def _make_entry(self, path: tuple[str, ...], value: object) -> InlineTableEntry:
         return InlineTableEntry(
             leading=Trivia(),
@@ -865,14 +864,14 @@ class _InlineTable(Table):
             e for e in self._node.entries if not _path_has_prefix(e.key.path, path)
         ]
         self._node.entries.append(self._make_entry(path, value))
-        _apply_separator_style(self._node.entries, self._style, self._set_final_trivia)
+        _apply_separator_style(self._node, self._style)
 
     def del_prefix(self, prefix: tuple[str, ...]) -> bool:
         kept = [e for e in self._node.entries if not _path_has_prefix(e.key.path, prefix)]
         if len(kept) == len(self._node.entries):
             return False
         self._node.entries[:] = kept
-        _apply_separator_style(self._node.entries, self._style, self._set_final_trivia)
+        _apply_separator_style(self._node, self._style)
         return True
 
     def entries_under(self, prefix: tuple[str, ...]) -> list[tuple[tuple[str, ...], ValueNode]]:
@@ -1758,11 +1757,8 @@ class Array(list[TomlValue]):
         list.clear(self)
         list.extend(self, _materialise_array(self._node))
 
-    def _set_final_trivia(self, t: Trivia) -> None:
-        self._node.final_trivia = t
-
     def _rebuild_separators(self) -> None:
-        _apply_separator_style(self._node.items, self._style, self._set_final_trivia)
+        _apply_separator_style(self._node, self._style)
 
     @staticmethod
     def _make_item(value: TomlValue, *, with_comma: bool) -> ArrayItem:
