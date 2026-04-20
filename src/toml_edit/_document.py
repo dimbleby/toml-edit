@@ -34,7 +34,7 @@ from toml_edit._nodes import (
     Trivia,
     WhitespaceNode,
 )
-from toml_edit._synthesise import make_key_part, make_keyvalue_node, value_to_node
+from toml_edit._synthesise import make_key_part, make_keyvalue_node, make_simple_key, value_to_node
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Sequence
@@ -811,7 +811,7 @@ class _InlineTable(Table):
             return
         new_entry = InlineTableEntry(
             leading=Trivia(),
-            key=_make_simple_key_for_inline(key),
+            key=make_simple_key(key),
             pre_eq=_clone_trivia(self._pre_eq),
             post_eq=_clone_trivia(self._post_eq),
             value=value_to_node(value),
@@ -834,12 +834,6 @@ class _InlineTable(Table):
         idx = self._node.entries.index(existing)
         self._node.entries.pop(idx)
         _apply_separator_style(self._node.entries, self._style, self._set_final_trivia)
-
-
-def _make_simple_key_for_inline(name: str) -> Key:
-    from toml_edit._synthesise import make_simple_key  # noqa: PLC0415
-
-    return make_simple_key(name)
 
 
 class _DottedInlineSubTable(Table):
@@ -1074,7 +1068,7 @@ class _StdTable(Table):
         """
         for sec in self._direct_sections():
             for kv in sec.entries:
-                if kv.key.path and len(kv.key.path) == 1 and kv.key.path[0] == key:
+                if len(kv.key.path) == 1 and kv.key.path[0] == key:
                     return sec, kv
         raise KeyError(key)
 
@@ -1215,7 +1209,7 @@ class _TableCommentsView(MutableMapping[str, str]):
     def _commented_kvs(self) -> Iterator[tuple[str, KeyValueNode]]:
         for sec in self._table._direct_sections():  # noqa: SLF001
             for kv in sec.entries:
-                if kv.trailing_comment is not None and kv.key.path and len(kv.key.path) == 1:
+                if kv.trailing_comment is not None and len(kv.key.path) == 1:
                     yield kv.key.path[0], kv
 
     @override
@@ -1304,11 +1298,7 @@ class _TableLeadingCommentsView(MutableMapping[str, "tuple[str, ...]"]):
     def __iter__(self) -> Iterator[str]:
         for sec in self._table._direct_sections():  # noqa: SLF001
             for kv in sec.entries:
-                if (
-                    kv.key.path
-                    and len(kv.key.path) == 1
-                    and _extract_trailing_comment_block(kv.leading)
-                ):
+                if len(kv.key.path) == 1 and _extract_trailing_comment_block(kv.leading):
                     yield kv.key.path[0]
 
     @override
