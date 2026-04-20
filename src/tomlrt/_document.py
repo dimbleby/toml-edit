@@ -1541,7 +1541,7 @@ class _DottedSubTable(Table):
 class _StdTable(Table):
     """Standard TOML table view: aggregates physical sections by path."""
 
-    __slots__ = ("_anchor", "_doc_node", "_extras", "_owner_anchor", "_path")
+    __slots__ = ("_anchor", "_doc_node", "_owner_anchor", "_path")
 
     def __init__(
         self,
@@ -1550,7 +1550,6 @@ class _StdTable(Table):
         *,
         anchor: SectionNode | None = None,
         owner_anchor: SectionNode | None = None,
-        extras: list[tuple[tuple[str, ...], KeyValueNode]] | None = None,
     ) -> None:
         super().__init__()
         self._doc_node = doc_node
@@ -1565,15 +1564,11 @@ class _StdTable(Table):
         # itself it is the entry's own anchor; for a sub-table inside
         # an AoT entry it is the enclosing entry's anchor; for tables
         # outside any AoT entry it is ``None`` (the whole document).
-        # Crucially, the actual section pool is *re-derived* from
-        # ``owner_anchor`` on every read via ``_scope()``: caching it
-        # would let purges and inserts leak stale or missing sections
-        # into the dict-storage view (see ``_refresh_key``).
+        # The section pool and the inherited dotted-key "extras" are
+        # both *re-derived* from ``_doc_node`` on every read so that
+        # purges and inserts can never desync the dict view from what
+        # ``dumps`` would render.
         self._owner_anchor = owner_anchor if owner_anchor is not None else anchor
-        # ``extras`` carries dotted-key entries inherited from an
-        # ancestor section that contributed prefix ``path[:n]`` for
-        # some n.
-        self._extras = extras
         self._populate()
 
     def _scope(self) -> list[SectionNode] | None:
@@ -1581,6 +1576,37 @@ class _StdTable(Table):
         if owner is None:
             return None
         return [owner, *self._doc_node.aot_owned_range(owner)]
+
+    def _compute_extras(
+        self,
+    ) -> list[tuple[tuple[str, ...], KeyValueNode]] | None:
+        """Inherited dotted KVs whose path passes through ``self._path``.
+
+        For the root table this is always ``None``: the root has no
+        ancestors. For a nested table at path ``P`` of length ``n``,
+        scans every section whose header is a strict prefix of ``P``
+        (or ``None`` for the implicit pre-header section) and returns,
+        for each dotted KV in such a section that extends into ``P``,
+        the relative path inside ``P`` plus the KV node itself.
+        """
+        plen = len(self._path)
+        if plen == 0:
+            return None
+        scope = self._scope()
+        sections = scope if scope is not None else self._doc_node.sections
+        out: list[tuple[tuple[str, ...], KeyValueNode]] = []
+        for sec in sections:
+            hdr = sec.header
+            host_path: tuple[str, ...] = hdr.key.path if hdr is not None else ()
+            hlen = len(host_path)
+            if hlen >= plen or host_path != self._path[:hlen]:
+                continue
+            for kv in sec.entries:
+                full = (*host_path, *kv.key.path)
+                if len(full) <= plen or full[:plen] != self._path:
+                    continue
+                out.append((full[plen:], kv))
+        return out or None
 
     @override
     def _items(self) -> Iterator[tuple[str, TomlValue]]:
@@ -1590,7 +1616,7 @@ class _StdTable(Table):
             scope=self._scope(),
             anchor=self._anchor,
             owner_anchor=self._owner_anchor,
-            extras=self._extras,
+            extras=self._compute_extras(),
         )
 
     def _direct_sections(self) -> list[SectionNode]:
@@ -1656,6 +1682,10 @@ class _StdTable(Table):
             ("dotted", None)                 - dotted-key prefix (e.g. b.c=...)
             ("table", None)                  - child standard table [self.path.key]
             ("aot", None)                    - child AoT [[self.path.key]]
+            ("extras", KeyValueNode)         - terminal entry living as a dotted
+                                               KV in an ancestor section
+            ("extras-prefix", None)          - extras entries with this head are
+                                               longer than one segment
             ("absent", None)
         """
         for sec in self._direct_sections():
@@ -1678,6 +1708,21 @@ class _StdTable(Table):
                 and hpath[: len(child)] == child
             ):
                 return ("table", None)
+        extras = self._compute_extras()
+        if extras:
+            terminal: KeyValueNode | None = None
+            has_dotted = False
+            for rel, kv in extras:
+                if rel[0] != key:
+                    continue
+                if len(rel) == 1:
+                    terminal = kv
+                else:
+                    has_dotted = True
+            if terminal is not None:
+                return ("extras", terminal)
+            if has_dotted:
+                return ("extras-prefix", None)
         return ("absent", None)
 
     def _purge_conflicting(self, key: str) -> None:
@@ -1685,7 +1730,9 @@ class _StdTable(Table):
 
         Used to give Python-dict-style overwrite semantics: assigning to
         a name that already names a sub-table silently destroys that
-        sub-table (and any nested children) rather than raising.
+        sub-table (and any nested children) rather than raising. Also
+        removes any ancestor-section dotted entries that contribute
+        to ``self._path + (key, ...)`` so they don't survive as ghosts.
         """
         for sec in self._direct_sections():
             sec.entries[:] = [kv for kv in sec.entries if kv.key.path[0] != key]
@@ -1701,6 +1748,25 @@ class _StdTable(Table):
                 and sec.header.key.path[:plen] == prefix
             )
         ]
+        # Drop any ancestor-section dotted KV that contributes to our
+        # path + key (e.g. ``[tool] poetry.name = "x"`` when purging
+        # ``name`` from the ``tool.poetry`` view).
+        ppath = self._path
+        ppath_len = len(ppath)
+        for sec in doc_sections:
+            hdr = sec.header
+            host_path: tuple[str, ...] = hdr.key.path if hdr is not None else ()
+            hlen = len(host_path)
+            if hlen >= plen or host_path != prefix[:hlen]:
+                continue
+            sec.entries[:] = [
+                kv
+                for kv in sec.entries
+                if not (
+                    len(kv.key.path) > ppath_len - hlen
+                    and (*host_path, *kv.key.path)[:plen] == prefix
+                )
+            ]
 
     @override
     def _set_value(self, key: str, value: object) -> None:
@@ -1711,11 +1777,11 @@ class _StdTable(Table):
             return
 
         kind, payload = self._classify(key)
-        if kind == "direct":
+        if kind in ("direct", "extras"):
             assert isinstance(payload, KeyValueNode)
             payload.value = value_to_node(value)
             return
-        if kind in ("dotted", "table", "aot"):
+        if kind in ("dotted", "table", "aot", "extras-prefix"):
             self._purge_conflicting(key)
         sections = self._direct_sections()
         if not sections:
@@ -3181,19 +3247,15 @@ def _iter_table(
             )
             continue
 
-        # Merged view at path + (head,): combines sub-section content with
-        # any dotted KVs from this section and any ancestor-dotted extras.
-        child_extras: list[tuple[tuple[str, ...], KeyValueNode]] = [
-            (kv.key.path[1:], kv) for kv in nested_kvs
-        ]
-        child_extras.extend((rel_path[1:], entry) for rel_path, entry in nested_extras)
+        # Merged view at path + (head,): the child re-derives its own
+        # extras from the live doc on each read, so we just hand it the
+        # owner anchor; nothing to splice.
         yield (
             head,
             _StdTable(
                 doc_node,
                 (*path, head),
                 owner_anchor=anchor or owner_anchor,
-                extras=child_extras or None,
             ),
         )
 
