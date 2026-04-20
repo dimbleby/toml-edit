@@ -486,10 +486,11 @@ class _Parser:
         """Index ``p`` under its longest active-AoT-path ancestor, if any.
 
         Only paths registered here can be reset by ``_reset_scope_under``.
-        Most paths in a typical document have no AoT ancestor and the
-        prefix walk costs only a handful of hash lookups.
+        Documents with no AoTs (the common case) skip this entirely.
         """
         aot_paths = self._aot_paths
+        if not aot_paths:
+            return
         for i in range(len(p) - 1, 0, -1):
             prefix = p[:i]
             if prefix in aot_paths:
