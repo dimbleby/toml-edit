@@ -582,6 +582,44 @@ def _build_promoted_section(
     return section
 
 
+def _build_promoted_aot_section(
+    path: tuple[str, ...],
+    inline: InlineTableNode,
+) -> SectionNode:
+    """Build a ``[[path]]`` section containing ``inline``'s entries.
+
+    Used by :meth:`Table.promote_array` to convert each element of an
+    inline array of inline tables into its own AoT entry.
+    """
+    parts = [make_key_part(p) for p in path]
+    seps = ["."] * (len(parts) - 1)
+    header = TableHeaderNode(
+        leading=Trivia(),
+        kind="array",
+        inner_pre=None,
+        key=Key(parts=parts, separators=seps),
+        inner_post=None,
+        trailing=None,
+        trailing_comment=None,
+        newline=NewlineNode("\n"),
+    )
+    section = SectionNode(header=header, entries=[])
+    for entry in inline.entries:
+        section.entries.append(
+            KeyValueNode(
+                leading=Trivia(),
+                key=deepcopy(entry.key),
+                pre_eq=WhitespaceNode(" "),
+                post_eq=WhitespaceNode(" "),
+                value=deepcopy(entry.value),
+                trailing=None,
+                trailing_comment=None,
+                newline=NewlineNode("\n"),
+            ),
+        )
+    return section
+
+
 # ---------------------------------------------------------------------------
 # Tables
 # ---------------------------------------------------------------------------
@@ -814,6 +852,30 @@ class Table(MutableMapping[str, TomlValue]):
         expansions on its members.
         """
         msg = "this table flavour does not support inline-table promotion"
+        raise TOMLError(msg)
+
+    def promote_array(self, key: str) -> AoT:  # noqa: ARG002
+        """Promote an array-of-inline-tables-valued ``key`` to an AoT.
+
+        After promotion the entries are rendered as repeated
+        ``[[parent.key]]`` sections, allowing comments and dotted-key
+        expansions on each entry's members.
+        """
+        msg = "this table flavour does not support array-of-tables promotion"
+        raise TOMLError(msg)
+
+    def set_aot(
+        self,
+        key: str,  # noqa: ARG002
+        entries: Iterable[Mapping[str, object]] = (),  # noqa: ARG002
+    ) -> AoT:
+        """Set ``key`` to an array-of-tables containing ``entries``.
+
+        Replaces any existing value at ``key``. Each entry becomes a
+        ``[[parent.key]]`` section. The returned :class:`AoT` is a live
+        view; appending to it adds further sections.
+        """
+        msg = "this table flavour does not support array-of-tables assignment"
         raise TOMLError(msg)
 
 
@@ -1421,6 +1483,70 @@ class _StdTable(Table):
         else:
             sections.append(new_sec)
         return _StdTable(self._doc_view, child_path)
+
+    @override
+    def promote_array(self, key: str) -> AoT:
+        sec, kv = self._find_direct_kv(key)
+        if not isinstance(kv.value, ArrayNode):
+            msg = f"{key!r} is not an array; nothing to promote"
+            raise TOMLError(msg)
+        items = kv.value.items
+        if not items:
+            msg = f"{key!r} is an empty array; cannot promote to array-of-tables"
+            raise TOMLError(msg)
+        for item in items:
+            if not isinstance(item.value, InlineTableNode):
+                msg = (
+                    f"{key!r} contains a non-inline-table element; cannot "
+                    "promote to array-of-tables"
+                )
+                raise TOMLError(msg)
+        child_path = (*self._path, key)
+        # Defensive: parser/assignment paths should never let this fire.
+        for existing in self._doc_view._node.sections:  # noqa: SLF001
+            hdr = existing.header
+            if hdr is not None and hdr.key.path == child_path:  # pragma: no cover
+                joined = ".".join(child_path)
+                msg = (
+                    f"cannot promote {key!r}: a [[{joined}]] (or [{joined}]) "
+                    "section already exists"
+                )
+                raise TOMLError(msg)
+        new_secs = [
+            _build_promoted_aot_section(child_path, item.value)
+            for item in items
+            if isinstance(item.value, InlineTableNode)  # for type narrowing
+        ]
+        sec.entries.remove(kv)
+        sections = self._doc_view._node.sections  # noqa: SLF001
+        parent_secs = self._direct_sections()
+        if parent_secs:
+            anchor = parent_secs[-1]
+            anchor_idx = next(
+                (i for i, s in enumerate(sections) if s is anchor),
+                len(sections) - 1,
+            )
+            for offset, ns in enumerate(new_secs, start=1):
+                sections.insert(anchor_idx + offset, ns)
+        else:
+            sections.extend(new_secs)
+        aot = AoT(self._doc_view, child_path, [])
+        aot._resync()  # noqa: SLF001
+        return aot
+
+    @override
+    def set_aot(
+        self,
+        key: str,
+        entries: Iterable[Mapping[str, object]] = (),
+    ) -> AoT:
+        kind, _ = self._classify(key)
+        if kind != "absent":
+            self._purge_conflicting(key)
+        aot = AoT(self._doc_view, (*self._path, key), [])
+        for entry in entries:
+            aot.append(entry)
+        return aot
 
 
 class Document(_StdTable):
