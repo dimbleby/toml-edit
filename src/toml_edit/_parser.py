@@ -616,16 +616,10 @@ class _Parser:
         start = self._pos
         if quote == '"':
             multiline = self._starts_with('"""')
-            if multiline:
-                node = self._parse_basic_string(allow_multiline=True)
-            else:
-                node = self._parse_basic_string(allow_multiline=False)
+            node = self._parse_basic_string(allow_multiline=multiline)
         else:
             multiline = self._starts_with("'''")
-            if multiline:
-                node = self._parse_literal_string(allow_multiline=True)
-            else:
-                node = self._parse_literal_string(allow_multiline=False)
+            node = self._parse_literal_string(allow_multiline=multiline)
         node.raw = self._src[start : self._pos]
         return node
 

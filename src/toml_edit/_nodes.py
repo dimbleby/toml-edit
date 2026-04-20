@@ -31,7 +31,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence  # used in docstrings only
     from datetime import date, datetime, time
 
 
@@ -419,8 +418,3 @@ __all__ = [
     "WhitespaceNode",
     "render_value",
 ]
-
-
-# Avoid an unused-import warning for Sequence in TYPE_CHECKING block.
-if TYPE_CHECKING:  # pragma: no cover
-    from collections.abc import Sequence  # noqa: F401
