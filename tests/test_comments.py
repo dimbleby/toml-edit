@@ -208,7 +208,9 @@ def test_inline_promotion_then_set_comment_on_member() -> None:
     doc = toml_edit.parse(src)
     promoted = doc.promote_inline("pkg")
     promoted.comments["version"] = "calver soon"
-    assert toml_edit.dumps(doc) == ('[pkg]\nname = "toml_edit"\nversion = "0.1" # calver soon\n')
+    assert toml_edit.dumps(doc) == (
+        '[pkg]\nname = "toml_edit"\nversion = "0.1" # calver soon\n'
+    )
 
 
 def test_inline_promotion_inserts_after_parent_block() -> None:
@@ -217,7 +219,9 @@ def test_inline_promotion_inserts_after_parent_block() -> None:
     parent = doc["parent"]
     assert isinstance(parent, toml_edit.Table)
     parent.promote_inline("pkg")
-    assert toml_edit.dumps(doc) == ("[parent]\na = 1\n[parent.pkg]\nx = 10\n[other]\nb = 2\n")
+    assert toml_edit.dumps(doc) == (
+        "[parent]\na = 1\n[parent.pkg]\nx = 10\n[other]\nb = 2\n"
+    )
 
 
 def test_promote_non_inline_raises() -> None:
@@ -343,7 +347,9 @@ def test_header_comment_on_aot_entry() -> None:
     items[0].header_comment = "first"
     items[1].header_leading_comments = ("about the second",)
     out = toml_edit.dumps(doc)
-    assert out == ("[[items]] # first\nname = 'a'\n\n# about the second\n[[items]]\nname = 'b'\n")
+    assert out == (
+        "[[items]] # first\nname = 'a'\n\n# about the second\n[[items]]\nname = 'b'\n"
+    )
 
 
 def test_header_comment_on_document_raises() -> None:
@@ -418,7 +424,10 @@ def test_array_leading_comments_read() -> None:
     src = "arr = [\n  # before 0\n  1,\n  # before 1a\n  # before 1b\n  2,\n]\n"
     doc = toml_edit.parse(src)
     arr = doc.array("arr")
-    assert dict(arr.leading_comments) == {0: ("before 0",), 1: ("before 1a", "before 1b")}
+    assert dict(arr.leading_comments) == {
+        0: ("before 0",),
+        1: ("before 1a", "before 1b"),
+    }
 
 
 def test_array_round_trip_with_comments() -> None:

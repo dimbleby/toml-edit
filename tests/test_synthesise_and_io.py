@@ -97,7 +97,9 @@ def test_dump_emits_utf8_for_non_ascii() -> None:
         ("del\x7fchar", '"del\\u007Fchar"'),
     ],
 )
-def test_string_escape_emits_canonical_form(py_value: str, expected_quoted: str) -> None:
+def test_string_escape_emits_canonical_form(
+    py_value: str, expected_quoted: str
+) -> None:
     doc = toml_edit.parse("x = 0\n")
     doc["x"] = py_value
     out = toml_edit.dumps(doc)
