@@ -667,3 +667,96 @@ def test_to_dict_round_trip_is_data_equivalent_to_tomllib() -> None:
     name = "a"
     """
     assert tomlrt.parse(src).to_dict() == _reparses(src)
+
+
+# ---------------------------------------------------------------------------
+# get_table / get_array / get_aot: typed-but-optional accessors
+# ---------------------------------------------------------------------------
+
+
+def test_table_get_table_returns_table_when_present() -> None:
+    doc = tomlrt.parse("[t]\nx = 1\n")
+    t = doc.get_table("t")
+    assert t is not None
+    assert t["x"] == 1
+
+
+def test_table_get_table_returns_none_when_missing() -> None:
+    doc = tomlrt.parse("a = 1\n")
+    assert doc.get_table("nope") is None
+
+
+def test_table_get_table_returns_default_when_missing() -> None:
+    doc = tomlrt.parse("a = 1\n")
+    sentinel: dict[str, int] = {}
+    result = doc.get_table("nope", sentinel)
+    assert result is sentinel
+
+
+def test_table_get_table_raises_typeerror_on_wrong_type() -> None:
+    doc = tomlrt.parse("a = 1\n")
+    with pytest.raises(TypeError, match="not a Table"):
+        doc.get_table("a")
+
+
+def test_table_get_table_handles_dotted_path() -> None:
+    doc = tomlrt.parse("[tool.poetry]\nname = 'x'\n")
+    sub = doc.get_table("tool.poetry")
+    assert sub is not None
+    assert sub["name"] == "x"
+    assert doc.get_table("tool.missing") is None
+
+
+def test_table_get_array_returns_array_or_default() -> None:
+    doc = tomlrt.parse("xs = [1, 2, 3]\n")
+    arr = doc.get_array("xs")
+    assert arr is not None
+    assert list(arr) == [1, 2, 3]
+    assert doc.get_array("nope") is None
+    assert doc.get_array("nope", []) == []
+
+
+def test_table_get_array_raises_typeerror_on_wrong_type() -> None:
+    doc = tomlrt.parse("a = 1\n")
+    with pytest.raises(TypeError, match="not an Array"):
+        doc.get_array("a")
+
+
+def test_table_get_aot_returns_aot_or_default() -> None:
+    doc = tomlrt.parse("[[pkg]]\nname = 'a'\n")
+    aot = doc.get_aot("pkg")
+    assert aot is not None
+    assert aot[0]["name"] == "a"
+    assert doc.get_aot("nope") is None
+
+
+def test_table_get_aot_raises_typeerror_on_wrong_type() -> None:
+    doc = tomlrt.parse("[t]\nname = 'a'\n")
+    with pytest.raises(TypeError, match="not an AoT"):
+        doc.get_aot("t")
+
+
+def test_array_get_array_in_range_and_default() -> None:
+    doc = tomlrt.parse("xs = [[1, 2], [3, 4]]\n")
+    arr = doc.array("xs")
+    inner = arr.get_array(0)
+    assert inner is not None
+    assert list(inner) == [1, 2]
+    assert arr.get_array(99) is None
+    assert arr.get_array(99, "fallback") == "fallback"
+
+
+def test_array_get_table_in_range_and_default() -> None:
+    doc = tomlrt.parse("xs = [{ a = 1 }, { a = 2 }]\n")
+    arr = doc.array("xs")
+    t = arr.get_table(0)
+    assert t is not None
+    assert t["a"] == 1
+    assert arr.get_table(99) is None
+
+
+def test_array_get_table_raises_typeerror_on_wrong_type() -> None:
+    doc = tomlrt.parse("xs = [1, 2]\n")
+    arr = doc.array("xs")
+    with pytest.raises(TypeError, match="not a Table"):
+        arr.get_table(0)

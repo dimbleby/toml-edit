@@ -13,7 +13,15 @@ from collections.abc import Iterable, Mapping, MutableMapping
 from copy import deepcopy
 from datetime import date, datetime, time
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Protocol, SupportsIndex, TypeAlias, overload
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Protocol,
+    SupportsIndex,
+    TypeAlias,
+    TypeVar,
+    overload,
+)
 
 if sys.version_info >= (3, 12):
     from typing import override
@@ -67,6 +75,7 @@ Scalar: TypeAlias = str | int | float | bool | datetime | date | time
 TomlValue: TypeAlias = "Scalar | Array | AoT | Table"
 
 _MISSING: Any = object()
+_T = TypeVar("_T")
 
 
 def _to_plain(value: object) -> Any:
@@ -919,6 +928,26 @@ class Table(MutableMapping[str, TomlValue]):
             raise TypeError(msg)
         return value
 
+    @overload
+    def get_table(self, key: str) -> Table | None: ...
+    @overload
+    def get_table(self, key: str, default: _T) -> Table | _T: ...
+    def get_table(self, key: str, default: object = None) -> object:
+        """Like :meth:`table`, but returns ``default`` if ``key`` is missing.
+
+        Wrong-type entries still raise :class:`TypeError`: a missing key
+        is "no answer", but an entry that exists with the wrong shape is
+        a real bug worth surfacing.
+        """
+        try:
+            value = self._lookup_path(key)
+        except KeyError:
+            return default
+        if not isinstance(value, Table):
+            msg = f"{key!r} is a {type(value).__name__}, not a Table"
+            raise TypeError(msg)
+        return value
+
     def array(self, key: str) -> Array:
         """Return the array at ``key``, typed as :class:`Array`.
 
@@ -932,6 +961,24 @@ class Table(MutableMapping[str, TomlValue]):
             raise TypeError(msg)
         return value
 
+    @overload
+    def get_array(self, key: str) -> Array | None: ...
+    @overload
+    def get_array(self, key: str, default: _T) -> Array | _T: ...
+    def get_array(self, key: str, default: object = None) -> object:
+        """Like :meth:`array`, but returns ``default`` if ``key`` is missing.
+
+        Wrong-type entries still raise :class:`TypeError`.
+        """
+        try:
+            value = self._lookup_path(key)
+        except KeyError:
+            return default
+        if not isinstance(value, Array):
+            msg = f"{key!r} is a {type(value).__name__}, not an Array"
+            raise TypeError(msg)
+        return value
+
     def aot(self, key: str) -> AoT:
         """Return the array-of-tables at ``key``, typed as :class:`AoT`.
 
@@ -940,6 +987,24 @@ class Table(MutableMapping[str, TomlValue]):
         not an array of tables.
         """
         value = self._lookup_path(key)
+        if not isinstance(value, AoT):
+            msg = f"{key!r} is a {type(value).__name__}, not an AoT"
+            raise TypeError(msg)
+        return value
+
+    @overload
+    def get_aot(self, key: str) -> AoT | None: ...
+    @overload
+    def get_aot(self, key: str, default: _T) -> AoT | _T: ...
+    def get_aot(self, key: str, default: object = None) -> object:
+        """Like :meth:`aot`, but returns ``default`` if ``key`` is missing.
+
+        Wrong-type entries still raise :class:`TypeError`.
+        """
+        try:
+            value = self._lookup_path(key)
+        except KeyError:
+            return default
         if not isinstance(value, AoT):
             msg = f"{key!r} is a {type(value).__name__}, not an AoT"
             raise TypeError(msg)
@@ -2515,9 +2580,48 @@ class Array(list[TomlValue]):
             raise TypeError(msg)
         return value
 
+    @overload
+    def get_array(self, index: SupportsIndex) -> Array | None: ...
+    @overload
+    def get_array(self, index: SupportsIndex, default: _T) -> Array | _T: ...
+    def get_array(self, index: SupportsIndex, default: object = None) -> object:
+        """Like :meth:`array`, but returns ``default`` if ``index`` is out of range.
+
+        Wrong-type entries still raise :class:`TypeError`.
+        """
+        try:
+            value = self[index]
+        except IndexError:
+            return default
+        if not isinstance(value, Array):
+            type_name = type(value).__name__
+            msg = f"item {operator.index(index)} is a {type_name}, not an Array"
+            raise TypeError(msg)
+        return value
+
     def table(self, index: SupportsIndex) -> Table:
         """Return ``self[index]`` typed as a nested :class:`Table`."""
         value = self[index]
+        if not isinstance(value, Table):
+            msg = (
+                f"item {operator.index(index)} is a {type(value).__name__}, not a Table"
+            )
+            raise TypeError(msg)
+        return value
+
+    @overload
+    def get_table(self, index: SupportsIndex) -> Table | None: ...
+    @overload
+    def get_table(self, index: SupportsIndex, default: _T) -> Table | _T: ...
+    def get_table(self, index: SupportsIndex, default: object = None) -> object:
+        """Like :meth:`table`, but returns ``default`` if ``index`` is out of range.
+
+        Wrong-type entries still raise :class:`TypeError`.
+        """
+        try:
+            value = self[index]
+        except IndexError:
+            return default
         if not isinstance(value, Table):
             msg = (
                 f"item {operator.index(index)} is a {type(value).__name__}, not a Table"
