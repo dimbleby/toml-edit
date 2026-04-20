@@ -155,14 +155,14 @@ def _mapping_to_inline_table_node(mapping: Mapping[str, TomlValue]) -> InlineTab
         is_last = i == n - 1
         entries.append(
             InlineTableEntry(
-                leading=Trivia([WhitespaceNode(" ")]),
+                leading=Trivia([WhitespaceNode(" ")]) if i == 0 else Trivia(),
                 key=make_simple_key(k),
                 pre_eq=Trivia([WhitespaceNode(" ")]),
                 post_eq=Trivia([WhitespaceNode(" ")]),
                 value=value_to_node(v),
                 trailing=Trivia(),
                 has_comma=not is_last,
-                post_comma_trivia=Trivia(),
+                post_comma_trivia=(Trivia([WhitespaceNode(" ")]) if not is_last else Trivia()),
             ),
         )
     final_trivia = Trivia([WhitespaceNode(" ")]) if entries else Trivia()
