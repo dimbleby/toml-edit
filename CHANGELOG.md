@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Structural assignment is now driven by the value, not the method
+  name.** The parallel ``set_table`` / ``set_aot`` / ``set_array``
+  methods have been removed in favour of a single assignment path:
+
+  ```python
+  doc[k] = Table.section({...})          # [k] standard section
+  doc[k] = Table.inline({...})           # k = { ... } inline table
+  doc[k] = AoT([{...}, {...}])           # [[k]] array of tables
+  doc[k] = Array([...], multiline=True)  # multi-line array value
+  ```
+
+  ``Table.section`` / ``Table.inline`` are classmethod factories
+  returning the public tag types :class:`SectionSpec` and
+  :class:`InlineSpec`. :class:`AoT` and :class:`Array` can now be
+  constructed standalone and then assigned.
+
+- **New ``Table.install(path, value)``** accepts either a dotted
+  ``str`` path or a ``tuple[str, ...]`` of literal segments. Tuples
+  provide an escape for keys that legitimately contain a ``.``::
+
+      doc.install(("foo.bar",), 1)   # "foo.bar" = 1  (single segment)
+      doc.install("foo.bar", 1)      # [foo]\nbar = 1 (dotted path)
+
+  ``ensure_table`` also accepts both forms.
+
+- ``__setitem__`` no longer splits ``str`` keys on ``.``; a plain
+  ``str`` is always treated as a single literal segment, matching the
+  standard ``dict`` contract. Use ``install()`` for dotted-path
+  placement.
+
+### Removed
+
+- ``Table.set_table``, ``Table.set_aot``, ``Table.set_array``. Use the
+  value-driven equivalents above, or ``Table.install`` for dotted
+  paths / tuple keys.
+
 ### Fixed
 
 - ``AoT.insert(0, …)`` now adds a blank-line separator between the
@@ -35,8 +73,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   *after* the new content (so ``dumps`` produced ``x = 1\n# c\n``
   instead of ``# c\n\nx = 1\n``); the comment also became invisible
   to the getter once content arrived. Migration now happens at the
-  insertion site for any of ``doc[k] = …``, :meth:`set_table`,
-  :meth:`set_aot`, :meth:`AoT.insert`, or AoT assignment.
+  insertion site for any of ``doc[k] = …``, :meth:`Table.install`,
+  :meth:`AoT.insert`, or AoT assignment.
 - :meth:`Table.promote_array` now carries the source inline-table
   KV's leading comments / blank lines onto the first new ``[[..]]``
   header, and any trailing EOL comment onto the last new entry. The
