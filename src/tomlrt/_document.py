@@ -627,7 +627,7 @@ class Table(MutableMapping[str, TomlValue]):
 
     @staticmethod
     def _snapshot_for_pop(value: object) -> Any:
-        """Recursively convert TOML-edit views to plain Python data.
+        """Recursively convert tomlrt views to plain Python data.
 
         Used by :meth:`pop` and :meth:`popitem` so that the returned
         value doesn't go stale when the underlying CST is removed.
