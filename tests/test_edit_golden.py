@@ -991,15 +991,50 @@ def test_preamble_set_on_empty_doc_renders_before_added_content() -> None:
 
 
 def test_preamble_migration_for_set_table_and_set_aot() -> None:
-    for op_name, build in [
+    from collections.abc import Callable
+
+    cases: list[tuple[str, Callable[[tomlrt.Document], object]]] = [
         ("set_table", lambda d: d.set_table("a", {"k": 1})),
         ("set_aot", lambda d: d.set_aot("a", [{"k": 1}])),
         ("inline_mapping", lambda d: d.__setitem__("a", {"b": 1})),
         ("nested_set_table", lambda d: d.set_table("a.b", {"k": 1})),
-    ]:
+    ]
+    for op_name, build in cases:
         doc = tomlrt.document()
         doc.preamble = ("Top",)
         build(doc)
         rendered = tomlrt.dumps(doc)
         assert rendered.startswith("# Top\n\n"), (op_name, rendered)
         assert tomlrt.loads(rendered).preamble == ("Top",), op_name
+
+
+def test_aot_insert_on_empty_doc_migrates_preamble() -> None:
+    """``AoT.insert`` was bypassing the preamble-migration choke-point,
+    so on an empty doc with a preamble the comment ended up after the
+    inserted ``[[..]]`` section instead of before it.
+    """
+    doc = tomlrt.parse("")
+    doc.preamble = ("Copyright",)
+    aot = doc.set_aot("products")
+    aot.insert(0, {"name": "x"})
+    rendered = tomlrt.dumps(doc)
+    assert rendered.startswith("# Copyright\n\n[[products]]\n"), rendered
+    assert tomlrt.loads(rendered).preamble == ("Copyright",)
+
+
+def test_promote_array_preserves_source_kv_leading_and_trailing() -> None:
+    """``promote_array`` previously dropped the inline KV's leading
+    comments / blank lines and trailing EOL comment. Carry them over
+    onto the first new ``[[..]]`` header and the last entry's tail.
+    """
+    src = (
+        "# header comment\n"
+        '\n'
+        'servers = [{ name = "a" }, { name = "b" }]  # tail\n'
+    )
+    doc = tomlrt.loads(src)
+    doc.promote_array("servers")
+    rendered = tomlrt.dumps(doc)
+    assert "# header comment" in rendered
+    assert rendered.startswith("# header comment\n")
+    assert "# tail" in rendered

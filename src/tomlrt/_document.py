@@ -2048,6 +2048,20 @@ class _StdTable(Table):
             for item in items
             if isinstance(item.value, InlineTableNode)  # for type narrowing
         ]
+        # Carry the source KV's authoring trivia onto the new AoT
+        # entries: leading comments / blank lines that sat above the
+        # inline assignment go on the first ``[[..]]`` header, and any
+        # trailing whitespace / EOL comment goes after the last entry's
+        # final value. Without this, ``promote_array`` silently drops
+        # the user's comments.
+        if new_secs:
+            first_hdr = new_secs[0].header
+            assert first_hdr is not None
+            first_hdr.leading.pieces[:0] = list(kv.leading.pieces)
+            last_entries = new_secs[-1].entries
+            if last_entries:
+                last_entries[-1].trailing = kv.trailing
+                last_entries[-1].trailing_comment = kv.trailing_comment
         sec.entries.remove(kv)
         sections = self._doc_node.sections
         parent_secs = self._direct_sections()
@@ -3069,6 +3083,8 @@ class AoT(list[Table]):
             if add_blank:
                 assert new_sec.header is not None
                 new_sec.header.leading.pieces.insert(0, NewlineNode("\n"))
+        assert new_sec.header is not None
+        self._doc_node.adopt_preamble_into(new_sec.header.leading)
         sections.insert(insert_idx, new_sec)
         self._resync()
 
