@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`Table` is now a real `dict` subclass.** ``isinstance(t, dict)``
+  returns ``True``, ``**table`` unpacking works, and any
+  third-party API typed against ``dict[str, Any]`` /
+  ``isinstance(x, dict)`` now accepts a ``Table`` directly. Reads go
+  through ``dict``'s native ``__iter__`` / ``__getitem__`` /
+  ``__len__`` / ``__contains__``; the CST is still the single source
+  of truth for *layout* (whitespace, comments, key order,
+  table-shape choices) and is kept in lock-step with the dict
+  storage on every mutation. Held references behave like ordinary
+  Python dict references: ``del doc['foo']`` orphans the held
+  ``Table`` (data preserved, mutations no longer reach the
+  document) and re-binding the path installs a fresh ``Table``
+  rather than re-attaching the old one. Identity is stable:
+  ``doc['foo'] is doc['foo']`` and the same goes for nested
+  children.
+- `Table.pop` now returns the actual stored value (an orphaned
+  ``Table`` / ``AoT`` / ``Array`` for container values) rather than
+  a deep plain-Python snapshot. Use ``Table.to_dict()`` /
+  ``Array.to_list()`` first if you need a snapshot.
 - `Table` now subclasses `MutableMapping[str, Any]` (was
   `MutableMapping[str, TomlValue]`), and `Table.__getitem__` returns
   `Any` (was the strict `Scalar | Array | AoT | Table` union).

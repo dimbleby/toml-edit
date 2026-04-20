@@ -771,84 +771,187 @@ def _section_insert_index(
 # ---------------------------------------------------------------------------
 
 
-class Table(MutableMapping[str, Any]):
+class Table(dict[str, Any]):
     """A logical TOML table.
 
     All mapping flavours in tomlrt (top-level document, standard
     table, inline table, and the synthetic mappings spawned by dotted
-    keys) inherit from :class:`Table`, so values typed as ``Table``
-    cover every nested mapping you can encounter while walking a
-    document.
+    keys) inherit from :class:`Table`, which is itself a subclass of
+    :class:`dict`. So values typed as ``Table`` cover every nested
+    mapping you can encounter while walking a document, *and*
+    ``isinstance(t, dict)`` is ``True`` and ``**t`` works.
 
-    .. rubric:: Tables are *views*, not snapshots
+    .. rubric:: Storage model
 
-    A :class:`Table` is a live view over a path in the underlying
-    document tree, not an owned mapping. It does **not** behave
-    exactly like a regular :class:`dict` when the surrounding
-    document changes:
+    Each :class:`Table` keeps its own dict storage of children
+    (populated from the CST at parse time, then synced on every
+    mutation). The CST remains the single source of truth for
+    *layout* (whitespace, comments, key order, table-shape choices);
+    the dict storage is the source of truth for *data* and provides
+    object identity. ``doc["foo"] is doc["foo"]`` and the same goes
+    for nested children.
 
-    * Mutations through any handle to the same logical table are
-      visible through every other handle to the same path.
-    * If the path becomes unreachable (for example after
-      ``del doc['foo']``), reads through the held view return as
-      if the table were empty, and writes through it create a fresh
-      ``[foo]`` section -- they do *not* mutate an orphaned snapshot.
-    * If the path is later reused for a *different* table -- e.g.
-      ``del doc['foo']; doc.set_table('foo', {...})``, or even just
-      ``doc.set_table('foo', {...})`` over an existing one -- a held
-      view will silently start reflecting the new contents. The
-      view is bound to the path, not to the original table's
-      identity.
+    .. rubric:: Held references
 
-    This is a deliberate design choice: the underlying CST is the
-    single source of truth, and a :class:`Table` resolves itself
-    against it on every operation rather than mirroring a copy of
-    the data into per-table dict storage. The trade-off is that a
-    held reference behaves like a path-shaped pointer rather than
-    an independent dict.
+    Held references behave like ordinary Python dict references:
 
-    The practical rule is: **treat a :class:`Table` like a path-
-    shaped pointer into the document, not like an independent
-    object**. If you need a value that is guaranteed to be
-    independent of subsequent document mutations, copy out
-    explicitly -- ``snapshot = dict(table)`` for a shallow copy,
-    or :func:`copy.deepcopy` / a JSON round-trip for a deep one.
+    * If the binding goes away (``del doc['foo']``), the held
+      ``Table`` is *orphaned*: its dict storage is intact and reads
+      still work, but it is no longer connected to the document and
+      mutations through it do not appear in :meth:`Document.render`.
+    * Re-binding the path (``doc['foo'] = {...}`` or
+      ``doc.set_table('foo', {...})``) installs a *fresh* ``Table``;
+      held references to the old table are unaffected.
     """
 
-    __slots__ = ()
+    __slots__ = ("_attached",)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._attached = True
+
+    # --- subclass hooks ----------------------------------------------------
 
     def _items(self) -> Iterator[tuple[str, TomlValue]]:  # pragma: no cover
         raise NotImplementedError
 
-    @override
-    def __iter__(self) -> Iterator[str]:
-        for k, _ in self._items():
-            yield k
+    def _set_value(self, key: str, value: object) -> None:  # noqa: ARG002, pragma: no cover
+        msg = "this table flavour does not support mutation"
+        raise TOMLError(msg)
 
-    @override
-    def __len__(self) -> int:
-        return sum(1 for _ in self._items())
+    def _delete_value(self, key: str) -> None:  # noqa: ARG002, pragma: no cover
+        msg = "this table flavour does not support mutation"
+        raise TOMLError(msg)
 
-    @override
-    def __contains__(self, key: object) -> bool:
-        if not isinstance(key, str):
-            return False
-        return any(k == key for k, _ in self._items())
+    # --- dict-storage sync helpers -----------------------------------------
 
-    @override
-    def __getitem__(self, key: str) -> Any:
+    def _populate(self) -> None:
+        """Refill dict storage from the CST. Called from subclass __init__."""
+        super().clear()
+        for k, v in self._items():
+            super().__setitem__(k, v)
+
+    def _refresh_key(self, key: str) -> None:
+        """Re-read ``key`` from the CST after a mutation.
+
+        If ``key`` is no longer present in the CST, it is removed from
+        dict storage. Identity for *other* keys is preserved.
+        """
         for k, v in self._items():
             if k == key:
-                return v
-        raise KeyError(key)
+                # dict.__setitem__ on an existing key preserves position;
+                # on a new key it appends. Both match CST behaviour.
+                super().__setitem__(key, v)
+                return
+        if super().__contains__(key):
+            super().__delitem__(key)
+
+    def _refresh_path(self, path: tuple[str, ...]) -> None:
+        """Refresh dict storage along ``path`` from the CST.
+
+        Descends through existing :class:`Table` children to preserve
+        their identity, and only refreshes the leaf (or any segment
+        where descent isn't possible) from scratch.
+        """
+        if not path:
+            return
+        head = path[0]
+        rest = path[1:]
+        if rest and super().__contains__(head):
+            existing = super().__getitem__(head)
+            if isinstance(existing, Table):
+                existing._refresh_path(rest)  # noqa: SLF001
+                return
+        self._refresh_key(head)
+
+    # --- attachment / detachment ------------------------------------------
+
+    def _detach(self) -> None:
+        """Mark this table (and any nested containers) as orphaned.
+
+        After detachment, mutations through this object only update its
+        own dict storage; CST writeback is suppressed so the document
+        the table was once part of stops seeing the changes.
+        """
+        self._attached = False
+        for v in self.values():
+            if isinstance(v, (Table, AoT, Array)):
+                v._detach()  # noqa: SLF001
+
+    # --- mutators ----------------------------------------------------------
 
     @override
     def __setitem__(self, key: str, value: object) -> None:
+        if not self._attached:
+            dict.__setitem__(self, key, value)
+            return
+        # If we're replacing an existing container, detach the old one
+        # so any held references stop reflecting later edits.
+        if super().__contains__(key):
+            old = super().__getitem__(key)
+            if isinstance(old, (Table, AoT, Array)):
+                old._detach()  # noqa: SLF001
         self._set_value(key, value)
+        self._refresh_key(key)
 
     @override
     def __delitem__(self, key: str) -> None:
+        if not super().__contains__(key):
+            raise KeyError(key)
+        old = super().__getitem__(key)
+        if isinstance(old, (Table, AoT, Array)):
+            old._detach()  # noqa: SLF001
+        if not self._attached:
+            super().__delitem__(key)
+            return
         self._delete_value(key)
+        if super().__contains__(key):
+            super().__delitem__(key)
+
+    @override
+    def clear(self) -> None:
+        for k in list(self):
+            del self[k]
+
+    @override
+    def update(
+        self,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        if len(args) > 1:
+            msg = f"update expected at most 1 positional argument, got {len(args)}"
+            raise TypeError(msg)
+        if args:
+            other = args[0]
+            if hasattr(other, "keys"):
+                for k in other.keys():  # noqa: SIM118
+                    self[k] = other[k]
+            else:
+                for k, v in other:
+                    self[k] = v
+        for k, v in kwargs.items():
+            self[k] = v
+
+    @override
+    def setdefault(self, key: str, default: Any = None) -> Any:
+        if super().__contains__(key):
+            return super().__getitem__(key)
+        self[key] = default
+        return super().__getitem__(key)
+
+    @override
+    def __ior__(self, other: object) -> Self:  # type: ignore[override]
+        if isinstance(other, Mapping):
+            self.update(other)
+        else:
+            self.update(dict(other))  # type: ignore[call-overload]
+        return self
+
+    @override
+    def copy(self) -> dict[str, Any]:
+        """Return a shallow plain ``dict`` copy of this table."""
+        return dict(self)
 
     def to_dict(self) -> dict[str, Any]:
         """Return a deep, plain-Python copy of this table.
@@ -870,42 +973,32 @@ class Table(MutableMapping[str, Any]):
     def pop(self, key: str, default: object = _MISSING) -> Any:
         """Remove ``key`` and return its value, like :meth:`dict.pop`.
 
-        Sub-tables, AoTs and inline arrays are returned as plain Python
-        snapshots (``dict`` / ``list``) since the original CST nodes
-        are about to be deleted.
+        For :class:`Table` / :class:`AoT` / :class:`Array` values, the
+        returned object is *orphaned*: it keeps its own data but is no
+        longer attached to the document. Use :meth:`to_dict` /
+        :meth:`Array.to_list` first if you need a plain-Python deep
+        copy.
         """
         try:
-            value = self[key]
+            value = super().__getitem__(key)
         except KeyError:
             if default is _MISSING:
                 raise
             return default
-        snapshot = _to_plain(value)
         del self[key]
-        return snapshot
+        return value
 
     @override
     def popitem(self) -> tuple[str, Any]:
-        last: str | None = None
-        for key in self:
-            last = key
-        if last is None:
+        if not self:
             msg = "table is empty"
             raise KeyError(msg)
-        return last, self.pop(last)
-
-    # Subclasses override these.
-    def _set_value(self, key: str, value: object) -> None:  # noqa: ARG002, pragma: no cover
-        msg = "this table flavour does not support mutation"
-        raise TOMLError(msg)
-
-    def _delete_value(self, key: str) -> None:  # noqa: ARG002, pragma: no cover
-        msg = "this table flavour does not support mutation"
-        raise TOMLError(msg)
+        key = next(reversed(self))
+        return key, self.pop(key)
 
     @override
     def __repr__(self) -> str:
-        body = ", ".join(f"{k!r}: {v!r}" for k, v in self._items())
+        body = ", ".join(f"{k!r}: {v!r}" for k, v in self.items())
         return f"{type(self).__name__}({{{body}}})"
 
     # ------------------------------------------------------------------
@@ -1216,6 +1309,7 @@ class _InlineTable(Table):
     __slots__ = ("_eq_padding", "_node", "_style")
 
     def __init__(self, node: InlineTableNode) -> None:
+        super().__init__()
         self._node = node
         self._style = _sample_separator_style(node.entries, node.final_trivia)
         # ``=``-padding is per-entry, not a separator concern. Sample
@@ -1227,6 +1321,7 @@ class _InlineTable(Table):
             )
         else:
             self._eq_padding = (WhitespaceNode(" "), WhitespaceNode(" "))
+        self._populate()
 
     @override
     def _items(self) -> Iterator[tuple[str, TomlValue]]:
@@ -1428,9 +1523,11 @@ class _DottedSubTable(Table):
         host: _DottedHost,
         prefix: tuple[str, ...],
     ) -> None:
+        super().__init__()
         self._depth = depth
         self._host = host
         self._prefix = prefix
+        self._populate()
 
     @override
     def _items(self) -> Iterator[tuple[str, TomlValue]]:
@@ -1487,11 +1584,13 @@ class _StdTable(Table):
         owned_scope: list[SectionNode] | None = None,
         extra_kvs: list[tuple[tuple[str, ...], KeyValueNode]] | None = None,
     ) -> None:
+        super().__init__()
         self._doc_view = doc_view
         self._path = path
         self._pinned_sections = sections
         self._owned_scope = owned_scope
         self._extra_kvs = extra_kvs
+        self._populate()
 
     @override
     def _items(self) -> Iterator[tuple[str, TomlValue]]:
@@ -1798,7 +1897,9 @@ class _StdTable(Table):
             sections.insert(anchor_idx + 1, new_sec)
         else:
             sections.append(new_sec)
-        return _StdTable(self._doc_view, child_path)
+        view = _StdTable(self._doc_view, child_path)
+        dict.__setitem__(self, key, view)
+        return view
 
     @override
     def promote_array(self, key: str) -> AoT:
@@ -1844,6 +1945,7 @@ class _StdTable(Table):
         _insert_section_block(sections, insert_at, new_secs)
         aot = AoT(self._doc_view, child_path, [])
         aot._resync()  # noqa: SLF001
+        dict.__setitem__(self, key, aot)
         return aot
 
     @override
@@ -1874,6 +1976,10 @@ class _StdTable(Table):
         )
         _insert_section_block(sections, insert_at, new_secs)
         aot._resync()  # noqa: SLF001
+        # Make sure the AoT is reachable through dict storage even when it is
+        # empty (no [[..]] sections in the CST yet) and to give it stable
+        # identity across re-reads.
+        self._install_at_path(parts, aot)
         return aot
 
     @override
@@ -1895,9 +2001,41 @@ class _StdTable(Table):
         insert_at = _section_insert_index(sections, full_path)
         _insert_section_block(sections, insert_at, [new_sec])
         view = _StdTable(self._doc_view, full_path)
+        self._install_at_path(parts, view)
         for k, v in value.items():
             view[k] = v
         return view
+
+    def _install_at_path(self, parts: tuple[str, ...], obj: object) -> None:
+        """Install ``obj`` at the leaf of ``parts``, creating intermediate
+        implicit super-tables as needed in dict storage.
+
+        CST mutations are assumed to have already been performed; this
+        method only reconciles the dict-storage view.
+        """
+        cur: Table = self
+        for i, part in enumerate(parts[:-1]):
+            if super(Table, cur).__contains__(part):
+                child = super(Table, cur).__getitem__(part)
+                if not isinstance(child, Table):
+                    # Replaced en route: refresh from CST.
+                    cur._refresh_key(part)  # noqa: SLF001
+                    child = super(Table, cur).__getitem__(part)
+                    assert isinstance(child, Table)
+                cur = child
+            else:
+                # Materialise the intermediate from the CST (it must exist
+                # there now after the structural mutation).
+                cur._refresh_key(part)  # noqa: SLF001
+                next_cur = super(Table, cur).__getitem__(part)
+                assert isinstance(next_cur, Table)
+                cur = next_cur
+            # Avoid descending past the new branch we're installing into:
+            # break early if we've reached the parent of the leaf.
+            if i == len(parts) - 2:
+                break
+        leaf = parts[-1]
+        super(Table, cur).__setitem__(leaf, obj)
 
 
 class Document(_StdTable):
@@ -2357,12 +2495,19 @@ class Array(list[Any]):
     elements become detached.
     """
 
-    __slots__ = ("_node", "_style")
+    __slots__ = ("_attached", "_node", "_style")
 
     def __init__(self, node: ArrayNode) -> None:
         self._node = node
         self._style = _sample_separator_style(node.items, node.final_trivia)
+        self._attached = True
         super().__init__(_materialise_array(node))
+
+    def _detach(self) -> None:
+        self._attached = False
+        for v in self:
+            if isinstance(v, (Table, AoT, Array)):
+                v._detach()  # noqa: SLF001
 
     # ------------------------------------------------------------------
     # CST <-> list synchronisation helpers
@@ -2637,7 +2782,7 @@ class AoT(list[Table]):
     ``[[path]]`` sections in the underlying CST.
     """
 
-    __slots__ = ("_doc_view", "_path")
+    __slots__ = ("_attached", "_doc_view", "_path")
 
     def __init__(
         self,
@@ -2648,6 +2793,13 @@ class AoT(list[Table]):
         super().__init__(tables)
         self._doc_view = doc_view
         self._path = path
+        self._attached = True
+
+    def _detach(self) -> None:
+        self._attached = False
+        for v in self:
+            if isinstance(v, (Table, AoT, Array)):
+                v._detach()  # noqa: SLF001
 
     # ------------------------------------------------------------------
     # CST <-> list synchronisation
