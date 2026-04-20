@@ -754,9 +754,40 @@ class Table(MutableMapping[str, TomlValue]):
     cover every nested mapping you can encounter while walking a
     document.
 
-    Subclasses provide ``_items()`` which yields ``(key, value)`` pairs
-    in document order. The read path is wired up; mutation raises
-    :class:`tomlrt.TOMLError` until the next implementation phase.
+    .. rubric:: Tables are *views*, not snapshots
+
+    A :class:`Table` is a live view over a path in the underlying
+    document tree, not an owned mapping. It does **not** behave
+    exactly like a regular :class:`dict` when the surrounding
+    document changes:
+
+    * Mutations through any handle to the same logical table are
+      visible through every other handle to the same path.
+    * If the path becomes unreachable (for example after
+      ``del doc['foo']``), reads through the held view return as
+      if the table were empty, and writes through it create a fresh
+      ``[foo]`` section -- they do *not* mutate an orphaned snapshot.
+    * If the path is later reused for a *different* table -- e.g.
+      ``del doc['foo']; doc.set_table('foo', {...})``, or even just
+      ``doc.set_table('foo', {...})`` over an existing one -- a held
+      view will silently start reflecting the new contents. The
+      view is bound to the path, not to the original table's
+      identity.
+
+    This is essentially forced by TOML's data model: a single logical
+    table can be assembled from multiple ``[a]`` sections, sit under
+    an implicit super-table with no header of its own, or come from
+    a dotted-key fragment of a larger key/value. There is no single
+    node a :class:`Table` could "wrap" the way a :class:`dict` owns
+    its storage, and there is no stable cell-identity a held view
+    could be pinned to.
+
+    The practical rule is: **treat a :class:`Table` like a path-
+    shaped pointer into the document, not like an independent
+    object**. If you need a value that is guaranteed to be
+    independent of subsequent document mutations, copy out
+    explicitly -- ``snapshot = dict(table)`` for a shallow copy,
+    or :func:`copy.deepcopy` / a JSON round-trip for a deep one.
     """
 
     __slots__ = ()
