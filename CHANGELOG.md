@@ -47,6 +47,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Table.set_aot` and `Table.promote_array` now lay their `[[ ... ]]`
   blocks out with blank-line separators between entries, and with a
   blank line between the block and any preceding content.
+- Programmatically appending to an `AoT` (or appending the second
+  entry into a freshly-built one) now blank-line-separates the new
+  `[[ ... ]]` header from whatever precedes it in the document,
+  matching round-trip output of equivalent parsed input. Previously,
+  fresh AoTs and AoTs whose new entries followed an unrelated
+  sub-section were rendered with the headers visually glued together.
+  When existing entries clearly establish a no-blank-line style (≥ 2
+  sibling gaps to learn from), that style is still respected.
 
 ## [0.1.0] - 2026-04-20
 

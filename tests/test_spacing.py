@@ -93,13 +93,27 @@ def test_aot_insert_into_mixed_does_not_add_blank() -> None:
     )
 
 
-def test_aot_append_to_single_entry_does_not_add_blank() -> None:
+def test_aot_append_to_single_entry_adds_blank() -> None:
+    """With only one prior entry the style is ambiguous, so default to
+    canonical blank-separated TOML — matches what most users expect and
+    what re-parsing the result then dumping again produces."""
     src = "[[i]]\nx = 1\n"
     doc = tomlrt.parse(src)
     aot = doc["i"]
     assert isinstance(aot, tomlrt.AoT)
     aot.append({"x": 2})
-    assert tomlrt.dumps(doc) == "[[i]]\nx = 1\n[[i]]\nx = 2\n"
+    assert tomlrt.dumps(doc) == "[[i]]\nx = 1\n\n[[i]]\nx = 2\n"
+
+
+def test_aot_append_preserves_user_no_blank_style() -> None:
+    """When the existing entries clearly show no-blank-line spacing
+    (≥2 sibling gaps to learn from), respect the user's choice."""
+    src = "[[i]]\nx = 1\n[[i]]\nx = 2\n"
+    doc = tomlrt.parse(src)
+    aot = doc["i"]
+    assert isinstance(aot, tomlrt.AoT)
+    aot.append({"x": 3})
+    assert tomlrt.dumps(doc) == "[[i]]\nx = 1\n[[i]]\nx = 2\n[[i]]\nx = 3\n"
 
 
 def test_aot_extend_inherits_blank_after_first_added_entry() -> None:
@@ -285,3 +299,31 @@ def test_top_level_insert_into_existing_pre_header_section() -> None:
     # after insertion the new key follows ``first`` packed but a blank
     # line is added before ``[a]`` for visual clarity.
     assert tomlrt.dumps(doc) == "first = 0\nz = 99\n\n[a]\nx = 1\n"
+
+
+def test_aot_first_two_appends_into_empty_doc_blank_separate() -> None:
+    """Bug report: programmatically-built AoT entries rendered glued."""
+    doc = tomlrt.parse("")
+    aot = doc.set_aot("package")
+    aot.append({"name": "foo"})
+    aot.append({"name": "bar"})
+    assert tomlrt.dumps(doc) == (
+        '[[package]]\nname = "foo"\n\n[[package]]\nname = "bar"\n'
+    )
+
+
+def test_aot_append_after_sub_section_blank_separates() -> None:
+    """Bug report: an AoT entry following a previous entry's sub-section
+    must still be blank-separated from that sub-section."""
+    doc = tomlrt.parse("")
+    aot = doc.set_aot("package")
+    aot.append({"name": "foo", "version": "1.0"})
+    aot[-1].set_table("dependencies", {"bar": "^1"})
+    aot.append({"name": "baz", "version": "2.0"})
+    assert tomlrt.dumps(doc) == (
+        '[[package]]\nname = "foo"\nversion = "1.0"\n'
+        "\n"
+        '[package.dependencies]\nbar = "^1"\n'
+        "\n"
+        '[[package]]\nname = "baz"\nversion = "2.0"\n'
+    )
