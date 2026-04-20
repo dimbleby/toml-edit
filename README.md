@@ -22,6 +22,11 @@ doc["project"]["dependencies"].append("requests>=2")
 print(tomlrt.dumps(doc))   # comments and layout are preserved
 ```
 
+`Table` is a real `dict[str, Any]` subclass and `Array` is a real
+`list[Any]` subclass, so `isinstance(t, dict)`, `**t`, `json.dumps(t)`
+and any other API typed against `dict` / `list` accept tomlrt
+containers directly — no snapshot dance.
+
 ### Comment API
 
 ```python
