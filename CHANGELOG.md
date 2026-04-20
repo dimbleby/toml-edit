@@ -16,6 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ``key`` (overwriting any existing value) and returns the live view,
   so users can build `[[ ... ]]` sections without going through the
   inline-array path.
+- `Table.set_table(key, value=())` creates a standard-table section
+  at ``key``, replacing any existing value. Accepts dotted paths
+  (e.g. `"tool.poetry"`); intermediate tables are kept implicit so
+  no empty `[tool]` super-table headers are emitted.
+- `Table.ensure_table(key)` returns the table at ``key``, creating
+  an empty section if absent. Accepts dotted paths and walks through
+  implicit super-tables.
+- `Table.set_aot` now accepts dotted paths, mirroring `set_table`.
+- `Table.table`, `Table.array` and `Table.aot` typed accessors now
+  accept dotted paths for navigation through nested structures.
 - `Table.promote_array(key)` converts an existing inline array of
   inline tables into an array-of-tables, mirroring the existing
   `Table.promote_inline` for tables.

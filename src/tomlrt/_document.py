@@ -12,6 +12,7 @@ import sys
 from collections.abc import Mapping, MutableMapping
 from copy import deepcopy
 from datetime import date, datetime, time
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol, SupportsIndex, TypeAlias, overload
 
 if sys.version_info >= (3, 12):
@@ -620,12 +621,12 @@ def _build_promoted_aot_section(
     return section
 
 
-def _insert_aot_block(
+def _insert_section_block(
     sections: list[SectionNode],
     insert_at: int,
     new_secs: Sequence[SectionNode],
 ) -> None:
-    """Splice a freshly-built ``[[ ... ]]`` block into ``sections``.
+    """Splice a freshly-built block of ``[ ... ]`` / ``[[ ... ]]`` sections.
 
     Entries are blank-separated from each other, and a blank line is
     inserted before the block whenever ``sections[:insert_at]`` already
@@ -639,6 +640,90 @@ def _insert_aot_block(
             assert ns.header is not None
             ns.header.leading.pieces.insert(0, NewlineNode("\n"))
     sections[insert_at:insert_at] = new_secs
+
+
+def _parse_key_path(path: str) -> tuple[str, ...]:
+    """Split a dotted key path string into its bare segments.
+
+    Quoted segments are not currently supported; callers with exotic
+    keys should chain single-segment calls instead.
+    """
+    if not path:
+        msg = "key path must not be empty"
+        raise TOMLError(msg)
+    parts = path.split(".")
+    if any(not p for p in parts):
+        msg = f"key path {path!r} contains an empty segment"
+        raise TOMLError(msg)
+    return tuple(parts)
+
+
+def _purge_path(doc_view: _DocumentView, full_path: tuple[str, ...]) -> None:
+    """Remove every node addressable as ``full_path``.
+
+    Drops sections whose header is at or under ``full_path`` (purging
+    children too, mirroring :meth:`_StdTable._purge_conflicting`), and
+    drops KV entries in ancestor sections whose head key would steer
+    descent into ``full_path``.
+    """
+    plen = len(full_path)
+    sections = doc_view._node.sections  # noqa: SLF001
+    sections[:] = [
+        sec
+        for sec in sections
+        if not (
+            sec.header is not None
+            and len(sec.header.key.path) >= plen
+            and sec.header.key.path[:plen] == full_path
+        )
+    ]
+    for sec in sections:
+        sec_path: tuple[str, ...] = () if sec.header is None else sec.header.key.path
+        if len(sec_path) >= plen or full_path[: len(sec_path)] != sec_path:
+            continue
+        conflict_key = full_path[len(sec_path)]
+        sec.entries[:] = [kv for kv in sec.entries if kv.key.path[0] != conflict_key]
+
+
+def _section_insert_index(
+    sections: list[SectionNode],
+    full_path: tuple[str, ...],
+) -> int:
+    """Choose where to splice a new section with ``full_path``.
+
+    Prefers placement immediately after the last section that shares
+    ``full_path``'s parent prefix (so siblings group together); falls
+    back to the end of the document.
+    """
+    parent = full_path[:-1]
+    last_sibling = -1
+    for i, sec in enumerate(sections):
+        hdr = sec.header
+        if hdr is None:
+            continue
+        hpath = hdr.key.path
+        if len(hpath) >= len(parent) and hpath[: len(parent)] == parent:
+            last_sibling = i
+    if last_sibling < 0:
+        return len(sections)
+    return last_sibling + 1
+
+
+def _build_section(path: tuple[str, ...]) -> SectionNode:
+    """Build an empty ``[path]`` standard-table section."""
+    parts = [make_key_part(p) for p in path]
+    seps = ["."] * (len(parts) - 1)
+    header = TableHeaderNode(
+        leading=Trivia(),
+        kind="table",
+        inner_pre=None,
+        key=Key(parts=parts, separators=seps),
+        inner_post=None,
+        trailing=None,
+        trailing_comment=None,
+        newline=NewlineNode("\n"),
+    )
+    return SectionNode(header=header, entries=[])
 
 
 # ---------------------------------------------------------------------------
@@ -759,38 +844,57 @@ class Table(MutableMapping[str, TomlValue]):
     # ------------------------------------------------------------------
 
     def table(self, key: str) -> Table:
-        """Return ``self[key]`` typed as a :class:`Table`.
+        """Return the table at ``key``, typed as :class:`Table`.
 
-        Raises :class:`TypeError` if the value is not a table (inline or
-        standard).
+        ``key`` accepts a dotted path (e.g. ``"tool.poetry"``). Raises
+        :class:`KeyError` if any segment is missing, or :class:`TypeError`
+        if the destination is not a table.
         """
-        value = self[key]
+        value = self._lookup_path(key)
         if not isinstance(value, Table):
             msg = f"{key!r} is a {type(value).__name__}, not a Table"
             raise TypeError(msg)
         return value
 
     def array(self, key: str) -> Array:
-        """Return ``self[key]`` typed as an :class:`Array`.
+        """Return the array at ``key``, typed as :class:`Array`.
 
-        Raises :class:`TypeError` if the value is not an inline array.
+        ``key`` accepts a dotted path. Raises :class:`KeyError` if any
+        segment is missing, or :class:`TypeError` if the destination is
+        not an inline array.
         """
-        value = self[key]
+        value = self._lookup_path(key)
         if not isinstance(value, Array):
             msg = f"{key!r} is a {type(value).__name__}, not an Array"
             raise TypeError(msg)
         return value
 
     def aot(self, key: str) -> AoT:
-        """Return ``self[key]`` typed as an :class:`AoT` (array of tables).
+        """Return the array-of-tables at ``key``, typed as :class:`AoT`.
 
-        Raises :class:`TypeError` if the value is not an array of tables.
+        ``key`` accepts a dotted path. Raises :class:`KeyError` if any
+        segment is missing, or :class:`TypeError` if the destination is
+        not an array of tables.
         """
-        value = self[key]
+        value = self._lookup_path(key)
         if not isinstance(value, AoT):
             msg = f"{key!r} is a {type(value).__name__}, not an AoT"
             raise TypeError(msg)
         return value
+
+    def _lookup_path(self, key: str) -> TomlValue:
+        parts = _parse_key_path(key)
+        cur: TomlValue = self
+        for i, part in enumerate(parts):
+            if not isinstance(cur, Table):
+                head = ".".join(parts[:i])
+                msg = (
+                    f"cannot descend into {head!r}: it is a "
+                    f"{type(cur).__name__}, not a Table"
+                )
+                raise TypeError(msg)
+            cur = cur[part]
+        return cur
 
     # ------------------------------------------------------------------
     # Metadata side-channels (default raises; concrete subclasses override).
@@ -892,12 +996,57 @@ class Table(MutableMapping[str, TomlValue]):
     ) -> AoT:
         """Set ``key`` to an array-of-tables containing ``entries``.
 
-        Replaces any existing value at ``key``. Each entry becomes a
-        ``[[parent.key]]`` section. The returned :class:`AoT` is a live
-        view; appending to it adds further sections.
+        ``key`` accepts a dotted path (e.g. ``"tool.poetry.source"``);
+        intermediate tables are kept implicit (no ``[tool]`` /
+        ``[tool.poetry]`` headers are emitted). Replaces any existing
+        value at the destination path. The returned :class:`AoT` is a
+        live view; appending to it adds further sections.
         """
         msg = "this table flavour does not support array-of-tables assignment"
         raise TOMLError(msg)
+
+    def set_table(
+        self,
+        key: str,  # noqa: ARG002
+        value: Mapping[str, object] = MappingProxyType({}),  # noqa: ARG002
+    ) -> Table:
+        """Set ``key`` to a standard table containing ``value``'s entries.
+
+        ``key`` accepts a dotted path (e.g. ``"tool.poetry"``);
+        intermediate tables are kept implicit, so no ``[tool]`` super-
+        table header is emitted. Replaces any existing value (including
+        sub-sections) at the destination path. The returned
+        :class:`Table` is a live view of the newly-created section.
+        """
+        msg = "this table flavour does not support standard-table assignment"
+        raise TOMLError(msg)
+
+    def ensure_table(self, key: str) -> Table:
+        """Return the table at ``key``, creating an empty one if absent.
+
+        ``key`` accepts a dotted path. If the destination already exists
+        and is table-shaped (an explicit section, an implicit super-
+        table, or an inline table), the existing live view is returned
+        and no mutation occurs. Raises :class:`TOMLError` when the path
+        names a non-table value.
+        """
+        parts = _parse_key_path(key)
+        cur: Table = self
+        for i, part in enumerate(parts):
+            if part in cur:
+                child = cur[part]
+                if not isinstance(child, Table):
+                    full = ".".join(parts[: i + 1])
+                    msg = (
+                        f"cannot ensure table at {full!r}: existing value is "
+                        f"a {type(child).__name__}"
+                    )
+                    raise TOMLError(msg)
+                cur = child
+            else:
+                tail = ".".join(parts[i:])
+                return cur.set_table(tail)
+        return cur
 
 
 class _InlineTable(Table):
@@ -1546,7 +1695,7 @@ class _StdTable(Table):
             insert_at = next(i for i, s in enumerate(sections) if s is anchor) + 1
         else:
             insert_at = len(sections)
-        _insert_aot_block(sections, insert_at, new_secs)
+        _insert_section_block(sections, insert_at, new_secs)
         aot = AoT(self._doc_view, child_path, [])
         aot._resync()  # noqa: SLF001
         return aot
@@ -1557,19 +1706,52 @@ class _StdTable(Table):
         key: str,
         entries: Iterable[Mapping[str, object]] = (),
     ) -> AoT:
-        kind, _ = self._classify(key)
-        if kind != "absent":
-            self._purge_conflicting(key)
-        aot = AoT(self._doc_view, (*self._path, key), [])
+        parts = _parse_key_path(key)
+        full_path = (*self._path, *parts)
+        if len(parts) == 1:
+            kind, _ = self._classify(parts[0])
+            if kind != "absent":
+                self._purge_conflicting(parts[0])
+        else:
+            _purge_path(self._doc_view, full_path)
+        aot = AoT(self._doc_view, full_path, [])
         new_secs: list[SectionNode] = []
         for entry in entries:
             sec = aot._make_header_section()  # noqa: SLF001
             aot._populate_section(sec, entry)  # noqa: SLF001
             new_secs.append(sec)
         sections = self._doc_view._node.sections  # noqa: SLF001
-        _insert_aot_block(sections, len(sections), new_secs)
+        insert_at = (
+            len(sections)
+            if len(parts) == 1
+            else _section_insert_index(sections, full_path)
+        )
+        _insert_section_block(sections, insert_at, new_secs)
         aot._resync()  # noqa: SLF001
         return aot
+
+    @override
+    def set_table(
+        self,
+        key: str,
+        value: Mapping[str, object] = MappingProxyType({}),
+    ) -> Table:
+        parts = _parse_key_path(key)
+        full_path = (*self._path, *parts)
+        if len(parts) == 1:
+            kind, _ = self._classify(parts[0])
+            if kind != "absent":
+                self._purge_conflicting(parts[0])
+        else:
+            _purge_path(self._doc_view, full_path)
+        new_sec = _build_section(full_path)
+        sections = self._doc_view._node.sections  # noqa: SLF001
+        insert_at = _section_insert_index(sections, full_path)
+        _insert_section_block(sections, insert_at, [new_sec])
+        view = _StdTable(self._doc_view, full_path)
+        for k, v in value.items():
+            view[k] = v
+        return view
 
 
 class Document(_StdTable):
