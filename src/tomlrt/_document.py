@@ -1541,55 +1541,69 @@ class _DottedSubTable(Table):
 class _StdTable(Table):
     """Standard TOML table view: aggregates physical sections by path."""
 
-    __slots__ = ("_anchor", "_doc_node", "_extras", "_path", "_scope")
+    __slots__ = ("_anchor", "_doc_node", "_extras", "_owner_anchor", "_path")
 
     def __init__(
         self,
         doc_node: DocumentNode,
         path: tuple[str, ...],
         *,
-        scope: list[SectionNode] | None = None,
         anchor: SectionNode | None = None,
+        owner_anchor: SectionNode | None = None,
         extras: list[tuple[tuple[str, ...], KeyValueNode]] | None = None,
     ) -> None:
         super().__init__()
         self._doc_node = doc_node
         self._path = path
-        # ``scope`` narrows the section-scan window (used by AoT entries
-        # and by recursive sub-table descent for perf). ``None`` means
-        # "all sections in the doc".
-        self._scope = scope
         # ``anchor`` is set only for AoT entries: it is the [[path]]
         # section that owns this entry. With no anchor, all sections
         # whose header matches ``path`` are direct sections of this
         # table.
         self._anchor = anchor
+        # ``owner_anchor`` is the AoT [[..]] section whose owned range
+        # bounds this table's universe of sections. For an AoT entry
+        # itself it is the entry's own anchor; for a sub-table inside
+        # an AoT entry it is the enclosing entry's anchor; for tables
+        # outside any AoT entry it is ``None`` (the whole document).
+        # Crucially, the actual section pool is *re-derived* from
+        # ``owner_anchor`` on every read via ``_scope()``: caching it
+        # would let purges and inserts leak stale or missing sections
+        # into the dict-storage view (see ``_refresh_key``).
+        self._owner_anchor = owner_anchor if owner_anchor is not None else anchor
         # ``extras`` carries dotted-key entries inherited from an
         # ancestor section that contributed prefix ``path[:n]`` for
         # some n.
         self._extras = extras
         self._populate()
 
+    def _scope(self) -> list[SectionNode] | None:
+        owner = self._owner_anchor
+        if owner is None:
+            return None
+        return [owner, *self._doc_node.aot_owned_range(owner)]
+
     @override
     def _items(self) -> Iterator[tuple[str, TomlValue]]:
         return _iter_table(
             self._doc_node,
             self._path,
-            scope=self._scope,
+            scope=self._scope(),
             anchor=self._anchor,
+            owner_anchor=self._owner_anchor,
             extras=self._extras,
         )
 
     def _direct_sections(self) -> list[SectionNode]:
         if self._anchor is not None:
             return [self._anchor]
-        scope = self._scope if self._scope is not None else self._doc_node.sections
         path = self._path
+        scope = self._scope()
+        sections = scope if scope is not None else self._doc_node.sections
         if path == ():
-            return [s for s in scope if s.header is None]
+            return [s for s in sections if s.header is None]
         return [
             s
-            for s in scope
+            for s in sections
             if s.header is not None
             and s.header.kind == "table"
             and s.header.key.path == path
@@ -1603,17 +1617,19 @@ class _StdTable(Table):
             # Top of detachment subtree: capture every section under our
             # path and move them into a private DocumentNode so later
             # structural mutations through this table cannot reach the
-            # original document. When ``_scope`` is set (AoT entries
-            # and recursively-scoped sub-tables) it already lists
-            # exactly those sections; otherwise we have to scan.
+            # original document. AoT entries capture exactly the anchor
+            # plus its owned sub-section run; everything else captures
+            # all sections rooted at our path.
             captured = (
-                self._scope if self._scope is not None else self._sections_under_path()
+                [self._anchor, *self._doc_node.aot_owned_range(self._anchor)]
+                if self._anchor is not None
+                else self._sections_under_path()
             )
             doc_node = DocumentNode(sections=list(captured))
         self._doc_node = doc_node
-        # Now that scope refers to the orphan view's sections, clear it
-        # so iteration falls back to scanning the orphan in full.
-        self._scope = None
+        # The captured sections form a self-contained little document;
+        # there is no longer an enclosing AoT entry to bound our world.
+        self._owner_anchor = self._anchor
         super()._detach(doc_node)
 
     def _sections_under_path(self) -> list[SectionNode]:
@@ -2842,7 +2858,6 @@ class AoT(list[Table]):
         new_entries: list[Table] = []
         kept: set[int] = set()
         for s in own:
-            owned = self._doc_node.aot_owned_range(s)
             cached = existing.get(id(s))
             if cached is not None:
                 kept.add(id(cached))
@@ -2852,7 +2867,6 @@ class AoT(list[Table]):
                     _StdTable(
                         self._doc_node,
                         self._path,
-                        scope=[s, *owned],
                         anchor=s,
                     ),
                 )
@@ -3044,6 +3058,7 @@ def _iter_table(
     *,
     scope: list[SectionNode] | None = None,
     anchor: SectionNode | None = None,
+    owner_anchor: SectionNode | None = None,
     extras: list[tuple[tuple[str, ...], KeyValueNode]] | None = None,
 ) -> Iterator[tuple[str, TomlValue]]:
     # The pool of sections we walk in physical order. ``scope``
@@ -3119,17 +3134,9 @@ def _iter_table(
         sub_secs = sub_by_head.get(head, [])
 
         if aot_secs:
-            tables: list[Table] = []
-            for s in aot_secs:
-                owned = doc_node.aot_owned_range(s)
-                tables.append(
-                    _StdTable(
-                        doc_node,
-                        (*path, head),
-                        scope=[s, *owned],
-                        anchor=s,
-                    ),
-                )
+            tables: list[Table] = [
+                _StdTable(doc_node, (*path, head), anchor=s) for s in aot_secs
+            ]
             yield head, AoT(doc_node, (*path, head), tables)
             continue
 
@@ -3185,7 +3192,7 @@ def _iter_table(
             _StdTable(
                 doc_node,
                 (*path, head),
-                scope=sub_secs,
+                owner_anchor=anchor or owner_anchor,
                 extras=child_extras or None,
             ),
         )
