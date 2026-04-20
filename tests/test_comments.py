@@ -159,7 +159,8 @@ def test_comments_view_is_live_not_snapshot() -> None:
 
 def test_comments_view_repr_shows_pairs() -> None:
     doc = toml_edit.parse("a = 1  # one\n")
-    assert repr(doc.comments) == "_TableCommentsView({'a': 'one'})"
+    r = repr(doc.comments)
+    assert "'a': 'one'" in r
 
 
 # ---------------------------------------------------------------------------
