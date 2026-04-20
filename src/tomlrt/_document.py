@@ -101,20 +101,15 @@ def _to_plain(value: object) -> Any:
 # ---------------------------------------------------------------------------
 
 
+_SCALAR_NODE_TYPES = (StringNode, IntegerNode, FloatNode, BoolNode, DateTimeNode)
+
+
 def _value_for(node: ValueNode) -> TomlValue:
     if isinstance(node, ArrayNode):
         return Array(node)
     if isinstance(node, InlineTableNode):
         return _InlineTable(node)
-    if isinstance(node, StringNode):
-        return node.value
-    if isinstance(node, BoolNode):
-        return node.value
-    if isinstance(node, IntegerNode):
-        return node.value
-    if isinstance(node, FloatNode):
-        return node.value
-    if isinstance(node, DateTimeNode):
+    if isinstance(node, _SCALAR_NODE_TYPES):
         return node.value
     assert_never(node)
 
@@ -3050,9 +3045,7 @@ def _iter_table(
     # The pool of sections we walk in physical order. ``scope``
     # narrows it for AoT entries and recursive sub-table descent;
     # otherwise we walk the whole document.
-    section_pool: list[SectionNode] = (
-        scope if scope is not None else list(doc_node.sections)
-    )
+    section_pool: list[SectionNode] = scope if scope is not None else doc_node.sections
 
     # Sections whose entries are "direct" key/values at this exact path.
     direct_secs: list[SectionNode]

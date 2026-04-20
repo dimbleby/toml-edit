@@ -79,6 +79,7 @@ _RE_COMMENT_BODY = re.compile(r"[^\r\n\x00-\x08\x0b-\x1f\x7f]*")
 class _Parser:
     __slots__ = (
         "_aot_paths",
+        "_aot_subpaths",
         "_current_section",
         "_dotted_paths",
         "_end",
@@ -107,6 +108,10 @@ class _Parser:
         # Per-AoT-entry: cleared (for paths under H) when [[H]] opens a new entry.
         self._value_paths: set[tuple[str, ...]] = set()
         self._dotted_paths: set[tuple[str, ...]] = set()
+        # Index from each active AoT path to all sub-paths registered under
+        # it across the 5 sets above. Lets ``_reset_scope_under`` work in
+        # O(descendants) instead of O(all tracked paths).
+        self._aot_subpaths: dict[tuple[str, ...], list[tuple[str, ...]]] = {}
         self._current_section: tuple[str, ...] = ()
         self._value_depth = 0
 
@@ -330,16 +335,23 @@ class _Parser:
         self._validate_header(path, kind, at=self._pos)
         if kind == "table":
             self._explicit_table_paths.add(path)
+            self._track(path)
         else:
             # Opening a new AoT entry at `path` invalidates any per-entry
             # tracking that was scoped to the previous entry.
             self._reset_scope_under(path)
             self._aot_paths.add(path)
+            self._track(path)
         # Intermediate prefixes become implicit tables (only mark new ones).
         for i in range(1, len(path)):
             sub = path[:i]
-            if sub not in self._explicit_table_paths and sub not in self._aot_paths:
+            if (
+                sub not in self._explicit_table_paths
+                and sub not in self._aot_paths
+                and sub not in self._implicit_table_paths
+            ):
                 self._implicit_table_paths.add(sub)
+                self._track(sub)
 
         return TableHeaderNode(
             leading=leading,
@@ -470,27 +482,42 @@ class _Parser:
                 )
                 raise self._error(msg, at=at)
 
+    def _track(self, p: tuple[str, ...]) -> None:
+        """Index ``p`` under its longest active-AoT-path ancestor, if any.
+
+        Only paths registered here can be reset by ``_reset_scope_under``.
+        Most paths in a typical document have no AoT ancestor and the
+        prefix walk costs only a handful of hash lookups.
+        """
+        aot_paths = self._aot_paths
+        for i in range(len(p) - 1, 0, -1):
+            prefix = p[:i]
+            if prefix in aot_paths:
+                self._aot_subpaths.setdefault(prefix, []).append(p)
+                return
+
     def _reset_scope_under(self, path: tuple[str, ...]) -> None:
         """Forget per-entry tracking for paths strictly under ``path``.
 
         Called when a new AoT entry at ``path`` is opened: prior entries'
         keys, dotted-prefix paths and explicit sub-table headers are
-        replaced by the fresh entry's own.
+        replaced by the fresh entry's own. Runs in O(k) where k is the
+        number of paths actually registered under ``path``.
         """
-        n = len(path)
-
-        def strict_descendant(p: tuple[str, ...]) -> bool:
-            return len(p) > n and p[:n] == path
-
-        for s in (
-            self._value_paths,
-            self._dotted_paths,
-            self._explicit_table_paths,
-            self._implicit_table_paths,
-            self._aot_paths,
-        ):
-            for p in [p for p in s if strict_descendant(p)]:
-                s.discard(p)
+        subs = self._aot_subpaths.pop(path, None)
+        if not subs:
+            return
+        nested_aots: list[tuple[str, ...]] = []
+        for p in subs:
+            if p in self._aot_paths:
+                nested_aots.append(p)
+            self._value_paths.discard(p)
+            self._dotted_paths.discard(p)
+            self._explicit_table_paths.discard(p)
+            self._implicit_table_paths.discard(p)
+            self._aot_paths.discard(p)
+        for nested in nested_aots:
+            self._reset_scope_under(nested)
 
     def _record_keyvalue(self, kv: KeyValueNode) -> None:
         section = self._current_section
@@ -524,7 +551,9 @@ class _Parser:
                 msg = f"cannot extend array-of-tables {'.'.join(sub)!r} via dotted keys"
                 raise self._error(msg, at=at)
             self._dotted_paths.add(sub)
+            self._track(sub)
         self._value_paths.add(full)
+        self._track(full)
         # Inline-table values: validate within-table dups and register their
         # nested key paths so cross-section headers/keys see the conflicts.
         if isinstance(kv.value, InlineTableNode):
@@ -573,8 +602,11 @@ class _Parser:
             if abs_prefix is not None:
                 full = abs_prefix + path
                 self._value_paths.add(full)
+                self._track(full)
                 for i in range(1, len(path)):
-                    self._dotted_paths.add(abs_prefix + path[:i])
+                    sub = abs_prefix + path[:i]
+                    self._dotted_paths.add(sub)
+                    self._track(sub)
             sub_abs: tuple[str, ...] | None
             if isinstance(entry.value, InlineTableNode):
                 sub_abs = (abs_prefix + path) if abs_prefix is not None else None
