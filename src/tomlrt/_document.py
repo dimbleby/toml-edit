@@ -19,7 +19,7 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override
 
-from tomlrt._errors import TOMLEditError
+from tomlrt._errors import TOMLError
 from tomlrt._nodes import (
     ArrayNode,
     BoolNode,
@@ -170,12 +170,12 @@ def _format_comment(text: str) -> str:
     """Format user text as the payload for a :class:`CommentNode`.
 
     Adds a leading ``#`` plus a space (unless the user already supplied
-    one). Raises :class:`TOMLEditError` if ``text`` contains any line
+    one). Raises :class:`TOMLError` if ``text`` contains any line
     terminator, since comments are single-line by definition.
     """
     if "\n" in text or "\r" in text:
         msg = "comment text must not contain a line terminator"
-        raise TOMLEditError(msg)
+        raise TOMLError(msg)
     if text.startswith("#"):
         return text
     if text == "":
@@ -587,7 +587,7 @@ class Table(MutableMapping[str, TomlValue]):
 
     Subclasses provide ``_items()`` which yields ``(key, value)`` pairs
     in document order. The read path is wired up; mutation raises
-    :class:`tomlrt.TOMLEditError` until the next implementation phase.
+    :class:`tomlrt.TOMLError` until the next implementation phase.
     """
 
     __slots__ = ()
@@ -671,11 +671,11 @@ class Table(MutableMapping[str, TomlValue]):
     # Subclasses override these.
     def _set_value(self, key: str, value: object) -> None:  # noqa: ARG002, pragma: no cover
         msg = "this table flavour does not support mutation"
-        raise TOMLEditError(msg)
+        raise TOMLError(msg)
 
     def _delete_value(self, key: str) -> None:  # noqa: ARG002, pragma: no cover
         msg = "this table flavour does not support mutation"
-        raise TOMLEditError(msg)
+        raise TOMLError(msg)
 
     @override
     def __repr__(self) -> str:
@@ -735,7 +735,7 @@ class Table(MutableMapping[str, TomlValue]):
         comment text without the leading ``#`` or surrounding whitespace.
         """
         msg = "this table flavour does not support the comment API"
-        raise TOMLEditError(msg)
+        raise TOMLError(msg)
 
     @property
     def leading_comments(self) -> MutableMapping[str, tuple[str, ...]]:
@@ -745,7 +745,7 @@ class Table(MutableMapping[str, TomlValue]):
         Assigning an empty tuple or deleting a key removes the block.
         """
         msg = "this table flavour does not support the comment API"
-        raise TOMLEditError(msg)
+        raise TOMLError(msg)
 
     @property
     def header_comment(self) -> str | None:
@@ -753,7 +753,7 @@ class Table(MutableMapping[str, TomlValue]):
 
         ``None`` means the header has no trailing comment. Setting
         ``None`` or ``""`` removes any existing comment. Raises
-        :class:`TOMLEditError` for the top-level :class:`Document`,
+        :class:`TOMLError` for the top-level :class:`Document`,
         for inline tables, and for any logical table that exists only
         through implicit parents (no physical header in source).
 
@@ -761,17 +761,17 @@ class Table(MutableMapping[str, TomlValue]):
         sections, this refers to the *first* such header.
         """
         msg = "this table flavour does not support the header comment API"
-        raise TOMLEditError(msg)
+        raise TOMLError(msg)
 
     @header_comment.setter
     def header_comment(self, value: str | None) -> None:  # noqa: ARG002
         msg = "this table flavour does not support the header comment API"
-        raise TOMLEditError(msg)
+        raise TOMLError(msg)
 
     @header_comment.deleter
     def header_comment(self) -> None:
         msg = "this table flavour does not support the header comment API"
-        raise TOMLEditError(msg)
+        raise TOMLError(msg)
 
     @property
     def header_leading_comments(self) -> tuple[str, ...]:
@@ -783,17 +783,17 @@ class Table(MutableMapping[str, TomlValue]):
         tuple removes the block. Raises like :attr:`header_comment`.
         """
         msg = "this table flavour does not support the header comment API"
-        raise TOMLEditError(msg)
+        raise TOMLError(msg)
 
     @header_leading_comments.setter
     def header_leading_comments(self, value: Sequence[str]) -> None:  # noqa: ARG002
         msg = "this table flavour does not support the header comment API"
-        raise TOMLEditError(msg)
+        raise TOMLError(msg)
 
     @header_leading_comments.deleter
     def header_leading_comments(self) -> None:
         msg = "this table flavour does not support the header comment API"
-        raise TOMLEditError(msg)
+        raise TOMLError(msg)
 
     def promote_inline(self, key: str) -> Table:  # noqa: ARG002
         """Promote an inline-table-valued ``key`` to a standard table.
@@ -803,7 +803,7 @@ class Table(MutableMapping[str, TomlValue]):
         expansions on its members.
         """
         msg = "this table flavour does not support inline-table promotion"
-        raise TOMLEditError(msg)
+        raise TOMLError(msg)
 
 
 class _InlineTable(Table):
@@ -1333,7 +1333,7 @@ class _StdTable(Table):
             "header (it exists only through implicit parents); the "
             "header comment API is unavailable"
         )
-        raise TOMLEditError(msg)
+        raise TOMLError(msg)
 
     @property  # type: ignore[explicit-override]
     @override
@@ -1380,7 +1380,7 @@ class _StdTable(Table):
         sec, kv = self._find_direct_kv(key)
         if not isinstance(kv.value, InlineTableNode):
             msg = f"{key!r} is not an inline table; nothing to promote"
-            raise TOMLEditError(msg)
+            raise TOMLError(msg)
         inline = kv.value
         child_path = (*self._path, key)
         # Refuse if a [child_path] section already exists in the document
@@ -1392,7 +1392,7 @@ class _StdTable(Table):
             if hdr is not None and hdr.key.path == child_path:  # pragma: no cover
                 joined = ".".join(child_path)
                 msg = f"cannot promote {key!r}: a [{joined}] section already exists"
-                raise TOMLEditError(msg)
+                raise TOMLError(msg)
         new_sec = _build_promoted_section(child_path, inline, kv)
         # Remove the inline KV from its host section.
         sec.entries.remove(kv)
@@ -2057,14 +2057,14 @@ class AoT(list[Table]):
             for k, v in value.items():
                 if not isinstance(k, str):
                     msg = f"AoT entry keys must be strings, got {type(k).__name__}"
-                    raise TOMLEditError(msg)
+                    raise TOMLError(msg)
                 sec.entries.append(make_keyvalue_node(k, v))
             return
         msg = (
             f"cannot append a value of type {type(value).__name__} to an "
             "array-of-tables; expected a dict or Table"
         )
-        raise TOMLEditError(msg)
+        raise TOMLError(msg)
 
     # ------------------------------------------------------------------
     # Mutators
