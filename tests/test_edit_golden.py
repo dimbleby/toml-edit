@@ -320,6 +320,44 @@ def test_set_value_overwriting_top_level_table() -> None:
     assert _reparses(out) == {"a": 99, "b": {"y": 2}}
 
 
+def test_del_subtable() -> None:
+    src = "[a]\nx = 1\n[a.b]\ny = 2\n[a.b.c]\nz = 3\n[other]\nq = 1\n"
+    doc = toml_edit.parse(src)
+    a = doc["a"]
+    assert isinstance(a, toml_edit.Table)
+    del a["b"]
+    out = toml_edit.dumps(doc)
+    assert _reparses(out) == {"a": {"x": 1}, "other": {"q": 1}}
+
+
+def test_del_aot() -> None:
+    src = '[a]\nx = 1\n[[a.items]]\nname = "first"\n[[a.items]]\nname = "second"\n'
+    doc = toml_edit.parse(src)
+    a = doc["a"]
+    assert isinstance(a, toml_edit.Table)
+    del a["items"]
+    out = toml_edit.dumps(doc)
+    assert _reparses(out) == {"a": {"x": 1}}
+
+
+def test_del_dotted_subtree() -> None:
+    src = "[a]\nb.c = 1\nb.d = 2\nx = 9\n"
+    doc = toml_edit.parse(src)
+    a = doc["a"]
+    assert isinstance(a, toml_edit.Table)
+    del a["b"]
+    out = toml_edit.dumps(doc)
+    assert _reparses(out) == {"a": {"x": 9}}
+
+
+def test_del_missing_raises_keyerror() -> None:
+    doc = toml_edit.parse("[a]\nx = 1\n")
+    a = doc["a"]
+    assert isinstance(a, toml_edit.Table)
+    with pytest.raises(KeyError):
+        del a["missing"]
+
+
 # ---------------------------------------------------------------------------
 # Sub-table access through AoT entry (uses the new owned_scope path)
 # ---------------------------------------------------------------------------
