@@ -8,6 +8,7 @@ wheels/
 
 # Virtual environments
 .venv
+.python-version
 vendor/
 .coverage
 dist/
