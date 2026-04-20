@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Synthesised inline arrays no longer carry padding spaces inside the
+  brackets. ``[1, 2, 3]`` instead of ``[ 1, 2, 3 ]``, and ``[1]``
+  instead of ``[ 1 ]``. Inter-element spaces are unchanged. Inline
+  tables (``{ a = 1, b = 2 }``) still keep their conventional inner
+  spacing. Parsed arrays round-trip with their original spacing.
+
 ### Added
 
 - `AoT.add(entry={})` appends ``entry`` and returns the new

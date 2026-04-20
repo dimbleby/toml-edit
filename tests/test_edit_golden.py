@@ -863,7 +863,7 @@ def test_set_array_creates_inline_array() -> None:
     doc = tomlrt.loads("")
     arr = doc.set_array("authors", ["A", "B"])
     assert isinstance(arr, tomlrt.Array)
-    assert tomlrt.dumps(doc) == 'authors = [ "A", "B" ]\n'
+    assert tomlrt.dumps(doc) == 'authors = ["A", "B"]\n'
 
 
 def test_set_array_multiline_lays_out_one_per_line() -> None:
@@ -896,13 +896,13 @@ def test_set_array_dotted_path_creates_parent_section() -> None:
 def test_set_array_dotted_path_uses_existing_section() -> None:
     doc = tomlrt.loads('[tool.poetry]\nname = "x"\n')
     doc.set_array("tool.poetry.authors", ["A", "B"])
-    assert tomlrt.dumps(doc) == ('[tool.poetry]\nname = "x"\nauthors = [ "A", "B" ]\n')
+    assert tomlrt.dumps(doc) == ('[tool.poetry]\nname = "x"\nauthors = ["A", "B"]\n')
 
 
 def test_set_array_replaces_existing_value() -> None:
     doc = tomlrt.loads("a = 1\n")
     doc.set_array("a", [1, 2, 3])
-    assert tomlrt.dumps(doc) == "a = [ 1, 2, 3 ]\n"
+    assert tomlrt.dumps(doc) == "a = [1, 2, 3]\n"
 
 
 def test_set_array_round_trips() -> None:
