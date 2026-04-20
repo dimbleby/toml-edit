@@ -910,3 +910,38 @@ def test_set_array_round_trips() -> None:
     doc.set_array("tool.poetry.authors", ["A", "B"], multiline=True)
     rendered = tomlrt.dumps(doc)
     assert tomlrt.dumps(tomlrt.loads(rendered)) == rendered
+
+
+def test_assign_over_aot_keeps_dict_view_in_sync() -> None:
+    """Regression: the dict view used to keep a stale AoT after an assign."""
+    src = '[tool]\n\n[[tool.source]]\nname = "foo"\n'
+    doc = tomlrt.loads(src)
+    doc["tool"]["source"] = {}
+    assert isinstance(doc["tool"]["source"], tomlrt.Table)
+    assert dict(doc["tool"]["source"]) == {}
+    assert tomlrt.dumps(doc) == "[tool]\nsource = {}\n"
+
+
+def test_del_then_assign_keeps_dict_view_in_sync() -> None:
+    """Regression: re-assigning a key after del used to revive the old AoT."""
+    src = '[tool]\n\n[[tool.source]]\nname = "foo"\n'
+    doc = tomlrt.loads(src)
+    del doc["tool"]["source"]
+    doc["tool"]["source"] = {}
+    assert isinstance(doc["tool"]["source"], tomlrt.Table)
+    assert dict(doc["tool"]["source"]) == {}
+    assert tomlrt.dumps(doc) == "[tool]\nsource = {}\n"
+
+
+def test_pop_then_assign_keeps_dict_view_in_sync() -> None:
+    """Regression: dict view returned the old sub-table's keys after re-assign."""
+    src = (
+        '[tool.poetry]\nname = "x"\n\n[tool.poetry.extras]\na = ["one"]\nb = ["two"]\n'
+    )
+    doc = tomlrt.loads(src)
+    poetry = doc["tool"]["poetry"]
+    poetry.pop("extras")
+    poetry["extras"] = {"a-norm": ["one"], "b-norm": ["two"]}
+    extras = poetry["extras"]
+    assert isinstance(extras, tomlrt.Table)
+    assert dict(extras) == {"a-norm": ["one"], "b-norm": ["two"]}

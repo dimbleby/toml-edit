@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The dict-style view of a parsed :class:`Document` no longer goes
+  stale relative to :func:`dumps` after structural mutations.
+  Assigning over an array-of-tables, deleting then re-binding a key,
+  and ``pop()`` followed by re-assignment all kept showing the
+  pre-mutation value while the rendered TOML reflected the new state.
+  The cached per-table section scope that drove this has been
+  replaced with on-demand derivation from the surrounding AoT entry
+  (when there is one), so dict reads and ``dumps`` output are always
+  consistent.
 - Import of `assert_never` no longer breaks on Python 3.10. The
   symbol is now sourced from `typing_extensions` on interpreters
   older than 3.11, mirroring the existing `override` import.
