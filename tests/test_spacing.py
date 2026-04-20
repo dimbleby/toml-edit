@@ -305,7 +305,8 @@ def test_top_level_insert_into_existing_pre_header_section() -> None:
 def test_aot_first_two_appends_into_empty_doc_blank_separate() -> None:
     """Bug report: programmatically-built AoT entries rendered glued."""
     doc = tomlrt.parse("")
-    aot = doc.install("package", AoT())
+    doc["package"] = AoT()
+    aot = doc["package"]
     aot.append({"name": "foo"})
     aot.append({"name": "bar"})
     assert tomlrt.dumps(doc) == (
@@ -317,9 +318,10 @@ def test_aot_append_after_sub_section_blank_separates() -> None:
     """Bug report: an AoT entry following a previous entry's sub-section
     must still be blank-separated from that sub-section."""
     doc = tomlrt.parse("")
-    aot = doc.install("package", AoT())
+    doc["package"] = AoT()
+    aot = doc["package"]
     aot.append({"name": "foo", "version": "1.0"})
-    aot[-1].install("dependencies", Table.section({"bar": "^1"}))
+    aot[-1]["dependencies"] = Table.section({"bar": "^1"})
     aot.append({"name": "baz", "version": "2.0"})
     assert tomlrt.dumps(doc) == (
         '[[package]]\nname = "foo"\nversion = "1.0"\n'
