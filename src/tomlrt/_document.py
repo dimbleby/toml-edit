@@ -3323,6 +3323,7 @@ class _DocumentView:
                     _StdTable(
                         self,
                         (*path, head),
+                        owned_scope=sub_secs,
                         extra_kvs=child_extras or None,
                     ),
                 )

@@ -61,6 +61,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of ``[ 1 ]``. Inter-element spaces are unchanged. Inline
   tables (``{ a = 1, b = 2 }``) still keep their conventional inner
   spacing. Parsed arrays round-trip with their original spacing.
+- Modest parse speedup: cache `Key.path` so the dotted-key tuple is
+  built once per key, and pass the parent's already-scoped section
+  list through to child `_StdTable` constructors so each child's
+  initial population walks only its own subtree instead of the whole
+  document.
 
 ### Added
 
