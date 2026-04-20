@@ -675,7 +675,7 @@ def _build_promoted_aot_section(
 
 
 def _insert_section_block(
-    sections: list[SectionNode],
+    doc_node: DocumentNode,
     insert_at: int,
     new_secs: Sequence[SectionNode],
 ) -> None:
@@ -685,6 +685,7 @@ def _insert_section_block(
     inserted before the block whenever ``sections[:insert_at]`` already
     holds rendered content.
     """
+    sections = doc_node.sections
     preceding_has_content = any(
         s.header is not None or s.entries for s in sections[:insert_at]
     )
@@ -692,6 +693,8 @@ def _insert_section_block(
         if i > 0 or preceding_has_content:
             assert ns.header is not None
             ns.header.leading.pieces.insert(0, NewlineNode("\n"))
+    if new_secs and new_secs[0].header is not None:
+        doc_node.adopt_preamble_into(new_secs[0].header.leading)
     sections[insert_at:insert_at] = new_secs
 
 
@@ -1792,6 +1795,10 @@ class _StdTable(Table):
         if _gaps_uniformly_blank([kv.leading for kv in target.entries[1:]]):
             new_kv.leading.pieces.insert(0, NewlineNode("\n"))
         _ensure_trailing_newline(target)
+        # Migrate any parked preamble (only present when this is the
+        # first content being added to a previously-empty doc) ahead of
+        # the new KV. No-op once the doc has structural content.
+        self._doc_node.adopt_preamble_into(new_kv.leading)
         target.entries.append(new_kv)
         # Top-level only: if this assignment is into the implicit
         # pre-header section and a ``[table]`` follows, ensure a blank
@@ -1832,6 +1839,7 @@ class _StdTable(Table):
             cloned = deepcopy(src_sec)
             assert cloned.header is not None
             cloned.header.key = Key(parts=list(new_parts), separators=list(new_seps))
+            doc_node.adopt_preamble_into(cloned.header.leading)
             doc_node.sections.append(cloned)
 
     @override
@@ -1882,10 +1890,12 @@ class _StdTable(Table):
                 # Insert a leading newline so the new header doesn't
                 # glue against the previous section's last entry.
                 header.leading.pieces.append(NewlineNode("\n"))
+                doc_node.adopt_preamble_into(header.leading)
                 doc_node.sections.insert(i, new_sec)
                 return new_sec
         if doc_node.sections:
             header.leading.pieces.append(NewlineNode("\n"))
+        doc_node.adopt_preamble_into(header.leading)
         doc_node.sections.append(new_sec)
         return new_sec
 
@@ -2046,7 +2056,7 @@ class _StdTable(Table):
             insert_at = next(i for i, s in enumerate(sections) if s is anchor) + 1
         else:
             insert_at = len(sections)
-        _insert_section_block(sections, insert_at, new_secs)
+        _insert_section_block(self._doc_node, insert_at, new_secs)
         aot = AoT(self._doc_node, child_path, [])
         aot._resync()  # noqa: SLF001
         dict.__setitem__(self, key, aot)
@@ -2078,7 +2088,7 @@ class _StdTable(Table):
             if len(parts) == 1
             else _section_insert_index(sections, full_path)
         )
-        _insert_section_block(sections, insert_at, new_secs)
+        _insert_section_block(self._doc_node, insert_at, new_secs)
         aot._resync()  # noqa: SLF001
         # Make sure the AoT is reachable through dict storage even when it is
         # empty (no [[..]] sections in the CST yet) and to give it stable
@@ -2103,7 +2113,7 @@ class _StdTable(Table):
         new_sec = _new_section(full_path)
         sections = self._doc_node.sections
         insert_at = _section_insert_index(sections, full_path)
-        _insert_section_block(sections, insert_at, [new_sec])
+        _insert_section_block(self._doc_node, insert_at, [new_sec])
         view = _StdTable(self._doc_node, full_path)
         self._install_at_path(parts, view)
         for k, v in value.items():

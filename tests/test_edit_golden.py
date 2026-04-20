@@ -972,3 +972,34 @@ def test_set_inherited_dotted_key_mutates_in_place() -> None:
     doc["tool"]["poetry"]["name"] = "y"
     rendered = tomlrt.dumps(doc)
     assert rendered == '[tool]\npoetry.name = "y"\n'
+
+
+def test_preamble_set_on_empty_doc_renders_before_added_content() -> None:
+    """Regression: setting preamble on an empty document parks the
+    comment in trailing trivia. When the first content is added the
+    comment must migrate to the top of the file rather than render
+    after the new structural element.
+    """
+    doc = tomlrt.document()
+    doc.preamble = ("This is a comment",)
+    doc["x"] = 1
+    rendered = tomlrt.dumps(doc)
+    assert rendered == "# This is a comment\n\nx = 1\n"
+    # The migrated comment must remain visible as preamble for round-trip.
+    assert doc.preamble == ("This is a comment",)
+    assert tomlrt.loads(rendered).preamble == ("This is a comment",)
+
+
+def test_preamble_migration_for_set_table_and_set_aot() -> None:
+    for op_name, build in [
+        ("set_table", lambda d: d.set_table("a", {"k": 1})),
+        ("set_aot", lambda d: d.set_aot("a", [{"k": 1}])),
+        ("inline_mapping", lambda d: d.__setitem__("a", {"b": 1})),
+        ("nested_set_table", lambda d: d.set_table("a.b", {"k": 1})),
+    ]:
+        doc = tomlrt.document()
+        doc.preamble = ("Top",)
+        build(doc)
+        rendered = tomlrt.dumps(doc)
+        assert rendered.startswith("# Top\n\n"), (op_name, rendered)
+        assert tomlrt.loads(rendered).preamble == ("Top",), op_name
