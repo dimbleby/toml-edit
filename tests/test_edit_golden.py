@@ -613,3 +613,75 @@ def test_array_parsed_empty_with_newline_indent_is_inferred() -> None:
     arr = doc.array("a")
     arr.append(1)
     assert tomlrt.dumps(doc) == "a = [\n  1,\n]\n"
+
+
+# ---------------------------------------------------------------------------
+# Table.set_aot / Table.promote_array
+# ---------------------------------------------------------------------------
+
+
+def test_set_aot_creates_repeated_headers() -> None:
+    doc = tomlrt.loads("")
+    aot = doc.set_aot(
+        "packages",
+        [{"name": "a", "version": "1.0"}, {"name": "b"}],
+    )
+    assert isinstance(aot, tomlrt.AoT)
+    assert len(aot) == 2
+    assert "[[packages]]" in tomlrt.dumps(doc)
+
+
+def test_set_aot_with_no_entries_returns_appendable_view() -> None:
+    doc = tomlrt.loads("")
+    aot = doc.set_aot("servers")
+    assert tomlrt.dumps(doc) == ""
+    aot.append({"host": "localhost"})
+    rendered = tomlrt.dumps(doc)
+    assert "[[servers]]" in rendered
+    assert 'host = "localhost"' in rendered
+
+
+def test_set_aot_overwrites_existing_key() -> None:
+    doc = tomlrt.loads("foo = 1\n")
+    doc.set_aot("foo", [{"x": 1}])
+    rendered = tomlrt.dumps(doc)
+    assert "foo = 1" not in rendered
+    assert "[[foo]]" in rendered
+
+
+def test_set_aot_nested_path() -> None:
+    doc = tomlrt.loads("[product]\n")
+    doc.table("product").set_aot("variant", [{"sku": "X"}])
+    rendered = tomlrt.dumps(doc)
+    assert "[[product.variant]]" in rendered
+    assert 'sku = "X"' in rendered
+    assert isinstance(doc.table("product").aot("variant"), tomlrt.AoT)
+
+
+def test_promote_array_converts_inline_to_aot() -> None:
+    doc = tomlrt.loads('packages = [{name = "a"}, {name = "b"}]\n')
+    aot = doc.promote_array("packages")
+    assert isinstance(aot, tomlrt.AoT)
+    assert len(aot) == 2
+    rendered = tomlrt.dumps(doc)
+    assert "packages = [" not in rendered
+    assert rendered.count("[[packages]]") == 2
+    assert isinstance(doc.aot("packages"), tomlrt.AoT)
+
+
+def test_promote_array_rejects_empty_array() -> None:
+    doc = tomlrt.loads("a = []\n")
+    with pytest.raises(tomlrt.TOMLError, match="empty array"):
+        doc.promote_array("a")
+
+
+def test_promote_array_rejects_non_table_elements() -> None:
+    doc = tomlrt.loads("a = [1, 2]\n")
+    with pytest.raises(tomlrt.TOMLError, match="non-inline-table"):
+        doc.promote_array("a")
+
+
+def test_promote_array_rejects_non_array() -> None:
+    doc = tomlrt.loads("a = 1\n")
+    with pytest.raises(tomlrt.TOMLError, match="not an array"):
+        doc.promote_array("a")

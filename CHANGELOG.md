@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Array.set_multiline(*, multiline, indent="    ")` and the
   read/write `Array.multiline` property toggle an inline array
   between single-line and multi-line layout.
+- `Table.set_aot(key, entries=())` creates an array-of-tables at
+  ``key`` (overwriting any existing value) and returns the live view,
+  so users can build `[[ ... ]]` sections without going through the
+  inline-array path.
+- `Table.promote_array(key)` converts an existing inline array of
+  inline tables into an array-of-tables, mirroring the existing
+  `Table.promote_inline` for tables.
 
 ### Fixed
 
