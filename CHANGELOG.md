@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Table.ensure_table(key)` returns the table at ``key``, creating
   an empty section if absent. Accepts dotted paths and walks through
   implicit super-tables.
+- `Table.set_array(key, items=(), *, multiline=False, indent="    ")`
+  creates an inline array at ``key`` (replacing any existing value),
+  optionally laid out one item per line. Accepts dotted paths so a
+  multiline array deep in the tree can be created in a single call.
 - `Table.set_aot` now accepts dotted paths, mirroring `set_table`.
 - `Table.table`, `Table.array` and `Table.aot` typed accessors now
   accept dotted paths for navigation through nested structures.

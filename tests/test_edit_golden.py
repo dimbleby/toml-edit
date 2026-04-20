@@ -852,3 +852,61 @@ def test_set_table_round_trips() -> None:
     rendered = tomlrt.dumps(doc)
     # Re-parse and re-dump must produce identical bytes.
     assert tomlrt.dumps(tomlrt.loads(rendered)) == rendered
+
+
+# ---------------------------------------------------------------------------
+# Table.set_array
+# ---------------------------------------------------------------------------
+
+
+def test_set_array_creates_inline_array() -> None:
+    doc = tomlrt.loads("")
+    arr = doc.set_array("authors", ["A", "B"])
+    assert isinstance(arr, tomlrt.Array)
+    assert tomlrt.dumps(doc) == 'authors = [ "A", "B" ]\n'
+
+
+def test_set_array_multiline_lays_out_one_per_line() -> None:
+    doc = tomlrt.loads("")
+    doc.set_array("authors", ["A", "B", "C"], multiline=True)
+    assert tomlrt.dumps(doc) == ('authors = [\n    "A",\n    "B",\n    "C",\n]\n')
+
+
+def test_set_array_custom_indent() -> None:
+    doc = tomlrt.loads("")
+    doc.set_array("x", [1, 2], multiline=True, indent="  ")
+    assert tomlrt.dumps(doc) == "x = [\n  1,\n  2,\n]\n"
+
+
+def test_set_array_empty_multiline_appendable() -> None:
+    doc = tomlrt.loads("")
+    arr = doc.set_array("x", multiline=True)
+    arr.append(1)
+    assert tomlrt.dumps(doc) == "x = [\n    1,\n]\n"
+
+
+def test_set_array_dotted_path_creates_parent_section() -> None:
+    doc = tomlrt.loads("")
+    doc.set_array("tool.poetry.authors", ["A", "B"], multiline=True)
+    rendered = tomlrt.dumps(doc)
+    assert "[tool]\n" not in rendered
+    assert rendered == ('[tool.poetry]\nauthors = [\n    "A",\n    "B",\n]\n')
+
+
+def test_set_array_dotted_path_uses_existing_section() -> None:
+    doc = tomlrt.loads('[tool.poetry]\nname = "x"\n')
+    doc.set_array("tool.poetry.authors", ["A", "B"])
+    assert tomlrt.dumps(doc) == ('[tool.poetry]\nname = "x"\nauthors = [ "A", "B" ]\n')
+
+
+def test_set_array_replaces_existing_value() -> None:
+    doc = tomlrt.loads("a = 1\n")
+    doc.set_array("a", [1, 2, 3])
+    assert tomlrt.dumps(doc) == "a = [ 1, 2, 3 ]\n"
+
+
+def test_set_array_round_trips() -> None:
+    doc = tomlrt.loads("")
+    doc.set_array("tool.poetry.authors", ["A", "B"], multiline=True)
+    rendered = tomlrt.dumps(doc)
+    assert tomlrt.dumps(tomlrt.loads(rendered)) == rendered

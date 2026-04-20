@@ -1048,6 +1048,35 @@ class Table(MutableMapping[str, TomlValue]):
                 return cur.set_table(tail)
         return cur
 
+    def set_array(
+        self,
+        key: str,
+        items: Iterable[object] = (),
+        *,
+        multiline: bool = False,
+        indent: str = "    ",
+    ) -> Array:
+        """Set ``key`` to an inline array containing ``items``.
+
+        ``key`` accepts a dotted path; intermediate tables are created
+        as needed (with implicit super-tables left implicit, mirroring
+        :meth:`set_table`). Replaces any existing value at the
+        destination. Pass ``multiline=True`` to lay the array out one
+        item per line with ``indent`` indentation. The returned
+        :class:`Array` is a live view of the new array.
+        """
+        parts = _parse_key_path(key)
+        if len(parts) == 1:
+            target: Table = self
+        else:
+            target = self.ensure_table(".".join(parts[:-1]))
+        leaf = parts[-1]
+        target[leaf] = list(items)
+        arr = target.array(leaf)
+        if multiline:
+            arr.set_multiline(multiline=True, indent=indent)
+        return arr
+
 
 class _InlineTable(Table):
     """Mapping view over an :class:`InlineTableNode`.
