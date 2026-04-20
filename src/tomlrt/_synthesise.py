@@ -136,7 +136,7 @@ def _list_to_array_node(items: Iterable[TomlValue]) -> ArrayNode:
         is_last = i == n - 1
         array_items.append(
             ArrayItem(
-                leading=Trivia([WhitespaceNode(" ")]) if i == 0 else Trivia(),
+                leading=Trivia(),
                 value=value_to_node(v),
                 trailing=Trivia(),
                 has_comma=not is_last,
@@ -145,8 +145,7 @@ def _list_to_array_node(items: Iterable[TomlValue]) -> ArrayNode:
                 ),
             ),
         )
-    final_trivia = Trivia([WhitespaceNode(" ")]) if items_list else Trivia()
-    return ArrayNode(items=array_items, final_trivia=final_trivia)
+    return ArrayNode(items=array_items, final_trivia=Trivia())
 
 
 def _mapping_to_inline_table_node(mapping: Mapping[str, TomlValue]) -> InlineTableNode:
