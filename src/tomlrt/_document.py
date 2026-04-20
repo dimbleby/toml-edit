@@ -2583,29 +2583,38 @@ class AoT(list[Table]):
         py_index = max(0, min(py_index, n))
         new_sec = self._make_header_section()
         self._populate_section(new_sec, value)
-        own_header_leadings = [
-            sec.header.leading for sec in own[1:] if sec.header is not None
-        ]
-        if _gaps_uniformly_blank(own_header_leadings):
-            assert new_sec.header is not None
-            new_sec.header.leading.pieces.insert(0, NewlineNode("\n"))
         sections = self._doc_view._node.sections  # noqa: SLF001
+        # Pick an insertion point first; blank-line decision depends on it.
         if py_index == n:
-            # Append: insert after the last [[path]] entry's owned range,
+            # Append: land after the last [[path]] entry's owned range,
             # or at end of doc if no entries exist yet.
             if own:
                 last = own[-1]
                 owned = self._doc_view._aot_owned_range(last)  # noqa: SLF001
                 tail = owned[-1] if owned else last
-                tail_idx = _index_of(sections, tail)
-                sections.insert(tail_idx + 1, new_sec)
+                insert_idx = _index_of(sections, tail) + 1
             else:
-                sections.append(new_sec)
+                insert_idx = len(sections)
         else:
-            # Insert before the entry currently at py_index.
-            target = own[py_index]
-            target_idx = _index_of(sections, target)
-            sections.insert(target_idx, new_sec)
+            insert_idx = _index_of(sections, own[py_index])
+        # Insert a blank-line separator before the new header iff there
+        # is already rendered content preceding it. When existing
+        # siblings already share a uniform spacing style, copy that;
+        # otherwise default to blank-separated (canonical TOML style).
+        preceding_has_content = any(
+            s.header is not None or s.entries for s in sections[:insert_idx]
+        )
+        if preceding_has_content:
+            sibling_leadings = [
+                sec.header.leading for sec in own[1:] if sec.header is not None
+            ]
+            add_blank = (
+                _gaps_uniformly_blank(sibling_leadings) if sibling_leadings else True
+            )
+            if add_blank:
+                assert new_sec.header is not None
+                new_sec.header.leading.pieces.insert(0, NewlineNode("\n"))
+        sections.insert(insert_idx, new_sec)
         self._resync()
 
     @override
