@@ -1262,7 +1262,21 @@ class Table(dict[str, Any]):
         item per line with ``indent`` indentation. The returned
         :class:`Array` is a live view of the new array.
         """
-        parts = _parse_key_path(key)
+        return self._install_array(
+            _parse_key_path(key),
+            items,
+            multiline=multiline,
+            indent=indent,
+        )
+
+    def _install_array(
+        self,
+        parts: tuple[str, ...],
+        items: Iterable[object],
+        *,
+        multiline: bool,
+        indent: str,
+    ) -> Array:
         if len(parts) == 1:
             target: Table = self
         else:
@@ -2091,7 +2105,13 @@ class _StdTable(Table):
         key: str,
         entries: Iterable[Mapping[str, object]] = (),
     ) -> AoT:
-        parts = _parse_key_path(key)
+        return self._install_aot(_parse_key_path(key), entries)
+
+    def _install_aot(
+        self,
+        parts: tuple[str, ...],
+        entries: Iterable[Mapping[str, object]],
+    ) -> AoT:
         full_path = (*self._path, *parts)
         if len(parts) == 1:
             kind, _ = self._classify(parts[0])
@@ -2125,7 +2145,13 @@ class _StdTable(Table):
         key: str,
         value: Mapping[str, object] = MappingProxyType({}),
     ) -> Table:
-        parts = _parse_key_path(key)
+        return self._install_section(_parse_key_path(key), value)
+
+    def _install_section(
+        self,
+        parts: tuple[str, ...],
+        value: Mapping[str, object],
+    ) -> Table:
         full_path = (*self._path, *parts)
         if len(parts) == 1:
             kind, _ = self._classify(parts[0])
