@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING
 import pytest
 
 import toml_edit
-from toml_edit._errors import TOMLEditError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -244,7 +243,7 @@ def test_assign_existing_inline_table_deep_copies() -> None:
 
 def test_assign_unsupported_type_raises() -> None:
     doc = toml_edit.parse("x = 0\n")
-    with pytest.raises(TOMLEditError, match="Cannot convert"):
+    with pytest.raises(TypeError, match="Cannot convert"):
         doc["x"] = object()
 
 

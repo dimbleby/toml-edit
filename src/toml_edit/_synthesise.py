@@ -211,7 +211,7 @@ def value_to_node(value: object) -> ValueNode:
     if isinstance(value, dict):
         return _mapping_to_inline_table_node(value)
     msg = f"Cannot convert value of type {type(value).__name__} to TOML"
-    raise TOMLEditError(msg)
+    raise TypeError(msg)
 
 
 def make_keyvalue_node(
