@@ -737,7 +737,7 @@ def test_preamble_works_when_doc_starts_with_section_header() -> None:
 
 def test_preamble_delete() -> None:
     doc = tomlrt.loads("# pre\n\nkey = 1\n")
-    del doc.preamble
+    doc.preamble = ()
     assert tomlrt.dumps(doc) == "key = 1\n"
     assert doc.preamble == ()
 
@@ -769,7 +769,7 @@ def test_epilogue_replace_existing() -> None:
 
 def test_epilogue_delete() -> None:
     doc = tomlrt.loads("a = 1\n# old\n")
-    del doc.epilogue
+    doc.epilogue = ()
     assert tomlrt.dumps(doc) == "a = 1\n"
     assert doc.epilogue == ()
 
