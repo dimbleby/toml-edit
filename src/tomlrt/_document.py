@@ -1555,78 +1555,98 @@ class _DottedSubTable(Table):
 class _StdTable(Table):
     """Standard TOML table view: aggregates physical sections by path."""
 
-    __slots__ = ("_doc_view", "_extra_kvs", "_owned_scope", "_path", "_pinned_sections")
+    __slots__ = ("_anchor", "_doc_view", "_extras", "_path", "_scope")
 
     def __init__(
         self,
         doc_view: _DocumentView,
         path: tuple[str, ...],
         *,
-        sections: list[SectionNode] | None = None,
-        owned_scope: list[SectionNode] | None = None,
-        extra_kvs: list[tuple[tuple[str, ...], KeyValueNode]] | None = None,
+        scope: list[SectionNode] | None = None,
+        anchor: SectionNode | None = None,
+        extras: list[tuple[tuple[str, ...], KeyValueNode]] | None = None,
     ) -> None:
         super().__init__()
         self._doc_view = doc_view
         self._path = path
-        self._pinned_sections = sections
-        self._owned_scope = owned_scope
-        self._extra_kvs = extra_kvs
+        # ``scope`` narrows the section-scan window (used by AoT entries
+        # and by recursive sub-table descent for perf). ``None`` means
+        # "all sections in the doc".
+        self._scope = scope
+        # ``anchor`` is set only for AoT entries: it is the [[path]]
+        # section that owns this entry. With no anchor, all sections
+        # whose header matches ``path`` are direct sections of this
+        # table.
+        self._anchor = anchor
+        # ``extras`` carries dotted-key entries inherited from an
+        # ancestor section that contributed prefix ``path[:n]`` for
+        # some n.
+        self._extras = extras
         self._populate()
 
     @override
     def _items(self) -> Iterator[tuple[str, TomlValue]]:
         return self._doc_view.iter_table(
             self._path,
-            pinned_sections=self._pinned_sections,
-            owned_scope=self._owned_scope,
-            extra_kvs=self._extra_kvs,
+            scope=self._scope,
+            anchor=self._anchor,
+            extras=self._extras,
         )
 
     def _direct_sections(self) -> list[SectionNode]:
-        if self._pinned_sections is not None:
-            return self._pinned_sections
-        if self._owned_scope is not None:
-            path = self._path
-            return [
-                s
-                for s in self._owned_scope
-                if s.header is not None
-                and s.header.kind == "table"
-                and s.header.key.path == path
-            ]
-        return self._doc_view._direct_sections(self._path)  # noqa: SLF001
+        if self._anchor is not None:
+            return [self._anchor]
+        if self._scope is not None:
+            scope = self._scope
+        else:
+            scope = self._doc_view._node.sections  # noqa: SLF001
+        path = self._path
+        if path == ():
+            return [s for s in scope if s.header is None]
+        return [
+            s
+            for s in scope
+            if s.header is not None
+            and s.header.kind == "table"
+            and s.header.key.path == path
+        ]
 
     @override
     def _detach(self, doc_view: _DocumentView | None = None) -> None:
         if not self._attached:
             return
         if doc_view is None:
-            # Top of detachment subtree: collect every section under our
-            # path (direct and any nested sub-table or AoT entry) and
-            # move them into a private DocumentNode so subsequent
+            # Top of detachment subtree: capture every section under our
+            # path and move them into a private DocumentNode so later
             # structural mutations through this table cannot reach the
-            # original document.
-            plen = len(self._path)
-            captured: list[SectionNode] = []
-            for sec in self._doc_view._node.sections:  # noqa: SLF001
-                hdr = sec.header
-                if hdr is None:
-                    continue
-                hpath = hdr.key.path
-                if (
-                    len(hpath) >= plen
-                    and hpath[:plen] == self._path
-                    and (len(hpath) > plen or hdr.kind == "table")
-                ):
-                    captured.append(sec)
-            doc_view = _DocumentView(DocumentNode(sections=captured))
+            # original document. When ``_scope`` is set (AoT entries
+            # and recursively-scoped sub-tables) it already lists
+            # exactly those sections; otherwise we have to scan.
+            captured = (
+                self._scope if self._scope is not None else self._sections_under_path()
+            )
+            doc_view = _DocumentView(DocumentNode(sections=list(captured)))
         self._doc_view = doc_view
-        # Pinned/owned-scope references would still point at the old
-        # doc; clear them so iteration uses the orphan view.
-        self._pinned_sections = None
-        self._owned_scope = None
+        # Now that scope refers to the orphan view's sections, clear it
+        # so iteration falls back to scanning the orphan in full.
+        self._scope = None
         super()._detach(doc_view)
+
+    def _sections_under_path(self) -> list[SectionNode]:
+        plen = len(self._path)
+        out: list[SectionNode] = []
+        for sec in self._doc_view._node.sections:  # noqa: SLF001
+            hdr = sec.header
+            if hdr is None:
+                continue
+            hpath = hdr.key.path
+            if (
+                len(hpath) >= plen
+                and hpath[:plen] == self._path
+                and (len(hpath) > plen or hdr.kind == "table")
+            ):
+                out.append(sec)
+        return out
 
     def _classify(self, key: str) -> tuple[str, object]:
         """Classify a key for mutation purposes.
@@ -2846,9 +2866,8 @@ class AoT(list[Table]):
         # Preserve identity for entries whose anchor section is unchanged.
         existing: dict[int, Table] = {}
         for entry in self:
-            if isinstance(entry, _StdTable) and entry._pinned_sections:  # noqa: SLF001
-                anchor = entry._pinned_sections[0]  # noqa: SLF001
-                existing[id(anchor)] = entry
+            if isinstance(entry, _StdTable) and entry._anchor is not None:  # noqa: SLF001
+                existing[id(entry._anchor)] = entry  # noqa: SLF001
         own = self._own_sections()
         new_entries: list[Table] = []
         kept: set[int] = set()
@@ -2863,8 +2882,8 @@ class AoT(list[Table]):
                     _StdTable(
                         self._doc_view,
                         self._path,
-                        sections=[s],
-                        owned_scope=[s, *owned],
+                        scope=[s, *owned],
+                        anchor=s,
                     ),
                 )
         # Detach any previous entries that are no longer in the AoT.
@@ -3133,19 +3152,21 @@ class _DocumentView:
         self,
         path: tuple[str, ...],
         *,
-        pinned_sections: list[SectionNode] | None = None,
-        owned_scope: list[SectionNode] | None = None,
-        extra_kvs: list[tuple[tuple[str, ...], KeyValueNode]] | None = None,
+        scope: list[SectionNode] | None = None,
+        anchor: SectionNode | None = None,
+        extras: list[tuple[tuple[str, ...], KeyValueNode]] | None = None,
     ) -> Iterator[tuple[str, TomlValue]]:
-        # The pool of sections we walk in physical order.
+        # The pool of sections we walk in physical order. ``scope``
+        # narrows it for AoT entries and recursive sub-table descent;
+        # otherwise we walk the whole document.
         section_pool: list[SectionNode] = (
-            owned_scope if owned_scope is not None else list(self._node.sections)
+            scope if scope is not None else list(self._node.sections)
         )
 
         # Sections whose entries are "direct" key/values at this exact path.
         direct_secs: list[SectionNode]
-        if pinned_sections is not None:
-            direct_secs = pinned_sections
+        if anchor is not None:
+            direct_secs = [anchor]
         elif path == ():
             direct_secs = [s for s in section_pool if s.header is None]
         else:
@@ -3197,15 +3218,15 @@ class _DocumentView:
 
         # Extras (dotted-key prefixes inherited from an ancestor) have no
         # physical position; tack their heads on at the end.
-        if extra_kvs:
-            for rel_path, entry in extra_kvs:
+        if extras:
+            for rel_path, entry in extras:
                 head = rel_path[0]
                 extras_by_head.setdefault(head, []).append((rel_path, entry))
                 _add(head)
 
         for head in name_order:
             direct_kvs = direct_kvs_by_head.get(head, [])
-            extras = extras_by_head.get(head, [])
+            head_extras = extras_by_head.get(head, [])
             aot_secs = aot_by_head.get(head, [])
             sub_secs = sub_by_head.get(head, [])
 
@@ -3217,8 +3238,8 @@ class _DocumentView:
                         _StdTable(
                             self,
                             (*path, head),
-                            sections=[s],
-                            owned_scope=[s, *owned],
+                            scope=[s, *owned],
+                            anchor=s,
                         ),
                     )
                 yield head, AoT(self, (*path, head), tables)
@@ -3235,7 +3256,7 @@ class _DocumentView:
                         terminal = kv
                 else:
                     nested_kvs.append(kv)
-            for rel_path, kv in extras:
+            for rel_path, kv in head_extras:
                 if len(rel_path) == 1:
                     if terminal is None:
                         terminal = kv
@@ -3273,36 +3294,15 @@ class _DocumentView:
             child_extras.extend(
                 (rel_path[1:], entry) for rel_path, entry in nested_extras
             )
-
-            if owned_scope is not None:
-                child_path = (*path, head)
-                cplen = len(child_path)
-                child_owned = [
-                    s
-                    for s in owned_scope
-                    if s.header is not None
-                    and len(s.header.key.path) >= cplen
-                    and s.header.key.path[:cplen] == child_path
-                ]
-                yield (
-                    head,
-                    _StdTable(
-                        self,
-                        child_path,
-                        owned_scope=child_owned,
-                        extra_kvs=child_extras or None,
-                    ),
-                )
-            else:
-                yield (
-                    head,
-                    _StdTable(
-                        self,
-                        (*path, head),
-                        owned_scope=sub_secs,
-                        extra_kvs=child_extras or None,
-                    ),
-                )
+            yield (
+                head,
+                _StdTable(
+                    self,
+                    (*path, head),
+                    scope=sub_secs,
+                    extras=child_extras or None,
+                ),
+            )
 
 
 __all__ = [
