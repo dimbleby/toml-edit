@@ -1,10 +1,10 @@
-"""Exception types raised by toml-edit."""
+"""Exception types raised by tomlrt."""
 
 from __future__ import annotations
 
 
 class TOMLEditError(Exception):
-    """Base class for all toml-edit errors."""
+    """Base class for all tomlrt errors."""
 
 
 class TOMLParseError(TOMLEditError):

@@ -1,11 +1,11 @@
-"""Public top-level API for toml-edit."""
+"""Public top-level API for tomlrt."""
 
 from __future__ import annotations
 
 from typing import IO
 
-from toml_edit._document import Document
-from toml_edit._parser import parse as _parse_to_cst
+from tomlrt._document import Document
+from tomlrt._parser import parse as _parse_to_cst
 
 
 def parse(text: str) -> Document:
@@ -37,7 +37,7 @@ def load(fp: IO[bytes]) -> Document:
     data = fp.read()
     if not isinstance(data, (bytes, bytearray)):
         msg = (  # type: ignore[unreachable]
-            "toml_edit.load expects a binary file (open with mode='rb'); "
+            "tomlrt.load expects a binary file (open with mode='rb'); "
             f"got a text stream returning {type(data).__name__}"
         )
         raise TypeError(msg)

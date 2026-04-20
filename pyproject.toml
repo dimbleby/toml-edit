@@ -1,5 +1,5 @@
 [project]
-name = "toml-edit"
+name = "tomlrt"
 version = "0.1.0"
 description = "A format-preserving TOML parser and writer for Python."
 readme = "README.md"
@@ -10,7 +10,7 @@ keywords = [
   "toml",
   "toml-parser",
   "toml-writer",
-  "toml-edit",
+  "tomlrt",
   "format-preserving",
   "round-trip",
   "config",
@@ -27,9 +27,9 @@ classifiers = [
 ]
 
 [project.urls]
-Repository = "https://github.com/dch/toml-edit"
-Issues = "https://github.com/dch/toml-edit/issues"
-Changelog = "https://github.com/dch/toml-edit/blob/main/CHANGELOG.md"
+Repository = "https://github.com/dch/tomlrt"
+Issues = "https://github.com/dch/tomlrt/issues"
+Changelog = "https://github.com/dch/tomlrt/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 dev = [
@@ -50,7 +50,7 @@ testpaths = ["tests"]
 strict = true
 
 [tool.coverage.run]
-source = ["src/toml_edit"]
+source = ["src/tomlrt"]
 branch = true
 
 [tool.coverage.report]

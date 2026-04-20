@@ -47,7 +47,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/toml-edit
+      url: https://pypi.org/p/tomlrt
     permissions:
       id-token: write
     steps:

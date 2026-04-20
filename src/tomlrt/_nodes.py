@@ -1,4 +1,4 @@
-"""Physical CST node types for toml-edit.
+"""Physical CST node types for tomlrt.
 
 Design notes
 ------------
@@ -334,7 +334,7 @@ class TableHeaderNode:
 
     Layout::
 
-        leading  '[' or '[[' inner_pre KEY inner_post ']' or ']]' trailing [# comment] \\n
+        leading '[' or '[[' inner_pre KEY inner_post ']' or ']]' trailing [#cmt] \\n
     """
 
     leading: Trivia

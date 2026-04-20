@@ -2,7 +2,7 @@
 
 This module exposes the public mapping/sequence types that users
 interact with. It implements both the read path and the structural
-mutation API on top of the physical CST defined in :mod:`toml_edit._nodes`.
+mutation API on top of the physical CST defined in :mod:`tomlrt._nodes`.
 """
 
 from __future__ import annotations
@@ -19,8 +19,8 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override
 
-from toml_edit._errors import TOMLEditError
-from toml_edit._nodes import (
+from tomlrt._errors import TOMLEditError
+from tomlrt._nodes import (
     ArrayNode,
     BoolNode,
     CommentNode,
@@ -38,7 +38,7 @@ from toml_edit._nodes import (
     Trivia,
     WhitespaceNode,
 )
-from toml_edit._synthesise import (
+from tomlrt._synthesise import (
     make_key_part,
     make_keyvalue_node,
     make_simple_key,
@@ -53,7 +53,7 @@ if TYPE_CHECKING:
     else:
         from typing_extensions import Self
 
-    from toml_edit._nodes import (
+    from tomlrt._nodes import (
         ArrayItem,
         DocumentNode,
         TriviaPiece,
@@ -579,7 +579,7 @@ def _build_promoted_section(
 class Table(MutableMapping[str, TomlValue]):
     """A logical TOML table.
 
-    All mapping flavours in toml-edit (top-level document, standard
+    All mapping flavours in tomlrt (top-level document, standard
     table, inline table, and the synthetic mappings spawned by dotted
     keys) inherit from :class:`Table`, so values typed as ``Table``
     cover every nested mapping you can encounter while walking a
@@ -587,7 +587,7 @@ class Table(MutableMapping[str, TomlValue]):
 
     Subclasses provide ``_items()`` which yields ``(key, value)`` pairs
     in document order. The read path is wired up; mutation raises
-    :class:`toml_edit.TOMLEditError` until the next implementation phase.
+    :class:`tomlrt.TOMLEditError` until the next implementation phase.
     """
 
     __slots__ = ()
@@ -1390,7 +1390,8 @@ class _StdTable(Table):
         for existing in self._doc_view._node.sections:  # noqa: SLF001
             hdr = existing.header
             if hdr is not None and hdr.key.path == child_path:  # pragma: no cover
-                msg = f"cannot promote {key!r}: a [{'.'.join(child_path)}] section already exists"
+                joined = ".".join(child_path)
+                msg = f"cannot promote {key!r}: a [{joined}] section already exists"
                 raise TOMLEditError(msg)
         new_sec = _build_promoted_section(child_path, inline, kv)
         # Remove the inline KV from its host section.
@@ -1803,7 +1804,7 @@ class Array(list[TomlValue]):
 
     @staticmethod
     def _make_item(value: TomlValue, *, with_comma: bool) -> ArrayItem:
-        from toml_edit._nodes import ArrayItem  # noqa: PLC0415
+        from tomlrt._nodes import ArrayItem  # noqa: PLC0415
 
         return ArrayItem(
             leading=Trivia(),
@@ -1957,7 +1958,8 @@ class Array(list[TomlValue]):
         """Return ``self[index]`` typed as a nested :class:`Array`."""
         value = self[index]
         if not isinstance(value, Array):
-            msg = f"item {operator.index(index)} is a {type(value).__name__}, not an Array"
+            type_name = type(value).__name__
+            msg = f"item {operator.index(index)} is a {type_name}, not an Array"
             raise TypeError(msg)
         return value
 

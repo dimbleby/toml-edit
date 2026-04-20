@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-import toml_edit
+import tomlrt
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _TOML_TEST_ROOT = _REPO_ROOT / "vendor" / "toml-test"
@@ -145,7 +145,7 @@ def _equal(a: object, b: object) -> bool:
 
 def _materialise(value: object) -> object:
     """Recursively convert a Document/Table/Array into plain Python values."""
-    if isinstance(value, toml_edit.Table):
+    if isinstance(value, tomlrt.Table):
         return {k: _materialise(v) for k, v in value.items()}
     if isinstance(value, list):
         return [_materialise(v) for v in value]
@@ -164,16 +164,17 @@ def test_valid(relpath: str) -> None:
     src = toml_path.read_bytes().decode("utf-8")
 
     # 1. Parses without error.
-    doc = toml_edit.parse(src)
+    doc = tomlrt.parse(src)
 
     # 2. Round-trip is byte-exact.
-    assert toml_edit.dumps(doc) == src, f"round-trip differs for {relpath}"
+    assert tomlrt.dumps(doc) == src, f"round-trip differs for {relpath}"
 
     # 3. Decoded values match the corpus' tagged JSON.
     expected = _decode_tagged(json.loads(json_path.read_text(encoding="utf-8")))
     actual = _materialise(doc)
     assert _equal(actual, expected), (
-        f"decoded values differ for {relpath}\n  expected={expected!r}\n  actual={actual!r}"
+        f"decoded values differ for {relpath}\n"
+        f"  expected={expected!r}\n  actual={actual!r}"
     )
 
 
@@ -186,5 +187,5 @@ def test_invalid(relpath: str) -> None:
     except UnicodeDecodeError:
         # Invalid UTF-8 is itself a rejection of the TOML document.
         return
-    with pytest.raises(toml_edit.TOMLParseError):
-        toml_edit.parse(src)
+    with pytest.raises(tomlrt.TOMLParseError):
+        tomlrt.parse(src)
