@@ -947,6 +947,28 @@ class _StdTable(Table):
                     return ("table", None)
         return ("absent", None)
 
+    def _purge_conflicting(self, key: str) -> None:
+        """Remove any existing dotted, sub-table or AoT structure under ``key``.
+
+        Used to give Python-dict-style overwrite semantics: assigning to
+        a name that already names a sub-table silently destroys that
+        sub-table (and any nested children) rather than raising.
+        """
+        for sec in self._direct_sections():
+            sec.entries[:] = [kv for kv in sec.entries if kv.key.path[0] != key]
+        prefix = (*self._path, key)
+        plen = len(prefix)
+        doc_sections = self._doc_view._node.sections  # noqa: SLF001
+        doc_sections[:] = [
+            sec
+            for sec in doc_sections
+            if not (
+                sec.header is not None
+                and len(sec.header.key.path) >= plen
+                and sec.header.key.path[:plen] == prefix
+            )
+        ]
+
     @override
     def _set_value(self, key: str, value: object) -> None:
         # Special case: assigning an AoT (or list of dicts targeted as AoT)
@@ -961,11 +983,7 @@ class _StdTable(Table):
             payload.value = value_to_node(value)
             return
         if kind in ("dotted", "table", "aot"):
-            msg = (
-                f"cannot assign to {key!r}: existing structure conflicts "
-                f"({kind}). Mutate the nested table or remove it first."
-            )
-            raise TOMLEditError(msg)
+            self._purge_conflicting(key)
         sections = self._direct_sections()
         if not sections:
             sections = [self._ensure_section()]
@@ -1001,11 +1019,7 @@ class _StdTable(Table):
         """
         kind, _ = self._classify(key)
         if kind != "absent":
-            msg = (
-                f"cannot assign array-of-tables to {key!r}: name is "
-                f"already in use ({kind}). Remove it first."
-            )
-            raise TOMLEditError(msg)
+            self._purge_conflicting(key)
         new_path = (*self._path, key)
         new_parts = [make_key_part(p) for p in new_path]
         new_seps = ["."] * (len(new_parts) - 1)
@@ -1148,8 +1162,8 @@ class _StdTable(Table):
         child_path = (*self._path, key)
         # Refuse if a [child_path] section already exists in the document
         # (defensive: the parser blocks any source where this would arise,
-        # and the mutation API also refuses to create the conflicting
-        # state, so this branch only fires under direct CST manipulation).
+        # and assignment auto-purges any conflicting sections, so this
+        # branch only fires under direct CST manipulation).
         for existing in self._doc_view._node.sections:  # noqa: SLF001
             hdr = existing.header
             if hdr is not None and hdr.key.path == child_path:  # pragma: no cover

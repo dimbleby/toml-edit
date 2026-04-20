@@ -78,20 +78,22 @@ def test_delete_missing_key_raises_keyerror() -> None:
         del doc["missing"]
 
 
-def test_set_dotted_prefix_conflict_raises() -> None:
+def test_set_overwrites_dotted_prefix() -> None:
     src = "[a]\nb.c = 1\n"
     doc = toml_edit.parse(src)
     a = doc["a"]
     assert isinstance(a, toml_edit.Table)
-    with pytest.raises(toml_edit.TOMLEditError):
-        a["b"] = 2
+    a["b"] = 2
+    out = toml_edit.dumps(doc)
+    assert _reparses(out) == {"a": {"b": 2}}
 
 
-def test_set_existing_child_table_conflict_raises() -> None:
+def test_set_overwrites_implicit_child_table() -> None:
     src = "[a.b]\nx = 1\n"
     doc = toml_edit.parse(src)
-    with pytest.raises(toml_edit.TOMLEditError):
-        doc["a"] = 5  # 'a' is implicit parent of [a.b]
+    doc["a"] = 5
+    out = toml_edit.dumps(doc)
+    assert _reparses(out) == {"a": 5}
 
 
 def test_quoted_key_when_bare_invalid() -> None:
