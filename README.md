@@ -27,6 +27,29 @@ print(tomlrt.dumps(doc))   # comments and layout are preserved
 and any other API typed against `dict` / `list` accept tomlrt
 containers directly — no snapshot dance.
 
+### Structural assignment
+
+A plain `dict` value installs as an inline table; a plain `list`
+installs as an inline array. To pick a different shape, assign a
+flavoured value:
+
+```python
+from tomlrt import AoT, Array, Table
+
+doc["tool"] = Table.section({"version": 1})      # [tool] section
+doc["xy"]   = Table.inline({"x": 1, "y": 2})     # xy = { x = 1, y = 2 }
+doc["pkgs"] = AoT([{"name": "a"}, {"name": "b"}])# [[pkgs]] … [[pkgs]]
+doc["tags"] = Array(["a", "b"], multiline=True)  # multi-line array
+```
+
+Use `doc.install(path, value)` for dotted-path placement, or pass a
+tuple to escape keys that contain a literal `.`:
+
+```python
+doc.install("tool.poetry", Table.section({"name": "x"}))  # [tool.poetry]
+doc.install(("weird.key",), 1)                             # "weird.key" = 1
+```
+
 ### Comment API
 
 ```python
