@@ -1034,21 +1034,10 @@ class _StdTable(Table):
 
     @override
     def _delete_value(self, key: str) -> None:
-        kind, payload = self._classify(key)
-        if kind == "direct":
-            assert isinstance(payload, KeyValueNode)
-            for sec in self._direct_sections():
-                if payload in sec.entries:
-                    sec.entries.remove(payload)
-                    return
-            raise KeyError(key)
+        kind, _ = self._classify(key)
         if kind == "absent":
             raise KeyError(key)
-        msg = (
-            f"cannot delete {key!r}: deleting child tables and "
-            "dotted-key subtrees is not supported."
-        )
-        raise TOMLEditError(msg)
+        self._purge_conflicting(key)
 
     def _ensure_section(self) -> SectionNode:
         """Create an implicit pre-header section for the document root.
