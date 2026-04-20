@@ -465,3 +465,56 @@ def test_array_array_typed_accessor_raises_on_non_array_item() -> None:
     xs = doc.array("xs")
     with pytest.raises(TypeError, match="not an Array"):
         xs.array(0)
+
+
+# ---------------------------------------------------------------------------
+# AoT.add — append-and-return-handle convenience
+# ---------------------------------------------------------------------------
+
+
+def test_aot_add_returns_new_table_view() -> None:
+    doc = tomlrt.parse("")
+    aot = doc.set_aot("pkg")
+    pkg = aot.add({"name": "foo"})
+    assert isinstance(pkg, tomlrt.Table)
+    assert pkg["name"] == "foo"
+    assert _reparses(tomlrt.dumps(doc)) == {"pkg": [{"name": "foo"}]}
+
+
+def test_aot_add_default_empty_returns_blank_entry_for_population() -> None:
+    doc = tomlrt.parse("")
+    aot = doc.set_aot("pkg")
+    pkg = aot.add()
+    assert dict(pkg) == {}
+    pkg["name"] = "bar"
+    pkg.set_table("dep", {"x": 1})
+    assert _reparses(tomlrt.dumps(doc)) == {
+        "pkg": [{"name": "bar", "dep": {"x": 1}}],
+    }
+
+
+def test_aot_add_returned_view_stays_live_across_subsequent_adds() -> None:
+    doc = tomlrt.parse("")
+    aot = doc.set_aot("pkg")
+    first = aot.add({"name": "a"})
+    aot.add({"name": "b"})
+    aot.add({"name": "c"})
+    # The handle returned earlier still refers to the right entry.
+    first["version"] = "1.0"
+    assert _reparses(tomlrt.dumps(doc)) == {
+        "pkg": [
+            {"name": "a", "version": "1.0"},
+            {"name": "b"},
+            {"name": "c"},
+        ],
+    }
+
+
+def test_aot_add_blank_separates_consecutive_entries() -> None:
+    doc = tomlrt.parse("")
+    aot = doc.set_aot("pkg")
+    aot.add({"name": "a"})
+    aot.add({"name": "b"})
+    out = tomlrt.dumps(doc)
+    # Same blank-separation behaviour as append, since add wraps it.
+    assert 'name = "a"\n\n[[pkg]]' in out

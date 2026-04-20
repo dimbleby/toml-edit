@@ -27,8 +27,7 @@ def _populate(table: Table, data: Mapping[str, object]) -> None:
             aot = table.set_aot(key)
             for entry in value:
                 assert isinstance(entry, Mapping)
-                aot.append({})
-                _populate(aot[-1], entry)
+                _populate(aot.add(), entry)
         else:
             table[key] = value
 

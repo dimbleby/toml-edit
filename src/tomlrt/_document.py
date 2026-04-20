@@ -2555,6 +2555,17 @@ class AoT(list[Table]):
     def append(self, value: Table | Mapping[str, object]) -> None:
         self._insert_at(len(self), value)
 
+    def add(self, entry: Mapping[str, object] = MappingProxyType({})) -> Table:
+        """Append ``entry`` and return the new :class:`Table` view.
+
+        Convenience over :meth:`append` for the common build-and-mutate
+        idiom: ``pkg = aot.add({"name": "foo"}); pkg.set_table(...)``.
+        ``entry`` defaults to an empty mapping, so ``aot.add()`` adds a
+        blank entry and returns it for further population.
+        """
+        self._insert_at(len(self), entry)
+        return self[-1]
+
     @override
     def insert(
         self,
