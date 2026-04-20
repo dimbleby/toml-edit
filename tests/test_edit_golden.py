@@ -15,7 +15,10 @@ Coverage targets:
 from __future__ import annotations
 
 import sys
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -991,8 +994,6 @@ def test_preamble_set_on_empty_doc_renders_before_added_content() -> None:
 
 
 def test_preamble_migration_for_set_table_and_set_aot() -> None:
-    from collections.abc import Callable
-
     cases: list[tuple[str, Callable[[tomlrt.Document], object]]] = [
         ("set_table", lambda d: d.set_table("a", {"k": 1})),
         ("set_aot", lambda d: d.set_aot("a", [{"k": 1}])),
@@ -1027,14 +1028,26 @@ def test_promote_array_preserves_source_kv_leading_and_trailing() -> None:
     comments / blank lines and trailing EOL comment. Carry them over
     onto the first new ``[[..]]`` header and the last entry's tail.
     """
-    src = (
-        "# header comment\n"
-        '\n'
-        'servers = [{ name = "a" }, { name = "b" }]  # tail\n'
-    )
+    src = '# header comment\n\nservers = [{ name = "a" }, { name = "b" }]  # tail\n'
     doc = tomlrt.loads(src)
     doc.promote_array("servers")
     rendered = tomlrt.dumps(doc)
     assert "# header comment" in rendered
     assert rendered.startswith("# header comment\n")
     assert "# tail" in rendered
+
+
+def test_aot_insert_at_zero_separates_from_following_entry() -> None:
+    """``AoT.insert(0, ...)`` previously left the new ``[[..]]`` glued
+    to the following existing one because the blank-line policy only
+    looked at *preceding* content. Now it also separates from the
+    next entry, mirroring sibling-uniformity (default blank-separated).
+    """
+    doc = tomlrt.loads("[[a]]\nx = 1\n")
+    doc["a"].insert(0, {"x": 0})
+    assert tomlrt.dumps(doc) == "[[a]]\nx = 0\n\n[[a]]\nx = 1\n"
+
+    # Tight existing layout: don't impose a blank.
+    doc = tomlrt.loads("[[a]]\nx = 1\n[[a]]\nx = 2\n")
+    doc["a"].insert(0, {"x": 0})
+    assert tomlrt.dumps(doc) == "[[a]]\nx = 0\n[[a]]\nx = 1\n[[a]]\nx = 2\n"
