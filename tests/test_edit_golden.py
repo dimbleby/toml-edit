@@ -703,3 +703,152 @@ def test_promote_array_rejects_non_array() -> None:
     doc = tomlrt.loads("a = 1\n")
     with pytest.raises(tomlrt.TOMLError, match="not an array"):
         doc.promote_array("a")
+
+
+# ---------------------------------------------------------------------------
+# Table.set_table / Table.ensure_table / dotted-path navigation
+# ---------------------------------------------------------------------------
+
+
+def test_set_table_creates_section_directly() -> None:
+    doc = tomlrt.loads("")
+    t = doc.set_table("tool", {"name": "x"})
+    assert isinstance(t, tomlrt.Table)
+    assert tomlrt.dumps(doc) == '[tool]\nname = "x"\n'
+
+
+def test_set_table_dotted_omits_super_table_headers() -> None:
+    doc = tomlrt.loads("")
+    doc.set_table("tool.poetry", {"name": "x", "version": "0.1"})
+    rendered = tomlrt.dumps(doc)
+    assert "[tool]\n" not in rendered
+    assert rendered == '[tool.poetry]\nname = "x"\nversion = "0.1"\n'
+
+
+def test_set_table_implicit_super_table_navigable() -> None:
+    doc = tomlrt.loads("")
+    doc.set_table("tool.poetry", {"name": "x"})
+    assert doc.table("tool").table("poetry")["name"] == "x"
+    tool = doc["tool"]
+    assert isinstance(tool, tomlrt.Table)
+    poetry = tool["poetry"]
+    assert isinstance(poetry, tomlrt.Table)
+    assert poetry["name"] == "x"
+    assert doc.table("tool.poetry")["name"] == "x"
+
+
+def test_set_table_sibling_section_does_not_disturb_existing() -> None:
+    doc = tomlrt.loads("")
+    doc.set_table("tool.poetry", {"name": "x"})
+    doc.set_table("tool.poetry.dependencies", {"requests": "^2.0"})
+    assert tomlrt.dumps(doc) == (
+        '[tool.poetry]\nname = "x"\n\n[tool.poetry.dependencies]\nrequests = "^2.0"\n'
+    )
+
+
+def test_set_table_replaces_existing_section_and_purges_children() -> None:
+    doc = tomlrt.loads('[tool.poetry]\nname = "x"\n[tool.poetry.foo]\nbar = 1\n')
+    doc.set_table("tool.poetry", {"version": "2.0"})
+    rendered = tomlrt.dumps(doc)
+    assert "name" not in rendered
+    assert "[tool.poetry.foo]" not in rendered
+    assert rendered == '[tool.poetry]\nversion = "2.0"\n'
+
+
+def test_set_table_overwrites_inline_value() -> None:
+    doc = tomlrt.loads('tool = {poetry = {name = "x"}}\n')
+    doc.set_table("tool.poetry", {"version": "2.0"})
+    rendered = tomlrt.dumps(doc)
+    assert "name" not in rendered
+    assert "[tool.poetry]" in rendered
+    assert "version" in rendered
+
+
+def test_set_table_with_empty_value_creates_empty_section() -> None:
+    doc = tomlrt.loads("")
+    t = doc.set_table("tool.poetry")
+    assert tomlrt.dumps(doc) == "[tool.poetry]\n"
+    t["name"] = "x"
+    assert tomlrt.dumps(doc) == '[tool.poetry]\nname = "x"\n'
+
+
+def test_ensure_table_creates_when_absent() -> None:
+    doc = tomlrt.loads("")
+    deps = doc.ensure_table("tool.poetry.dependencies")
+    deps["pytest"] = "^7.0"
+    assert tomlrt.dumps(doc) == ('[tool.poetry.dependencies]\npytest = "^7.0"\n')
+
+
+def test_ensure_table_navigates_existing_explicit_section() -> None:
+    doc = tomlrt.loads('[tool.poetry]\nname = "x"\n')
+    t = doc.ensure_table("tool.poetry")
+    t["version"] = "0.1"
+    assert tomlrt.dumps(doc) == ('[tool.poetry]\nname = "x"\nversion = "0.1"\n')
+
+
+def test_ensure_table_navigates_implicit_super_table() -> None:
+    doc = tomlrt.loads('[tool.poetry]\nname = "x"\n')
+    t = doc.ensure_table("tool")
+    assert isinstance(t, tomlrt.Table)
+    # No new [tool] header created.
+    assert tomlrt.dumps(doc) == '[tool.poetry]\nname = "x"\n'
+
+
+def test_ensure_table_creates_only_missing_tail() -> None:
+    doc = tomlrt.loads('[tool.poetry]\nname = "x"\n')
+    t = doc.ensure_table("tool.poetry.dependencies")
+    t["requests"] = "^2.0"
+    assert tomlrt.dumps(doc) == (
+        '[tool.poetry]\nname = "x"\n\n[tool.poetry.dependencies]\nrequests = "^2.0"\n'
+    )
+
+
+def test_ensure_table_rejects_non_table_value() -> None:
+    doc = tomlrt.loads("tool = 1\n")
+    with pytest.raises(tomlrt.TOMLError, match=r"existing value"):
+        doc.ensure_table("tool")
+
+
+def test_set_aot_dotted_path() -> None:
+    doc = tomlrt.loads("")
+    doc.set_aot(
+        "tool.poetry.source",
+        [{"name": "pypi"}, {"name": "private"}],
+    )
+    rendered = tomlrt.dumps(doc)
+    assert "[tool]" not in rendered
+    assert "[tool.poetry]" not in rendered
+    assert rendered.count("[[tool.poetry.source]]") == 2
+
+
+def test_set_table_rejects_empty_path() -> None:
+    doc = tomlrt.loads("")
+    with pytest.raises(tomlrt.TOMLError, match="must not be empty"):
+        doc.set_table("")
+
+
+def test_set_table_rejects_empty_segment() -> None:
+    doc = tomlrt.loads("")
+    with pytest.raises(tomlrt.TOMLError, match="empty segment"):
+        doc.set_table("tool..poetry")
+
+
+def test_table_accepts_dotted_path() -> None:
+    doc = tomlrt.loads('[tool.poetry]\nname = "x"\n')
+    assert doc.table("tool.poetry")["name"] == "x"
+
+
+def test_aot_accepts_dotted_path() -> None:
+    doc = tomlrt.loads('[[tool.poetry.source]]\nname = "pypi"\n')
+    aot = doc.aot("tool.poetry.source")
+    assert isinstance(aot, tomlrt.AoT)
+    assert aot[0]["name"] == "pypi"
+
+
+def test_set_table_round_trips() -> None:
+    doc = tomlrt.loads("")
+    doc.set_table("tool.poetry", {"name": "x"})
+    doc.set_table("tool.poetry.dependencies", {"requests": "^2.0"})
+    rendered = tomlrt.dumps(doc)
+    # Re-parse and re-dump must produce identical bytes.
+    assert tomlrt.dumps(tomlrt.loads(rendered)) == rendered
