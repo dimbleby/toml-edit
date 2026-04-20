@@ -27,9 +27,9 @@ classifiers = [
 ]
 
 [project.urls]
-Repository = "https://github.com/dch/tomlrt"
-Issues = "https://github.com/dch/tomlrt/issues"
-Changelog = "https://github.com/dch/tomlrt/blob/main/CHANGELOG.md"
+Repository = "https://github.com/dimbleby/tomlrt"
+Issues = "https://github.com/dimbleby/tomlrt/issues"
+Changelog = "https://github.com/dimbleby/tomlrt/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 dev = [
