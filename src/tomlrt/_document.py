@@ -34,6 +34,7 @@ from tomlrt._nodes import (
     BoolNode,
     CommentNode,
     DateTimeNode,
+    DocumentNode,
     FloatNode,
     InlineTableEntry,
     InlineTableNode,
@@ -64,7 +65,6 @@ if TYPE_CHECKING:
 
     from tomlrt._nodes import (
         ArrayItem,
-        DocumentNode,
         HeaderKind,
         TriviaPiece,
         ValueNode,
@@ -866,16 +866,22 @@ class Table(dict[str, Any]):
 
     # --- attachment / detachment ------------------------------------------
 
-    def _detach(self) -> None:
+    def _detach(self, doc_view: _DocumentView | None = None) -> None:
         """Mark this table (and any nested containers) as orphaned.
 
-        After detachment, mutations through this object only update its
-        own dict storage; CST writeback is suppressed so the document
-        the table was once part of stops seeing the changes.
+        After detachment, mutations through this object only affect its
+        own (now-isolated) state; CST writeback no longer reaches the
+        original document. ``doc_view`` is supplied when the parent has
+        already created an orphan :class:`_DocumentView` covering the
+        whole detached subtree; subclasses with section-based storage
+        (:class:`_StdTable`, :class:`AoT`) use it to keep nested
+        structural mutations confined to that orphan view.
         """
         self._attached = False
         for v in self.values():
-            if isinstance(v, (Table, AoT, Array)):
+            if isinstance(v, (Table, AoT)):
+                v._detach(doc_view)  # noqa: SLF001
+            elif isinstance(v, Array):
                 v._detach()  # noqa: SLF001
 
     # --- mutators ----------------------------------------------------------
@@ -1614,6 +1620,37 @@ class _StdTable(Table):
                 and s.header.key.path == path
             ]
         return self._doc_view._direct_sections(self._path)  # noqa: SLF001
+
+    @override
+    def _detach(self, doc_view: _DocumentView | None = None) -> None:
+        if not self._attached:
+            return
+        if doc_view is None:
+            # Top of detachment subtree: collect every section under our
+            # path (direct and any nested sub-table or AoT entry) and
+            # move them into a private DocumentNode so subsequent
+            # structural mutations through this table cannot reach the
+            # original document.
+            plen = len(self._path)
+            captured: list[SectionNode] = []
+            for sec in self._doc_view._node.sections:  # noqa: SLF001
+                hdr = sec.header
+                if hdr is None:
+                    continue
+                hpath = hdr.key.path
+                if (
+                    len(hpath) >= plen
+                    and hpath[:plen] == self._path
+                    and (len(hpath) > plen or hdr.kind == "table")
+                ):
+                    captured.append(sec)
+            doc_view = _DocumentView(DocumentNode(sections=captured))
+        self._doc_view = doc_view
+        # Pinned/owned-scope references would still point at the old
+        # doc; clear them so iteration uses the orphan view.
+        self._pinned_sections = None
+        self._owned_scope = None
+        super()._detach(doc_view)
 
     def _classify(self, key: str) -> tuple[str, object]:
         """Classify a key for mutation purposes.
@@ -2795,11 +2832,25 @@ class AoT(list[Table]):
         self._path = path
         self._attached = True
 
-    def _detach(self) -> None:
+    def _detach(self, doc_view: _DocumentView | None = None) -> None:
+        if not self._attached:
+            return
+        if doc_view is None:
+            captured: list[SectionNode] = []
+            seen: set[int] = set()
+            for s in self._own_sections():
+                if id(s) not in seen:
+                    captured.append(s)
+                    seen.add(id(s))
+                for sub in self._doc_view._aot_owned_range(s):  # noqa: SLF001
+                    if id(sub) not in seen:
+                        captured.append(sub)
+                        seen.add(id(sub))
+            doc_view = _DocumentView(DocumentNode(sections=captured))
         self._attached = False
+        self._doc_view = doc_view
         for v in self:
-            if isinstance(v, (Table, AoT, Array)):
-                v._detach()  # noqa: SLF001
+            v._detach(doc_view)  # noqa: SLF001
 
     # ------------------------------------------------------------------
     # CST <-> list synchronisation
@@ -2816,19 +2867,36 @@ class AoT(list[Table]):
         ]
 
     def _resync(self) -> None:
+        # Preserve identity for entries whose anchor section is unchanged.
+        existing: dict[int, Table] = {}
+        for entry in self:
+            if isinstance(entry, _StdTable) and entry._pinned_sections:  # noqa: SLF001
+                anchor = entry._pinned_sections[0]  # noqa: SLF001
+                existing[id(anchor)] = entry
         own = self._own_sections()
-        list.clear(self)
+        new_entries: list[Table] = []
+        kept: set[int] = set()
         for s in own:
             owned = self._doc_view._aot_owned_range(s)  # noqa: SLF001
-            list.append(
-                self,
-                _StdTable(
-                    self._doc_view,
-                    self._path,
-                    sections=[s],
-                    owned_scope=[s, *owned],
-                ),
-            )
+            cached = existing.get(id(s))
+            if cached is not None:
+                kept.add(id(cached))
+                new_entries.append(cached)
+            else:
+                new_entries.append(
+                    _StdTable(
+                        self._doc_view,
+                        self._path,
+                        sections=[s],
+                        owned_scope=[s, *owned],
+                    ),
+                )
+        # Detach any previous entries that are no longer in the AoT.
+        for entry in self:
+            if id(entry) not in kept:
+                entry._detach()  # noqa: SLF001
+        list.clear(self)
+        list.extend(self, new_entries)
 
     def _make_header_section(self) -> SectionNode:
         return _new_section(self._path, kind="array")
@@ -2962,19 +3030,14 @@ class AoT(list[Table]):
         target = own[i]
         owned = self._doc_view._aot_owned_range(target)  # noqa: SLF001
         sections = self._doc_view._node.sections  # noqa: SLF001
-        # Remove the entry header AND every section it owned.
         to_remove = {id(target), *(id(s) for s in owned)}
-        # Capture the popped Table view *before* mutating sections.
-        popped = _StdTable(
-            self._doc_view,
-            self._path,
-            sections=[target],
-            owned_scope=[target, *owned],
-        )
+        # Use the live entry as the popped object to preserve identity.
+        popped = self[i]
         self._doc_view._node.sections = [  # noqa: SLF001
             s for s in sections if id(s) not in to_remove
         ]
         self._resync()
+        popped._detach()  # noqa: SLF001
         return popped
 
     @override

@@ -263,3 +263,43 @@ def test_table_unhashable_like_dict() -> None:
     doc = tomlrt.parse("a = 1\n")
     with pytest.raises(TypeError):
         hash(doc)
+
+
+def test_detached_set_table_does_not_revive_in_doc() -> None:
+    doc = tomlrt.parse("[outer]\nx = 1\n")
+    held = doc["outer"]
+    del doc["outer"]
+    assert isinstance(held, tomlrt.Table)
+    held.set_table("nested", {"deep": "data"})
+    assert tomlrt.dumps(doc) == ""
+    # Held subtree still reflects its own structural changes.
+    assert dict(held["nested"]) == {"deep": "data"}
+
+
+def test_detached_aot_add_does_not_revive_in_doc() -> None:
+    doc = tomlrt.parse("[[entries]]\nk = 1\n[[entries]]\nk = 2\n")
+    held = doc.aot("entries")
+    del doc["entries"]
+    held.add({"k": 999})
+    assert tomlrt.dumps(doc) == ""
+    assert [dict(e) for e in held] == [{"k": 1}, {"k": 2}, {"k": 999}]
+
+
+def test_detached_aot_entry_set_table_does_not_revive() -> None:
+    doc = tomlrt.parse("[[entries]]\nk = 1\n")
+    held_aot = doc.aot("entries")
+    held_entry = held_aot[0]
+    del doc["entries"]
+    held_entry.set_table("sub", {"a": 1})
+    held_entry["new"] = 42
+    assert tomlrt.dumps(doc) == ""
+    assert held_entry["new"] == 42
+    assert dict(held_entry["sub"]) == {"a": 1}
+
+
+def test_detached_aot_replaced_does_not_revive() -> None:
+    doc = tomlrt.parse("[[entries]]\nk = 1\n")
+    held = doc.aot("entries")
+    doc["entries"] = "REPLACED"
+    held.add({"k": 999})
+    assert tomlrt.dumps(doc) == 'entries = "REPLACED"\n'
