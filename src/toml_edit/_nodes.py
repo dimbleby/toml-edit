@@ -210,9 +210,9 @@ class ArrayItem:
     post_comma_trivia: Trivia
 
     def render(self) -> str:
-        out = self.leading.render() + render_value(self.value) + self.trailing.render()
+        out = f"{self.leading.render()}{render_value(self.value)}{self.trailing.render()}"
         if self.has_comma:
-            out += "," + self.post_comma_trivia.render()
+            out += f",{self.post_comma_trivia.render()}"
         return out
 
 
@@ -226,7 +226,7 @@ class ArrayNode:
 
     def render(self) -> str:
         body = "".join(item.render() for item in self.items)
-        return "[" + body + self.final_trivia.render() + "]"
+        return f"[{body}{self.final_trivia.render()}]"
 
 
 @dataclass(slots=True)
@@ -243,17 +243,14 @@ class InlineTableEntry:
     post_comma_trivia: Trivia
 
     def render(self) -> str:
+        pre_eq = self.pre_eq.text if self.pre_eq is not None else ""
+        post_eq = self.post_eq.text if self.post_eq is not None else ""
         out = (
-            self.leading.render()
-            + self.key.render()
-            + (self.pre_eq.text if self.pre_eq is not None else "")
-            + "="
-            + (self.post_eq.text if self.post_eq is not None else "")
-            + render_value(self.value)
-            + self.trailing.render()
+            f"{self.leading.render()}{self.key.render()}{pre_eq}={post_eq}"
+            f"{render_value(self.value)}{self.trailing.render()}"
         )
         if self.has_comma:
-            out += "," + self.post_comma_trivia.render()
+            out += f",{self.post_comma_trivia.render()}"
         return out
 
 
@@ -266,7 +263,7 @@ class InlineTableNode:
 
     def render(self) -> str:
         body = "".join(e.render() for e in self.entries)
-        return "{" + body + self.final_trivia.render() + "}"
+        return f"{{{body}{self.final_trivia.render()}}}"
 
 
 ValueNode = (
@@ -306,14 +303,12 @@ class KeyValueNode:
     newline: NewlineNode | None
 
     def render(self) -> str:
+        pre_eq = self.pre_eq.text if self.pre_eq is not None else ""
+        post_eq = self.post_eq.text if self.post_eq is not None else ""
+        trailing = self.trailing.text if self.trailing is not None else ""
         out = (
-            self.leading.render()
-            + self.key.render()
-            + (self.pre_eq.text if self.pre_eq is not None else "")
-            + "="
-            + (self.post_eq.text if self.post_eq is not None else "")
-            + render_value(self.value)
-            + (self.trailing.text if self.trailing is not None else "")
+            f"{self.leading.render()}{self.key.render()}{pre_eq}={post_eq}"
+            f"{render_value(self.value)}{trailing}"
         )
         if self.trailing_comment is not None:
             out += self.trailing_comment.render()
@@ -346,14 +341,12 @@ class TableHeaderNode:
     def render(self) -> str:
         open_tok = "[[" if self.kind == "array" else "["
         close_tok = "]]" if self.kind == "array" else "]"
+        inner_pre = self.inner_pre.text if self.inner_pre is not None else ""
+        inner_post = self.inner_post.text if self.inner_post is not None else ""
+        trailing = self.trailing.text if self.trailing is not None else ""
         out = (
-            self.leading.render()
-            + open_tok
-            + (self.inner_pre.text if self.inner_pre is not None else "")
-            + self.key.render()
-            + (self.inner_post.text if self.inner_post is not None else "")
-            + close_tok
-            + (self.trailing.text if self.trailing is not None else "")
+            f"{self.leading.render()}{open_tok}{inner_pre}{self.key.render()}"
+            f"{inner_post}{close_tok}{trailing}"
         )
         if self.trailing_comment is not None:
             out += self.trailing_comment.render()
