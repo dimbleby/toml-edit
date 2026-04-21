@@ -22,11 +22,6 @@ doc["project"]["dependencies"].append("requests>=2")
 print(tomlrt.dumps(doc))   # comments and layout are preserved
 ```
 
-`Table` is a real `dict[str, Any]` subclass and `Array` is a real
-`list[Any]` subclass, so `isinstance(t, dict)`, `**t`, `json.dumps(t)`
-and any other API typed against `dict` / `list` accept tomlrt
-containers directly — no snapshot dance.
-
 ### Structural assignment
 
 A plain `dict` value installs as an inline table; a plain `list`
@@ -37,8 +32,8 @@ flavoured value:
 from tomlrt import AoT, Array, Table
 
 doc["tool"] = Table.section({"version": 1})      # [tool] section
-doc["xy"]   = {"x": 1, "y": 2}                    # xy = { x = 1, y = 2 }
-doc["pkgs"] = AoT([{"name": "a"}, {"name": "b"}])# [[pkgs]] … [[pkgs]]
+doc["xy"]   = {"x": 1, "y": 2}                   # xy = { x = 1, y = 2 }
+doc["pkgs"] = AoT([{"a": 1}, {"b": 2])           # [[pkgs]] … [[pkgs]]
 doc["tags"] = Array(["a", "b"], multiline=True)  # multi-line array
 ```
 
@@ -47,7 +42,7 @@ tuple to escape keys that contain a literal `.`:
 
 ```python
 doc.install("tool.poetry", Table.section({"name": "x"}))  # [tool.poetry]
-doc.install(("weird.key",), 1)                             # "weird.key" = 1
+doc.install(("weird.key",), 1)                            # "weird.key" = 1
 ```
 
 ### Comment API
