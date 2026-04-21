@@ -7,29 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Performance
-
-- ``Document(cst)`` construction is now linear in the number of
-  sections rather than quadratic. Previously every nested
-  ``_StdTable`` rescanned the whole document section list to find its
-  direct sections and dotted-key extras; the root now builds a
-  by-path section index once and threads it through the construction
-  call chain. On a 1 MB / 2000-section synthetic document the wrap
-  time drops from ~1.6 s to ~110 ms; full ``parse`` time drops from
-  ~1.6 s to ~580 ms (~2.8×). The index is purely transient — it is
-  cleared at the end of each ``__init__``, never stored on the
-  ``DocumentNode``, and post-construction reads use the unchanged
-  always-fresh paths, so there is no staleness window after
-  mutation.
-
-- Several small wins in the CST parser: hoisted the
-  backslash-escape map to module scope, replaced ``_scan_value_end``
-  with a precompiled regex, simplified ``_looks_like_float`` to
-  avoid a per-token ``lstrip`` allocation, and switched
-  ``Key.__post_init__`` from a generator expression to a list-comp
-  (faster ``tuple`` construction in CPython). Together these are
-  worth roughly 25% on numeric/key-heavy documents.
-
 ### Changed
 
 - **Structural assignment is now driven by the value, not the method
