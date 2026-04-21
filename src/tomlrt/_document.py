@@ -1647,7 +1647,14 @@ class _DottedSubTable(Table):
 class _StdTable(Table):
     """Standard TOML table view: aggregates physical sections by path."""
 
-    __slots__ = ("_anchor", "_doc_node", "_init_index", "_owner_anchor", "_path")
+    __slots__ = (
+        "_anchor",
+        "_doc_node",
+        "_init_extras",
+        "_init_pool",
+        "_owner_anchor",
+        "_path",
+    )
 
     def __init__(
         self,
@@ -1656,7 +1663,8 @@ class _StdTable(Table):
         *,
         anchor: SectionNode | None = None,
         owner_anchor: SectionNode | None = None,
-        _init_index: _SectionIndex | None = None,
+        _pool: list[SectionNode] | None = None,
+        _extras: list[tuple[tuple[str, ...], KeyValueNode]] | None = None,
     ) -> None:
         super().__init__()
         self._doc_node = doc_node
@@ -1676,16 +1684,18 @@ class _StdTable(Table):
         # purges and inserts can never desync the dict view from what
         # ``dumps`` would render.
         self._owner_anchor = owner_anchor if owner_anchor is not None else anchor
-        # Transient, used only during the initial ``_populate`` call
-        # that runs from this constructor. A section index lets nested
-        # ``_iter_table`` calls look sections up by path in O(1) instead
-        # of rescanning the whole document; post-construction reads go
-        # through the unindexed (always-fresh) paths.
-        self._init_index = _init_index
+        # Transient hints, used only during the initial ``_populate``
+        # call that runs from this constructor. The parent ``_iter_table``
+        # already partitioned its section pool by next-head and computed
+        # the dotted-key "extras" that extend into us, so we can skip
+        # the full rescan and ancestor walk that post-mutation reads do.
+        self._init_pool = _pool
+        self._init_extras = _extras
         try:
             self._populate()
         finally:
-            self._init_index = None
+            self._init_pool = None
+            self._init_extras = None
 
     def _scope(self) -> list[SectionNode] | None:
         owner = self._owner_anchor
@@ -1704,28 +1714,16 @@ class _StdTable(Table):
         (or ``None`` for the implicit pre-header section) and returns,
         for each dotted KV in such a section that extends into ``P``,
         the relative path inside ``P`` plus the KV node itself.
+
+        Used for post-mutation reads. Construction-time reads receive
+        their extras pre-computed top-down by the parent ``_iter_table``.
         """
         plen = len(self._path)
         if plen == 0:
             return None
-        # Fast path during Document construction: look up ancestor
-        # sections directly via the precomputed index.
-        index = self._init_index
-        if index is not None and self._owner_anchor is None:
-            out: list[tuple[tuple[str, ...], KeyValueNode]] = []
-            by_exact = index[1]
-            for i in range(plen):
-                anc = self._path[:i]
-                for sec in by_exact.get(anc, ()):
-                    for kv in sec.entries:
-                        full = anc + kv.key.path
-                        if len(full) <= plen or full[:plen] != self._path:
-                            continue
-                        out.append((full[plen:], kv))
-            return out or None
         scope = self._scope()
         sections = scope if scope is not None else self._doc_node.sections
-        out = []
+        out: list[tuple[tuple[str, ...], KeyValueNode]] = []
         for sec in sections:
             hdr = sec.header
             host_path: tuple[str, ...] = hdr.key.path if hdr is not None else ()
@@ -1741,14 +1739,23 @@ class _StdTable(Table):
 
     @override
     def _items(self) -> Iterator[tuple[str, TomlValue]]:
+        if self._init_pool is not None:
+            pool = self._init_pool
+        else:
+            scope = self._scope()
+            pool = scope if scope is not None else self._doc_node.sections
+        extras = (
+            self._init_extras
+            if self._init_extras is not None
+            else self._compute_extras()
+        )
         return _iter_table(
             self._doc_node,
             self._path,
-            scope=self._scope(),
+            pool=pool,
             anchor=self._anchor,
             owner_anchor=self._owner_anchor,
-            extras=self._compute_extras(),
-            index=self._init_index,
+            extras=extras,
         )
 
     def _direct_sections(self) -> list[SectionNode]:
@@ -2315,11 +2322,11 @@ class Document(_StdTable):
     __slots__ = ()
 
     def __init__(self, node: DocumentNode) -> None:
-        # Build a section index once so every nested ``_StdTable``
-        # created during initial population can look sections up by
-        # path instead of rescanning the whole document.
-        index = _build_section_index(node.sections)
-        super().__init__(node, (), _init_index=index)
+        # Hand the construction walk the full section list and an
+        # empty extras tuple. ``_iter_table`` then partitions sections
+        # by head as it descends, so each nested ``_StdTable`` only
+        # sees its own slice of the document — no per-level rescans.
+        super().__init__(node, (), _pool=node.sections, _extras=[])
 
     @property
     def cst(self) -> DocumentNode:
@@ -3364,80 +3371,30 @@ def _index_of(sections: list[SectionNode], target: SectionNode) -> int:
 # ---------------------------------------------------------------------------
 
 
-_SectionIndex: TypeAlias = tuple[
-    dict[tuple[str, ...], list["SectionNode"]],  # by_prefix
-    dict[tuple[str, ...], list["SectionNode"]],  # by_exact
-]
-
-
-def _build_section_index(sections: Iterable[SectionNode]) -> _SectionIndex:
-    """Build a two-way index over ``sections`` for fast path lookups.
-
-    ``by_prefix[P]`` is every section whose header path starts with
-    ``P`` (in physical order); ``by_exact[P]`` is every section whose
-    header path is exactly ``P``. Sections with no header are indexed
-    under ``()`` in both. Used during :class:`Document` construction to
-    avoid O(N) full-pool walks per nested table.
-    """
-    by_prefix: dict[tuple[str, ...], list[SectionNode]] = {}
-    by_exact: dict[tuple[str, ...], list[SectionNode]] = {}
-    for sec in sections:
-        hdr = sec.header
-        if hdr is None:
-            by_exact.setdefault((), []).append(sec)
-            by_prefix.setdefault((), []).append(sec)
-            continue
-        path = hdr.key.path
-        by_exact.setdefault(path, []).append(sec)
-        for i in range(len(path) + 1):
-            by_prefix.setdefault(path[:i], []).append(sec)
-    return by_prefix, by_exact
-
-
 def _iter_table(
     doc_node: DocumentNode,
     path: tuple[str, ...],
     *,
-    scope: list[SectionNode] | None = None,
+    pool: list[SectionNode],
     anchor: SectionNode | None = None,
     owner_anchor: SectionNode | None = None,
     extras: list[tuple[tuple[str, ...], KeyValueNode]] | None = None,
-    index: _SectionIndex | None = None,
 ) -> Iterator[tuple[str, TomlValue]]:
-    # Pick the smallest valid section pool. With a usable index
-    # (construction time, no AoT-narrowed scope), that's the set of
-    # sections whose header path starts with ``path`` — much smaller
-    # than the whole document for nested tables.
-    section_pool: list[SectionNode]
-    use_index = index is not None and scope is None
-    if use_index:
-        assert index is not None
-        section_pool = index[0].get(path, [])
-    elif scope is not None:
-        section_pool = scope
-    else:
-        section_pool = doc_node.sections
+    # ``pool`` is the section list this table draws from: the whole
+    # document at the root, the AoT-owned range for an AoT-narrowed
+    # table, or — during construction — the per-head bucket the parent
+    # already partitioned for us.
 
     # Sections whose entries are "direct" key/values at this exact path.
     direct_secs: list[SectionNode]
     if anchor is not None:
         direct_secs = [anchor]
-    elif use_index:
-        assert index is not None
-        if path == ():
-            direct_secs = [s for s in index[1].get((), ()) if s.header is None]
-        else:
-            direct_secs = [
-                s
-                for s in index[1].get(path, ())
-                if s.header is not None and s.header.kind == "table"
-            ]
     elif path == ():
-        direct_secs = [s for s in section_pool if s.header is None]
+        direct_secs = [s for s in pool if s.header is None]
     else:
         direct_secs = [
             s
-            for s in section_pool
+            for s in pool
             if s.header is not None
             and s.header.kind == "table"
             and s.header.key.path == path
@@ -3461,7 +3418,7 @@ def _iter_table(
     # entries (header == path) or registers a sub-table / sub-AoT head.
     # First-appearance order matches what tomllib produces.
     plen = len(path)
-    for sec in section_pool:
+    for sec in pool:
         if id(sec) in direct_ids:
             for entry in sec.entries:
                 head = entry.key.path[0]
@@ -3543,22 +3500,31 @@ def _iter_table(
             )
             continue
 
-        # Merged view at path + (head,): the child re-derives its own
-        # extras from the live doc on each read, so we just hand it the
-        # owner anchor; nothing to splice.
+        # Merged view at path + (head,). For non-AoT children we hand
+        # over the per-head bucket as their pool and the dotted-key
+        # extras we already collected (one head segment stripped) so
+        # they skip a full rescan and ancestor walk. AoT-narrowed
+        # children fall through to the slow path: their pool depends
+        # on the AoT entry's owned range, computed lazily via
+        # ``_scope``.
         child_owner = anchor or owner_anchor
-        yield (
-            head,
-            _StdTable(
-                doc_node,
-                (*path, head),
-                owner_anchor=child_owner,
-                # Only forward the index when the child shares our
-                # (whole-document) scope. AoT-narrowed children build
-                # their own (unindexed) view.
-                _init_index=index if child_owner is None else None,
-            ),
-        )
+        if child_owner is None:
+            child_extras = [(kv.key.path[1:], kv) for kv in nested_kvs]
+            child_extras.extend((rp[1:], kv) for rp, kv in nested_extras)
+            yield (
+                head,
+                _StdTable(
+                    doc_node,
+                    (*path, head),
+                    _pool=sub_secs,
+                    _extras=child_extras,
+                ),
+            )
+        else:
+            yield (
+                head,
+                _StdTable(doc_node, (*path, head), owner_anchor=child_owner),
+            )
 
 
 __all__ = [
