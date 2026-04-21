@@ -74,6 +74,22 @@ _RE_ML_BASIC_BODY = re.compile(r'[^"\\\r\n\x00-\x08\x0b-\x1f\x7f]+')
 _RE_ML_LITERAL_BODY = re.compile(r"[^'\r\n\x00-\x08\x0b-\x1f\x7f]+")
 # Comment body: anything except newline + control chars (tab is OK).
 _RE_COMMENT_BODY = re.compile(r"[^\r\n\x00-\x08\x0b-\x1f\x7f]*")
+# First character that ends a bare-value token (whitespace, newline,
+# array/table close, comma, comment). Used by ``_scan_value_end``.
+_RE_VALUE_END = re.compile(r"[ \t\n\r,\]}#]")
+
+# Simple backslash-escape map, shared across every string parse so we
+# don't rebuild the dict on each escape character.
+_SIMPLE_ESCAPES: Final[dict[str, str]] = {
+    "b": "\b",
+    "t": "\t",
+    "n": "\n",
+    "f": "\f",
+    "r": "\r",
+    "e": "\x1b",  # TOML 1.1: ESC
+    '"': '"',
+    "\\": "\\",
+}
 
 
 class _Parser:
@@ -874,18 +890,9 @@ class _Parser:
         self._advance(1)
         ch = self._peek()
         self._advance(1)
-        simple: dict[str, str] = {
-            "b": "\b",
-            "t": "\t",
-            "n": "\n",
-            "f": "\f",
-            "r": "\r",
-            "e": "\x1b",  # TOML 1.1: ESC
-            '"': '"',
-            "\\": "\\",
-        }
-        if ch in simple:
-            return simple[ch]
+        escaped = _SIMPLE_ESCAPES.get(ch)
+        if escaped is not None:
+            return escaped
         if ch == "x":  # TOML 1.1: 2-digit hex escape (U+0000..U+00FF)
             return self._parse_unicode_escape(2)
         if ch == "u":
@@ -964,14 +971,8 @@ class _Parser:
 
         Stops at whitespace, newline, ``,``, ``]``, ``}``, ``#``, EOF.
         """
-        i = start
-        n = len(self._src)
-        while i < n:
-            c = self._src[i]
-            if c in (" ", "\t", "\n", "\r", ",", "]", "}", "#"):
-                break
-            i += 1
-        return i
+        m = _RE_VALUE_END.search(self._src, start)
+        return m.start() if m is not None else len(self._src)
 
     def _looks_like_datetime(self, token: str) -> bool:
         # Date: "YYYY-MM-DD"; Local time: "HH:MM:SS"; Datetime contains both.
@@ -980,10 +981,13 @@ class _Parser:
         return bool(len(token) >= 3 and token[2] == ":" and token[:2].isdigit())
 
     def _looks_like_float(self, token: str) -> bool:
-        body = token.lstrip("+-")
+        # A decimal float must contain '.', 'e' or 'E'; hex/oct/bin
+        # integers never do. A leading sign is fine to keep since none
+        # of those marker characters are signs.
+        body = token[1:] if token[:1] in "+-" else token
         if body.startswith(("0x", "0o", "0b")):
             return False
-        return any(c in body for c in (".", "e", "E"))
+        return "." in body or "e" in body or "E" in body
 
     def _parse_integer_token(self, token: str, *, at: int) -> IntegerNode:
         style: IntStyle

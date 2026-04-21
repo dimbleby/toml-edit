@@ -123,7 +123,10 @@ class Key:
     path: tuple[str, ...] = field(init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
-        self.path = tuple(p.value for p in self.parts)
+        # List-comp into tuple is measurably faster than a generator
+        # expression, and :class:`Key` is built for every key in the
+        # document during parsing.
+        self.path = tuple([p.value for p in self.parts])
 
     def render(self) -> str:
         out: list[str] = []
