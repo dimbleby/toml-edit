@@ -175,16 +175,17 @@ class _Parser:
         doc = DocumentNode()
         current = SectionNode(header=None)
         doc.sections.append(current)
+        src = self._src
 
-        while not self._eof():
+        while self._pos < self._end:
             leading = self._collect_trivia_block()
-            if self._eof():
+            pos = self._pos
+            if pos >= self._end:
                 # leading is purely trailing trivia for the document.
                 doc.trailing_trivia.pieces.extend(leading.pieces)
                 break
 
-            ch = self._peek()
-            if ch == "[":
+            if src[pos] == "[":
                 header = self._parse_header(leading)
                 current = SectionNode(header=header)
                 doc.sections.append(current)
@@ -215,11 +216,14 @@ class _Parser:
         while pos < end:
             ch = src[pos]
             if ch == " " or ch == "\t":
-                m = _RE_INLINE_WS.match(src, pos)
-                # m is non-None because src[pos] matched the class.
-                assert m is not None
-                pieces.append(WhitespaceNode(m.group(0)))
-                pos = m.end()
+                ws_start = pos
+                pos += 1
+                while pos < end:
+                    c = src[pos]
+                    if c != " " and c != "\t":
+                        break
+                    pos += 1
+                pieces.append(WhitespaceNode(src[ws_start:pos]))
             elif ch == "#":
                 self._pos = pos
                 pieces.append(self._consume_comment())
@@ -262,17 +266,23 @@ class _Parser:
 
     def _consume_inline_ws(self) -> WhitespaceNode | None:
         """Whitespace (no newlines, no comments)."""
+        src = self._src
+        end = self._end
         pos = self._pos
-        if pos >= self._end:
+        if pos >= end:
             return None
-        ch = self._src[pos]
+        ch = src[pos]
         if ch != " " and ch != "\t":
             return None
-        m = _RE_INLINE_WS.match(self._src, pos)
-        # Pattern matches at least one ws char given the peek above.
-        assert m is not None
-        self._pos = m.end()
-        return WhitespaceNode(m.group(0))
+        start = pos
+        pos += 1
+        while pos < end:
+            c = src[pos]
+            if c != " " and c != "\t":
+                break
+            pos += 1
+        self._pos = pos
+        return WhitespaceNode(src[start:pos])
 
     def _consume_array_trivia(self) -> Trivia:
         """Whitespace, newlines and comments allowed inside arrays."""
@@ -284,10 +294,14 @@ class _Parser:
         while pos < end:
             ch = src[pos]
             if ch == " " or ch == "\t":
-                m = _RE_INLINE_WS.match(src, pos)
-                assert m is not None
-                pieces.append(WhitespaceNode(m.group(0)))
-                pos = m.end()
+                ws_start = pos
+                pos += 1
+                while pos < end:
+                    c = src[pos]
+                    if c != " " and c != "\t":
+                        break
+                    pos += 1
+                pieces.append(WhitespaceNode(src[ws_start:pos]))
             elif ch == "\n":
                 pos += 1
                 pieces.append(NewlineNode("\n"))
@@ -308,17 +322,23 @@ class _Parser:
     ) -> tuple[WhitespaceNode | None, CommentNode | None, NewlineNode | None]:
         trailing = self._consume_inline_ws()
         comment: CommentNode | None = None
-        if self._peek() == "#":
+        src = self._src
+        end = self._end
+        pos = self._pos
+        ch = src[pos] if pos < end else ""
+        if ch == "#":
             comment = self._consume_comment()
+            pos = self._pos
+            ch = src[pos] if pos < end else ""
         newline: NewlineNode | None = None
-        if self._peek() == "\n":
-            self._pos += 1
+        if ch == "\n":
+            self._pos = pos + 1
             newline = NewlineNode("\n")
-        elif self._peek() == "\r" and self._peek(1) == "\n":
-            self._pos += 2
+        elif ch == "\r" and pos + 1 < end and src[pos + 1] == "\n":
+            self._pos = pos + 2
             newline = NewlineNode("\r\n")
-        elif not self._eof():
-            msg = f"expected newline or end of file, got {self._peek()!r}"
+        elif pos < end:
+            msg = f"expected newline or end of file, got {ch!r}"
             raise self._error(msg)
         return trailing, comment, newline
 
@@ -394,31 +414,43 @@ class _Parser:
         parts: list[KeyPart] = [self._parse_key_part()]
         separators: list[str] = []
         src = self._src
+        end = self._end
         while True:
             save = self._pos
-            m = _RE_INLINE_WS.match(src, save)
-            ws_end = m.end() if m is not None else save
-            if ws_end >= self._end or src[ws_end] != ".":
+            ws_end = save
+            while ws_end < end:
+                c = src[ws_end]
+                if c != " " and c != "\t":
+                    break
+                ws_end += 1
+            if ws_end >= end or src[ws_end] != ".":
                 self._pos = save
                 break
             after_dot = ws_end + 1
-            m2 = _RE_INLINE_WS.match(src, after_dot)
-            sep_end = m2.end() if m2 is not None else after_dot
+            sep_end = after_dot
+            while sep_end < end:
+                c = src[sep_end]
+                if c != " " and c != "\t":
+                    break
+                sep_end += 1
             self._pos = sep_end
             separators.append(src[save:sep_end])
             parts.append(self._parse_key_part())
         return Key(parts=parts, separators=separators)
 
     def _parse_key_part(self) -> KeyPart:
-        ch = self._peek()
+        src = self._src
+        pos = self._pos
+        ch = src[pos] if pos < self._end else ""
         if ch == '"':
             return self._parse_basic_key()
         if ch == "'":
             return self._parse_literal_key()
-        m = _RE_BARE_KEY.match(self._src, self._pos)
+        m = _RE_BARE_KEY.match(src, pos)
         if m is not None:
-            raw = m.group(0)
-            self._pos = m.end()
+            end_pos = m.end()
+            raw = src[pos:end_pos]
+            self._pos = end_pos
             return KeyPart(raw=raw, value=raw, kind="bare")
         msg = f"expected key, got {ch!r}"
         raise self._error(msg)
@@ -442,10 +474,13 @@ class _Parser:
     def _parse_key_value(self, leading: Trivia) -> KeyValueNode:
         key = self._parse_key()
         pre_eq = self._consume_inline_ws()
-        if self._peek() != "=":
-            msg = f"expected '=' after key, got {self._peek()!r}"
+        src = self._src
+        pos = self._pos
+        if pos >= self._end or src[pos] != "=":
+            ch = src[pos] if pos < self._end else ""
+            msg = f"expected '=' after key, got {ch!r}"
             raise self._error(msg)
-        self._advance(1)
+        self._pos = pos + 1
         post_eq = self._consume_inline_ws()
         value = self._parse_value()
         trailing, comment, newline = self._consume_eol()
@@ -544,10 +579,12 @@ class _Parser:
 
     def _record_keyvalue(self, kv: KeyValueNode) -> None:
         section = self._current_section
-        full = section + kv.key.path
-        at = self._pos
+        path = kv.key.path
+        full = section + path if section else path
         # Final-path conflicts.
-        if full in self._value_paths:
+        value_paths = self._value_paths
+        if full in value_paths:
+            at = self._pos
             msg = f"duplicate key {'.'.join(full)!r}"
             raise self._error(msg, at=at)
         if (
@@ -556,35 +593,49 @@ class _Parser:
             or full in self._implicit_table_paths
             or full in self._dotted_paths
         ):
+            at = self._pos
             msg = f"key {'.'.join(full)!r} already defined as a table"
             raise self._error(msg, at=at)
         # Intermediate-prefix conflicts (paths between section and full).
-        for i in range(len(section) + 1, len(full)):
-            sub = full[:i]
-            if sub in self._value_paths:
-                msg = f"key {'.'.join(sub)!r} already defined as a value"
-                raise self._error(msg, at=at)
-            if sub in self._explicit_table_paths:
-                joined = ".".join(sub)
-                msg = (
-                    f"cannot extend explicitly-defined table {joined!r} via dotted keys"
-                )
-                raise self._error(msg, at=at)
-            if sub in self._aot_paths:
-                msg = f"cannot extend array-of-tables {'.'.join(sub)!r} via dotted keys"
-                raise self._error(msg, at=at)
-            self._dotted_paths.add(sub)
-            self._track(sub)
-        self._value_paths.add(full)
+        slen = len(section)
+        flen = len(full)
+        if flen > slen + 1:
+            at = self._pos
+            for i in range(slen + 1, flen):
+                sub = full[:i]
+                if sub in value_paths:
+                    msg = f"key {'.'.join(sub)!r} already defined as a value"
+                    raise self._error(msg, at=at)
+                if sub in self._explicit_table_paths:
+                    joined = ".".join(sub)
+                    msg = (
+                        f"cannot extend explicitly-defined table {joined!r} "
+                        "via dotted keys"
+                    )
+                    raise self._error(msg, at=at)
+                if sub in self._aot_paths:
+                    msg = (
+                        f"cannot extend array-of-tables {'.'.join(sub)!r} "
+                        "via dotted keys"
+                    )
+                    raise self._error(msg, at=at)
+                self._dotted_paths.add(sub)
+                self._track(sub)
+        value_paths.add(full)
         self._track(full)
         # Inline-table values: validate within-table dups and register their
         # nested key paths so cross-section headers/keys see the conflicts.
-        if isinstance(kv.value, InlineTableNode):
-            self._validate_inline_table(kv.value, abs_prefix=full, at=at)
-        elif isinstance(kv.value, ArrayNode):
-            for item in kv.value.items:
+        value = kv.value
+        if isinstance(value, InlineTableNode):
+            self._validate_inline_table(value, abs_prefix=full, at=self._pos)
+        elif isinstance(value, ArrayNode):
+            for item in value.items:
                 if isinstance(item.value, InlineTableNode):
-                    self._validate_inline_table(item.value, abs_prefix=None, at=at)
+                    self._validate_inline_table(
+                        item.value,
+                        abs_prefix=None,
+                        at=self._pos,
+                    )
 
     def _validate_inline_table(
         self,
@@ -648,7 +699,8 @@ class _Parser:
     # ------------------------------------------------------------------
 
     def _parse_value(self) -> ValueNode:
-        ch = self._peek()
+        pos = self._pos
+        ch = self._src[pos] if pos < self._end else ""
         if ch == '"':
             return self._parse_string('"')
         if ch == "'":
@@ -657,7 +709,7 @@ class _Parser:
             return self._parse_nested_value(self._parse_array)
         if ch == "{":
             return self._parse_nested_value(self._parse_inline_table)
-        if ch in ("t", "f"):
+        if ch == "t" or ch == "f":
             return self._parse_bool()
         # Everything else: a number or date/time. They share a leading
         # ambiguous prefix; sniff a window then dispatch.
