@@ -1844,29 +1844,81 @@ class _StdTable(Table):
                                                longer than one segment
             ("absent", None)
         """
-        for sec in self._direct_sections():
-            for kv in sec.entries:
-                if kv.key.path[0] == key:
-                    if len(kv.key.path) == 1:
-                        return ("direct", kv)
-                    return ("dotted", None)
-        child = (*self._path, key)
-        for sec in self._doc_node.sections:
+        if self._anchor is not None:
+            for sec in (self._anchor,):
+                for kv in sec.entries:
+                    if kv.key.path[0] == key:
+                        if len(kv.key.path) == 1:
+                            return ("direct", kv)
+                        return ("dotted", None)
+            child = (*self._path, key)
+            for sec in self._doc_node.sections:
+                hdr = sec.header
+                if hdr is None:
+                    continue
+                hpath = hdr.key.path
+                if hdr.kind == "array" and hpath == child:
+                    return ("aot", None)
+                if (
+                    hdr.kind == "table"
+                    and len(hpath) >= len(child)
+                    and hpath[: len(child)] == child
+                ):
+                    return ("table", None)
+            extras = self._compute_extras()
+            if extras:
+                terminal: KeyValueNode | None = None
+                has_dotted = False
+                for rel, kv in extras:
+                    if rel[0] != key:
+                        continue
+                    if len(rel) == 1:
+                        terminal = kv
+                    else:
+                        has_dotted = True
+                if terminal is not None:
+                    return ("extras", terminal)
+                if has_dotted:
+                    return ("extras-prefix", None)
+            return ("absent", None)
+
+        # Common path: not AoT-anchored. Fuse the direct-entries scan and the
+        # child-section scan into a single pass over the document.
+        path = self._path
+        plen = len(path)
+        child_len = plen + 1
+        scope = self._scope()
+        sections = scope if scope is not None else self._doc_node.sections
+        child_kind: str | None = None
+        for sec in sections:
             hdr = sec.header
             if hdr is None:
+                if plen == 0:
+                    for kv in sec.entries:
+                        if kv.key.path[0] == key:
+                            if len(kv.key.path) == 1:
+                                return ("direct", kv)
+                            return ("dotted", None)
                 continue
             hpath = hdr.key.path
-            if hdr.kind == "array" and hpath == child:
-                return ("aot", None)
-            if (
-                hdr.kind == "table"
-                and len(hpath) >= len(child)
-                and hpath[: len(child)] == child
-            ):
-                return ("table", None)
+            if hdr.kind == "table" and hpath == path:
+                for kv in sec.entries:
+                    if kv.key.path[0] == key:
+                        if len(kv.key.path) == 1:
+                            return ("direct", kv)
+                        return ("dotted", None)
+                continue
+            hlen = len(hpath)
+            if hlen >= child_len and hpath[:plen] == path and hpath[plen] == key:
+                if hdr.kind == "array" and hlen == child_len:
+                    return ("aot", None)
+                if hdr.kind == "table":
+                    child_kind = "table"
+        if child_kind is not None:
+            return (child_kind, None)
         extras = self._compute_extras()
         if extras:
-            terminal: KeyValueNode | None = None
+            terminal = None
             has_dotted = False
             for rel, kv in extras:
                 if rel[0] != key:
@@ -2003,9 +2055,23 @@ class _StdTable(Table):
 
     @override
     def _delete_value(self, key: str) -> None:
-        kind, _ = self._classify(key)
+        kind, payload = self._classify(key)
         if kind == "absent":
             raise KeyError(key)
+        if kind in ("direct", "extras") and isinstance(payload, KeyValueNode):
+            # Targeted removal: drop just the matching KV from its section.
+            # Avoids the O(N) section walks and full-list rebuilds in
+            # ``_purge_conflicting`` when there's nothing else to remove.
+            target = payload
+            scope = self._scope()
+            sections = scope if scope is not None else self._doc_node.sections
+            for sec in sections:
+                entries = sec.entries
+                for idx, kv in enumerate(entries):
+                    if kv is target:
+                        del entries[idx]
+                        return
+            return  # pragma: no cover - defensive: kv must be reachable
         self._purge_conflicting(key)
 
     def _ensure_section(self) -> SectionNode:
