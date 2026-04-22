@@ -367,7 +367,12 @@ def _replace_eol_comment(
 
 def _is_pure_whitespace(t: Trivia) -> bool:
     """True iff trivia contains only whitespace/newline pieces (no comments)."""
-    return all(isinstance(p, (WhitespaceNode, NewlineNode)) for p in t.pieces)
+    pieces = t.pieces
+    if not pieces:
+        return True
+    # ``CommentNode`` is the only non-whitespace TriviaPiece; checking
+    # for its absence dodges per-piece tuple-isinstance.
+    return not any(isinstance(p, CommentNode) for p in pieces)
 
 
 def _scan_leading_comment_run(pieces: list[TriviaPiece]) -> tuple[int, list[str]]:
@@ -547,6 +552,8 @@ def _apply_separator_style(
         if _is_pure_whitespace(it.leading):
             it.leading = Trivia()
     container.final_trivia = Trivia()
+    inter_render = style.inter_separator.render()
+    close_render = style.close_pad.render()
     for i, item in enumerate(items):
         if i < n - 1:
             if not item.has_comma:
@@ -560,9 +567,9 @@ def _apply_separator_style(
                         eol,
                         force_newline=True,
                     )
-            elif _is_pure_whitespace(item.post_comma_trivia) and not _trivia_render_eq(
-                item.post_comma_trivia,
-                style.inter_separator,
+            elif (
+                _is_pure_whitespace(item.post_comma_trivia)
+                and item.post_comma_trivia.render() != inter_render
             ):
                 item.post_comma_trivia = _clone_trivia(style.inter_separator)
             if _is_pure_whitespace(item.trailing) and item.trailing.pieces:
@@ -577,9 +584,9 @@ def _apply_separator_style(
             if item.has_comma and _is_pure_whitespace(item.post_comma_trivia):
                 item.has_comma = False
                 item.post_comma_trivia = Trivia()
-            if _is_pure_whitespace(item.trailing) and not _trivia_render_eq(
-                item.trailing,
-                style.close_pad,
+            if (
+                _is_pure_whitespace(item.trailing)
+                and item.trailing.render() != close_render
             ):
                 item.trailing = _clone_trivia(style.close_pad)
 
@@ -2974,24 +2981,25 @@ class Array(list[Any]):
 
     @override
     def append(self, value: object) -> None:
-        self._node.items.append(self._make_item(value, with_comma=False))
+        new_item = self._make_item(value, with_comma=False)
+        self._node.items.append(new_item)
         self._rebuild_separators()
-        self._resync()
+        list.append(self, _value_for(new_item.value))
 
     @override
     def extend(self, values: Iterable[object]) -> None:
-        for v in list(values):
-            self._node.items.append(self._make_item(v, with_comma=False))
+        new_items = [self._make_item(v, with_comma=False) for v in list(values)]
+        self._node.items.extend(new_items)
         self._rebuild_separators()
-        self._resync()
+        list.extend(self, [_value_for(it.value) for it in new_items])
 
     @override
     def insert(self, index: SupportsIndex, value: object) -> None:
-        self._node.items.insert(
-            operator.index(index), self._make_item(value, with_comma=False)
-        )
+        idx = operator.index(index)
+        new_item = self._make_item(value, with_comma=False)
+        self._node.items.insert(idx, new_item)
         self._rebuild_separators()
-        self._resync()
+        list.insert(self, idx, _value_for(new_item.value))
 
     @overload
     def __setitem__(self, index: SupportsIndex, value: object) -> None: ...
