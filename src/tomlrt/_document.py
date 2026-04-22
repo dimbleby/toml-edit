@@ -1845,12 +1845,14 @@ class _StdTable(Table):
             ("absent", None)
         """
         if self._anchor is not None:
-            for sec in (self._anchor,):
-                for kv in sec.entries:
-                    if kv.key.path[0] == key:
-                        if len(kv.key.path) == 1:
-                            return ("direct", kv)
-                        return ("dotted", None)
+            # AoT-anchored slow path: direct sections is just the anchor;
+            # child sections may live anywhere in the doc, so we keep the
+            # original two-pass shape.
+            for kv in self._anchor.entries:
+                if kv.key.path[0] == key:
+                    if len(kv.key.path) == 1:
+                        return ("direct", kv)
+                    return ("dotted", None)
             child = (*self._path, key)
             for sec in self._doc_node.sections:
                 hdr = sec.header
@@ -1865,22 +1867,7 @@ class _StdTable(Table):
                     and hpath[: len(child)] == child
                 ):
                     return ("table", None)
-            extras = self._compute_extras()
-            if extras:
-                terminal: KeyValueNode | None = None
-                has_dotted = False
-                for rel, kv in extras:
-                    if rel[0] != key:
-                        continue
-                    if len(rel) == 1:
-                        terminal = kv
-                    else:
-                        has_dotted = True
-                if terminal is not None:
-                    return ("extras", terminal)
-                if has_dotted:
-                    return ("extras-prefix", None)
-            return ("absent", None)
+            return self._classify_extras(key)
 
         # Common path: not AoT-anchored. Fuse the direct-entries scan and the
         # child-section scan into a single pass over the document.
@@ -1916,6 +1903,10 @@ class _StdTable(Table):
                     child_kind = "table"
         if child_kind is not None:
             return (child_kind, None)
+        return self._classify_extras(key)
+
+    def _classify_extras(self, key: str) -> tuple[str, object]:
+        """Tail of :meth:`_classify`: look for ancestor-section dotted KVs."""
         extras = self._compute_extras()
         if extras:
             terminal = None
@@ -1986,8 +1977,7 @@ class _StdTable(Table):
 
         kind, payload = self._classify(key)
         if kind in ("direct", "extras"):
-            # In-place value swap: the new dict-storage value is exactly
-            # what we just wrote, so caller can skip the full refresh.
+            # In-place value swap: reuse the existing KV node.
             assert isinstance(payload, KeyValueNode)
             payload.value = value_to_node(value)
             return _value_for(payload.value)
@@ -2010,25 +2000,24 @@ class _StdTable(Table):
         # Top-level only: if this assignment is into the implicit
         # pre-header section and a ``[table]`` follows, ensure a blank
         # line separates the new key from that header.
-        fast_value: TomlValue | None = (
-            _value_for(new_kv.value) if kind == "absent" else None
-        )
         if self._path == () and target.header is None:
             doc_node = self._doc_node
             try:
                 idx = doc_node.sections.index(target)
             except ValueError:  # pragma: no cover - defensive
-                return fast_value
-            if idx + 1 < len(doc_node.sections):
+                idx = -1
+            if idx >= 0 and idx + 1 < len(doc_node.sections):
                 next_header = doc_node.sections[idx + 1].header
                 if (
                     next_header is not None
-                    and not next_header.leading.render().startswith(
-                        "\n",
-                    )
+                    and not next_header.leading.render().startswith("\n")
                 ):
                     next_header.leading.pieces.insert(0, NewlineNode("\n"))
-        return fast_value
+        # The new dict-storage value is exactly what we just wrote;
+        # caller can skip the full _refresh_key walk. Safe for every
+        # kind because _purge_conflicting only removes things keyed by
+        # ``key`` in this scope, so no other dict slot is invalidated.
+        return _value_for(new_kv.value)
 
     def _set_aot_value(self, key: str, value: AoT) -> None:
         """Assign a (possibly cross-document) AoT to ``key``.
