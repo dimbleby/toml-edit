@@ -396,14 +396,14 @@ class _Parser:
                 self._track(sub)
 
         return TableHeaderNode(
-            leading=leading,
-            kind=kind,
-            inner_pre=inner_pre,
-            key=key,
-            inner_post=inner_post,
-            trailing=trailing,
-            trailing_comment=comment,
-            newline=newline,
+            leading,
+            kind,
+            inner_pre,
+            key,
+            inner_post,
+            trailing,
+            comment,
+            newline,
         )
 
     # ------------------------------------------------------------------
@@ -436,7 +436,7 @@ class _Parser:
             self._pos = sep_end
             separators.append(src[save:sep_end])
             parts.append(self._parse_key_part())
-        return Key(parts=parts, separators=separators)
+        return Key(parts, separators)
 
     def _parse_key_part(self) -> KeyPart:
         src = self._src
@@ -451,7 +451,7 @@ class _Parser:
             end_pos = m.end()
             raw = src[pos:end_pos]
             self._pos = end_pos
-            return KeyPart(raw=raw, value=raw, kind="bare")
+            return KeyPart(raw, raw, "bare")
         msg = f"expected key, got {ch!r}"
         raise self._error(msg)
 
@@ -459,13 +459,13 @@ class _Parser:
         start = self._pos
         s = self._parse_basic_string(allow_multiline=False)
         raw = self._src[start : self._pos]
-        return KeyPart(raw=raw, value=s.value, kind="basic")
+        return KeyPart(raw, s.value, "basic")
 
     def _parse_literal_key(self) -> KeyPart:
         start = self._pos
         s = self._parse_literal_string(allow_multiline=False)
         raw = self._src[start : self._pos]
-        return KeyPart(raw=raw, value=s.value, kind="literal")
+        return KeyPart(raw, s.value, "literal")
 
     # ------------------------------------------------------------------
     # Key/value lines
@@ -485,14 +485,14 @@ class _Parser:
         value = self._parse_value()
         trailing, comment, newline = self._consume_eol()
         return KeyValueNode(
-            leading=leading,
-            key=key,
-            pre_eq=pre_eq,
-            post_eq=post_eq,
-            value=value,
-            trailing=trailing,
-            trailing_comment=comment,
-            newline=newline,
+            leading,
+            key,
+            pre_eq,
+            post_eq,
+            value,
+            trailing,
+            comment,
+            newline,
         )
 
     def _validate_header(
@@ -876,7 +876,7 @@ class _Parser:
         if ch == "'":
             value = src[start : self._pos]
             self._pos += 1
-            return StringNode(raw="", value=value, style="literal")
+            return StringNode("", value, "literal")
         if ch == "\n" or ch == "\r":
             msg = "newline in literal string"
             raise self._error(msg)
@@ -975,10 +975,10 @@ class _Parser:
     def _parse_bool(self) -> BoolNode:
         if self._starts_with("true"):
             self._advance(4)
-            return BoolNode(raw="true", value=True)
+            return BoolNode("true", value=True)
         if self._starts_with("false"):
             self._advance(5)
-            return BoolNode(raw="false", value=False)
+            return BoolNode("false", value=False)
         msg = "expected boolean"
         raise self._error(msg)
 
@@ -1064,7 +1064,7 @@ class _Parser:
             value = int(digits.replace("_", ""), base)
             style_map: dict[str, IntStyle] = {"0x": "hex", "0o": "oct", "0b": "bin"}
             style = style_map[prefix]
-            return IntegerNode(raw=token, value=value, style=style)
+            return IntegerNode(token, value, style)
         # Decimal int with optional sign and underscores.
         sign = ""
         if body and body[0] in "+-":
@@ -1088,7 +1088,7 @@ class _Parser:
             msg = f"leading zeros are not allowed in {token!r}"
             raise self._error(msg, at=at)
         value = int(sign + digits_only)
-        return IntegerNode(raw=token, value=value, style="dec")
+        return IntegerNode(token, value, "dec")
 
     def _parse_float_token(self, token: str, *, at: int) -> FloatNode:
         body = token
@@ -1152,7 +1152,7 @@ class _Parser:
                 raise self._error(msg, at=at)
 
         value = float(sign + norm)
-        return FloatNode(raw=token, value=value)
+        return FloatNode(token, value)
 
     def _parse_datetime_token(self, token: str, *, at: int) -> DateTimeNode:
         # If the token looks like a date with a separator and the next
@@ -1189,7 +1189,7 @@ class _Parser:
             except ValueError as exc:
                 msg = f"invalid time {text!r}: {exc}"
                 raise self._error(msg, at=at) from exc
-            return DateTimeNode(raw=raw, value=value, kind="local-time")
+            return DateTimeNode(raw, value, "local-time")
 
         # Date or datetime.
         if len(text) < 10 or text[4] != "-" or text[7] != "-":
@@ -1207,7 +1207,7 @@ class _Parser:
 
         rest = text[10:]
         if not rest:
-            return DateTimeNode(raw=raw, value=d, kind="local-date")
+            return DateTimeNode(raw, d, "local-date")
         if rest[0] not in ("T", "t", " "):
             msg = f"expected date/time separator, got {rest[0]!r}"
             raise self._error(msg, at=at)
@@ -1224,11 +1224,7 @@ class _Parser:
             except ValueError as exc:
                 msg = f"invalid time {time_part!r}: {exc}"
                 raise self._error(msg, at=at) from exc
-            return DateTimeNode(
-                raw=raw,
-                value=datetime.combine(d, t),
-                kind="local-datetime",
-            )
+            return DateTimeNode(raw, datetime.combine(d, t), "local-datetime")
         try:
             t = self._parse_time_text(time_part[:offset_pos])
             tz = self._parse_offset(time_part[offset_pos:])
@@ -1236,7 +1232,7 @@ class _Parser:
             msg = f"invalid datetime {text!r}: {exc}"
             raise self._error(msg, at=at) from exc
         dt = datetime.combine(d, t).replace(tzinfo=tz)
-        return DateTimeNode(raw=raw, value=dt, kind="offset-datetime")
+        return DateTimeNode(raw, dt, "offset-datetime")
 
     def _parse_time_text(self, text: str) -> time:
         # TOML 1.1: seconds are optional; "HH:MM" defaults to ":00".
@@ -1309,13 +1305,7 @@ class _Parser:
                 msg = f"expected ',' or ']' in array, got {self._peek()!r}"
                 raise self._error(msg)
             node.items.append(
-                ArrayItem(
-                    leading=leading,
-                    value=value,
-                    trailing=trailing,
-                    has_comma=has_comma,
-                    post_comma_trivia=post_comma,
-                ),
+                ArrayItem(leading, value, trailing, has_comma, post_comma),
             )
             if not has_comma:
                 # We're at ']'.
@@ -1370,14 +1360,14 @@ class _Parser:
                 raise self._error(msg)
             node.entries.append(
                 InlineTableEntry(
-                    leading=leading,
-                    key=key,
-                    pre_eq=pre_eq,
-                    post_eq=post_eq,
-                    value=value,
-                    trailing=trailing,
-                    has_comma=has_comma,
-                    post_comma_trivia=post_comma,
+                    leading,
+                    key,
+                    pre_eq,
+                    post_eq,
+                    value,
+                    trailing,
+                    has_comma,
+                    post_comma,
                 ),
             )
             if not has_comma:
