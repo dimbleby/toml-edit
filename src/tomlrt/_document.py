@@ -849,7 +849,19 @@ class Table(dict[str, Any]):
     def _items(self) -> Iterator[tuple[str, TomlValue]]:  # pragma: no cover
         raise NotImplementedError
 
-    def _set_value(self, key: str, value: object) -> None:  # pragma: no cover
+    def _set_value(  # pragma: no cover
+        self,
+        key: str,
+        value: object,
+    ) -> TomlValue | None:
+        """Mutate the CST so ``key`` binds to ``value``.
+
+        Returns the new dict-storage value for ``key`` if the
+        implementation can compute it cheaply; otherwise returns
+        ``None`` to ask :meth:`__setitem__` to fall back to the full
+        :meth:`_refresh_key` walk. Returning the value short-circuits
+        an O(N) re-scan of the document for a single-key update.
+        """
         raise NotImplementedError
 
     def _delete_value(self, key: str) -> None:  # pragma: no cover
@@ -921,8 +933,11 @@ class Table(dict[str, Any]):
             old = super().__getitem__(key)
             if isinstance(old, (Table, AoT, Array)):
                 old._detach()  # noqa: SLF001
-        self._set_value(key, value)
-        self._refresh_key(key)
+        new_v = self._set_value(key, value)
+        if new_v is None:
+            self._refresh_key(key)
+        else:
+            dict.__setitem__(self, key, new_v)
 
     def install(
         self,
@@ -1472,8 +1487,9 @@ class _InlineTable(Table):
     # --- mapping mutation ----------------------------------------------------
 
     @override
-    def _set_value(self, key: str, value: object) -> None:
+    def _set_value(self, key: str, value: object) -> TomlValue | None:
         self.set_at((key,), value)
+        return None
 
     @override
     def _delete_value(self, key: str) -> None:
@@ -1634,8 +1650,9 @@ class _DottedSubTable(Table):
                 )
 
     @override
-    def _set_value(self, key: str, value: object) -> None:
+    def _set_value(self, key: str, value: object) -> TomlValue | None:
         self._host.set_at((*self._prefix, key), value)
+        return None
 
     @override
     def _delete_value(self, key: str) -> None:
@@ -1908,18 +1925,20 @@ class _StdTable(Table):
             ]
 
     @override
-    def _set_value(self, key: str, value: object) -> None:
+    def _set_value(self, key: str, value: object) -> TomlValue | None:
         # Special case: assigning an AoT (or list of dicts targeted as AoT)
         # is a *structural* edit, not a value assignment.
         if isinstance(value, AoT):
             self._set_aot_value(key, value)
-            return
+            return None
 
         kind, payload = self._classify(key)
         if kind in ("direct", "extras"):
+            # In-place value swap: the new dict-storage value is exactly
+            # what we just wrote, so caller can skip the full refresh.
             assert isinstance(payload, KeyValueNode)
             payload.value = value_to_node(value)
-            return
+            return _value_for(payload.value)
         if kind in ("dotted", "table", "aot", "extras-prefix"):
             self._purge_conflicting(key)
         sections = self._direct_sections()
@@ -1939,12 +1958,15 @@ class _StdTable(Table):
         # Top-level only: if this assignment is into the implicit
         # pre-header section and a ``[table]`` follows, ensure a blank
         # line separates the new key from that header.
+        fast_value: TomlValue | None = (
+            _value_for(new_kv.value) if kind == "absent" else None
+        )
         if self._path == () and target.header is None:
             doc_node = self._doc_node
             try:
                 idx = doc_node.sections.index(target)
             except ValueError:  # pragma: no cover - defensive
-                return
+                return fast_value
             if idx + 1 < len(doc_node.sections):
                 next_header = doc_node.sections[idx + 1].header
                 if (
@@ -1954,6 +1976,7 @@ class _StdTable(Table):
                     )
                 ):
                     next_header.leading.pieces.insert(0, NewlineNode("\n"))
+        return fast_value
 
     def _set_aot_value(self, key: str, value: AoT) -> None:
         """Assign a (possibly cross-document) AoT to ``key``.
