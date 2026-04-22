@@ -80,7 +80,14 @@ class Trivia:
     pieces: list[TriviaPiece] = field(default_factory=list)
 
     def render(self) -> str:
-        return "".join(p.render() for p in self.pieces)
+        # Empty/single-piece are by far the most common shapes; the
+        # fast paths skip ``str.join`` and the generator setup.
+        pieces = self.pieces
+        if not pieces:
+            return ""
+        if len(pieces) == 1:
+            return pieces[0].render()
+        return "".join([p.render() for p in pieces])
 
     def is_empty(self) -> bool:
         return not self.pieces
@@ -129,10 +136,14 @@ class Key:
         self.path = tuple([p.value for p in self.parts])
 
     def render(self) -> str:
+        parts = self.parts
+        if len(parts) == 1:
+            return parts[0].render()
         out: list[str] = []
-        for i, part in enumerate(self.parts):
+        seps = self.separators
+        for i, part in enumerate(parts):
             if i:
-                out.append(self.separators[i - 1])
+                out.append(seps[i - 1])
             out.append(part.render())
         return "".join(out)
 
@@ -213,9 +224,7 @@ class ArrayItem:
     post_comma_trivia: Trivia
 
     def render(self) -> str:
-        out = (
-            f"{self.leading.render()}{render_value(self.value)}{self.trailing.render()}"
-        )
+        out = f"{self.leading.render()}{self.value.render()}{self.trailing.render()}"
         if self.has_comma:
             out += f",{self.post_comma_trivia.render()}"
         return out
@@ -230,7 +239,7 @@ class ArrayNode:
     """Trivia after the last item (or comma) and before the closing ``]``."""
 
     def render(self) -> str:
-        body = "".join(item.render() for item in self.items)
+        body = "".join([item.render() for item in self.items])
         return f"[{body}{self.final_trivia.render()}]"
 
 
@@ -252,7 +261,7 @@ class InlineTableEntry:
         post_eq = self.post_eq.text if self.post_eq is not None else ""
         out = (
             f"{self.leading.render()}{self.key.render()}{pre_eq}={post_eq}"
-            f"{render_value(self.value)}{self.trailing.render()}"
+            f"{self.value.render()}{self.trailing.render()}"
         )
         if self.has_comma:
             out += f",{self.post_comma_trivia.render()}"
@@ -267,7 +276,7 @@ class InlineTableNode:
     final_trivia: Trivia = field(default_factory=Trivia)
 
     def render(self) -> str:
-        body = "".join(e.render() for e in self.entries)
+        body = "".join([e.render() for e in self.entries])
         return f"{{{body}{self.final_trivia.render()}}}"
 
 
@@ -280,10 +289,6 @@ ValueNode = (
     | ArrayNode
     | InlineTableNode
 )
-
-
-def render_value(node: ValueNode) -> str:
-    return node.render()
 
 
 # ---------------------------------------------------------------------------
@@ -319,7 +324,7 @@ class KeyValueNode:
         trailing = self.trailing.text if self.trailing is not None else ""
         out = (
             f"{self.leading.render()}{self.key.render()}{pre_eq}={post_eq}"
-            f"{render_value(self.value)}{trailing}"
+            f"{self.value.render()}{trailing}"
         )
         if self.trailing_comment is not None:
             out += self.trailing_comment.render()
@@ -374,11 +379,8 @@ class SectionNode:
     entries: list[KeyValueNode] = field(default_factory=list)
 
     def render(self) -> str:
-        out: list[str] = []
-        if self.header is not None:
-            out.append(self.header.render())
-        out.extend(entry.render() for entry in self.entries)
-        return "".join(out)
+        head = self.header.render() if self.header is not None else ""
+        return head + "".join([entry.render() for entry in self.entries])
 
 
 @dataclass(slots=True)
@@ -391,7 +393,7 @@ class DocumentNode:
 
     def render(self) -> str:
         return (
-            "".join(s.render() for s in self.sections) + self.trailing_trivia.render()
+            "".join([s.render() for s in self.sections]) + self.trailing_trivia.render()
         )
 
     def has_content(self) -> bool:
@@ -539,5 +541,4 @@ __all__ = [
     "TriviaPiece",
     "ValueNode",
     "WhitespaceNode",
-    "render_value",
 ]
