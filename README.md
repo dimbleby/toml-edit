@@ -33,16 +33,18 @@ from tomlrt import AoT, Array, Table
 
 doc["tool"] = Table.section({"version": 1})      # [tool] section
 doc["xy"]   = {"x": 1, "y": 2}                   # xy = { x = 1, y = 2 }
-doc["pkgs"] = AoT([{"a": 1}, {"b": 2])           # [[pkgs]] … [[pkgs]]
+doc["pkgs"] = AoT([{"a": 1}, {"b": 2}])          # [[pkgs]] … [[pkgs]]
 doc["tags"] = Array(["a", "b"], multiline=True)  # multi-line array
 ```
 
-Use `doc.install(path, value)` for dotted-path placement, or pass a
-tuple to escape keys that contain a literal `.`:
+Use `doc.install(path, value)` for dotted-path placement. Plain
+`doc["a.b"] = …` always treats `"a.b"` as a *single literal key*, so
+`install` is the way to descend through `a` into `b`. Pass a tuple
+when one of the segments itself contains a literal `.`:
 
 ```python
-doc.install("tool.poetry", Table.section({"name": "x"}))  # [tool.poetry]
-doc.install(("weird.key",), 1)                            # "weird.key" = 1
+doc.install("tool.poetry.version", "0.1.0")            # [tool.poetry] version = "0.1.0"
+doc.install(("tool", "weird.key"), 1)                  # [tool] "weird.key" = 1
 ```
 
 ### Comment API
