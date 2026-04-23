@@ -295,6 +295,16 @@ def test_array_insert() -> None:
     assert _reparses(out) == {"xs": [1, 2, 3]}
 
 
+def test_array_insert_at_zero_does_not_duplicate_leading_comment() -> None:
+    # The header comment ``# head`` is anchored to the array's opening
+    # bracket (no newline before it). On insert(0, ...) it must stay
+    # there, and the new item must land on its own indented line.
+    doc = tomlrt.parse("a = [# head\n 1,\n]\n")
+    arr = doc.array("a")
+    arr.insert(0, 99)
+    assert tomlrt.dumps(doc) == "a = [# head\n 99,\n 1,\n]\n"
+
+
 # Every Array/AoT mutator must be wired through the CST so the
 # rendered output stays in sync with in-memory mutations.
 @pytest.mark.parametrize(
