@@ -3246,7 +3246,14 @@ class Array(list[Any]):
         item = self._node.items.pop(operator.index(index))
         self._rebuild_separators()
         self._resync()
-        return _value_for(item.value)
+        popped = _value_for(item.value)
+        # The wrapper was constructed from an item that is no longer
+        # in the document; reflect that on the returned object so that
+        # later reassignment doesn't trigger the cross-doc clone path
+        # (and so that `_attached` honestly describes reality).
+        if isinstance(popped, (Table, Array)):
+            popped._detach()  # noqa: SLF001
+        return popped
 
     @override
     def remove(self, value: object) -> None:
@@ -3674,6 +3681,12 @@ class AoT(list[Table]):
         else:
             self.pop(index)
 
+    @staticmethod
+    def _validate_entry(value: object) -> None:
+        if not isinstance(value, Mapping):
+            msg = "AoT entry must be a mapping"
+            raise TypeError(msg)
+
     @overload
     def __setitem__(
         self, index: SupportsIndex, value: Mapping[str, object]
@@ -3693,9 +3706,7 @@ class AoT(list[Table]):
         if isinstance(index, slice):
             new_values: list[Any] = list(value)
             for v in new_values:
-                if not isinstance(v, Mapping):
-                    msg = "AoT entry must be a mapping"
-                    raise TypeError(msg)
+                self._validate_entry(v)
             indices = range(*index.indices(len(self)))
             if index.step not in (None, 1):
                 if len(new_values) != len(indices):
@@ -3711,9 +3722,7 @@ class AoT(list[Table]):
             for offset, v in enumerate(new_values):
                 self.insert(indices.start + offset, v)
             return
-        if not isinstance(value, Mapping):
-            msg = "AoT entry must be a mapping"
-            raise TypeError(msg)
+        self._validate_entry(value)
         target = self[index]
         target.clear()
         target.update(value)
