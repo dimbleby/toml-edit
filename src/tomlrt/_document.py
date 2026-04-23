@@ -2170,17 +2170,11 @@ class _StdTable(Table):
         # line separates the new key from that header.
         if self._path == () and target.header is None:
             doc_node = self._doc_node
-            try:
-                idx = doc_node.sections.index(target)
-            except ValueError:  # pragma: no cover - defensive
-                idx = -1
-            if idx >= 0 and idx + 1 < len(doc_node.sections):
+            idx = _index_of(doc_node.sections, target)
+            if idx + 1 < len(doc_node.sections):
                 next_header = doc_node.sections[idx + 1].header
-                if (
-                    next_header is not None
-                    and not next_header.leading.render().startswith("\n")
-                ):
-                    next_header.leading.pieces.insert(0, NewlineNode("\n"))
+                if next_header is not None:
+                    _prepend_blank_line(next_header.leading)
         # The new dict-storage value is exactly what we just wrote;
         # caller can skip the full _refresh_key walk. Safe for every
         # kind because _purge_conflicting only removes things keyed by
@@ -2221,9 +2215,7 @@ class _StdTable(Table):
         # Ensure a blank line precedes the next section's header so the
         # newly-inserted top-level keys aren't visually glued to it.
         if doc_node.sections and doc_node.sections[0].header is not None:
-            next_header = doc_node.sections[0].header
-            if not next_header.leading.render().startswith("\n"):
-                next_header.leading.pieces.insert(0, NewlineNode("\n"))
+            _prepend_blank_line(doc_node.sections[0].header.leading)
         doc_node.sections.insert(0, new_sec)
         return new_sec
 
