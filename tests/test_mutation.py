@@ -585,6 +585,20 @@ def test_aot_reverse_preserves_owned_subtables() -> None:
     ]
 
 
+def test_aot_remove_drops_first_matching_entry_from_cst() -> None:
+    doc = tomlrt.parse("[[t]]\nx = 1\n[[t]]\nx = 2\n[[t]]\nx = 3\n")
+    aot = doc.aot("t")
+    aot.remove(aot[1])
+    assert _reparses(tomlrt.dumps(doc))["t"] == [{"x": 1}, {"x": 3}]
+
+
+def test_aot_remove_missing_raises_value_error() -> None:
+    doc = tomlrt.parse("[[t]]\nx = 1\n")
+    aot = doc.aot("t")
+    with pytest.raises(ValueError, match="not in list"):
+        aot.remove({"x": 999})
+
+
 # ---------------------------------------------------------------------------
 # Array.sort(key=...), Array *= n, Array.table() type-error
 # ---------------------------------------------------------------------------

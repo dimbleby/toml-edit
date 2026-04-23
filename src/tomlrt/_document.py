@@ -3619,6 +3619,15 @@ class AoT(list[Table]):
         return self
 
     @override
+    def remove(self, value: Mapping[str, object]) -> None:
+        for i, entry in enumerate(self):
+            if entry == value:
+                del self[i]
+                return
+        msg = f"{value!r} not in list"
+        raise ValueError(msg)
+
+    @override
     def __imul__(self, count: SupportsIndex) -> Self:
         n = operator.index(count)
         if n <= 0:
