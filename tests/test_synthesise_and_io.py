@@ -224,6 +224,30 @@ def test_assign_plain_dict_becomes_inline_table() -> None:
     assert tbl["b"] == "two"
 
 
+def test_assign_tuple_rejected() -> None:
+    doc = tomlrt.parse("x = 0\n")
+    with pytest.raises(TypeError, match="tuple"):
+        doc["x"] = (1, 2, 3)
+
+
+def test_assign_mappingproxy_becomes_inline_table() -> None:
+    from types import MappingProxyType  # noqa: PLC0415
+
+    doc = tomlrt.parse("x = 0\n")
+    doc["x"] = MappingProxyType({"a": 1, "b": 2})
+    out = tomlrt.dumps(doc)
+    re = tomlrt.parse(out)
+    tbl = re.table("x")
+    assert tbl["a"] == 1
+    assert tbl["b"] == 2
+
+
+def test_assign_bytes_rejected() -> None:
+    doc = tomlrt.parse("x = 0\n")
+    with pytest.raises(TypeError, match="bytes"):
+        doc["x"] = b"hi"
+
+
 def test_assign_nested_dict_in_list() -> None:
     doc = tomlrt.parse("x = 0\n")
     doc["x"] = [{"a": 1}, {"a": 2}]
