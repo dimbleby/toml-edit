@@ -2965,6 +2965,7 @@ class Array(list[Any]):
                 trailing_comma=True,
                 close_pad=Trivia([NewlineNode("\n")]),
             )
+            self._indent = indent
         else:
             self._style = _SeparatorStyle(
                 open_pad=Trivia(),
