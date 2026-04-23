@@ -2332,64 +2332,20 @@ class _StdTable(Table):
 
     @override
     def promote_inline(self, key: str) -> Table:
-        try:
-            sec, kv = self._find_direct_kv(key)
-        except KeyError:
-            # If the key exists under a different shape (sub-section,
-            # dotted-key subtable, or AoT), raise a clearer error rather
-            # than a bare KeyError that contradicts ``key in self``.
-            if key in self:
-                msg = f"{key!r} is not an inline table; nothing to promote"
-                raise TOMLError(msg) from None
-            raise
-        if not isinstance(kv.value, InlineTableNode):
-            msg = f"{key!r} is not an inline table; nothing to promote"
-            raise TOMLError(msg)
-        inline = kv.value
+        sec, kv, inline = self._find_promotable(key, InlineTableNode, "an inline table")
         child_path = (*self._path, key)
-        # Refuse if a [child_path] section already exists in the document
-        # (defensive: the parser blocks any source where this would arise,
-        # and assignment auto-purges any conflicting sections, so this
-        # branch only fires under direct CST manipulation).
-        for existing in self._doc_node.sections:
-            hdr = existing.header
-            if hdr is not None and hdr.key.path == child_path:  # pragma: no cover
-                joined = ".".join(child_path)
-                msg = f"cannot promote {key!r}: a [{joined}] section already exists"
-                raise TOMLError(msg)
+        self._refuse_existing_promoted_section(key, child_path, kind="table")
         new_sec = _build_promoted_section(child_path, inline, kv)
-        # Remove the inline KV from its host section.
         sec.entries.remove(kv)
-        # Insert the promoted section after the parent's last direct
-        # section (or at end of document if the parent has none).
-        sections = self._doc_node.sections
-        parent_secs = self._direct_sections()
-        if parent_secs:
-            anchor = parent_secs[-1]
-            anchor_idx = next(
-                (i for i, s in enumerate(sections) if s is anchor),
-                len(sections) - 1,
-            )
-            sections.insert(anchor_idx + 1, new_sec)
-        else:
-            sections.append(new_sec)
+        self._splice_promoted_sections([new_sec])
         view = _StdTable(self._doc_node, child_path)
         dict.__setitem__(self, key, view)
         return view
 
     @override
     def promote_array(self, key: str) -> AoT:
-        try:
-            sec, kv = self._find_direct_kv(key)
-        except KeyError:
-            if key in self:
-                msg = f"{key!r} is not an array; nothing to promote"
-                raise TOMLError(msg) from None
-            raise
-        if not isinstance(kv.value, ArrayNode):
-            msg = f"{key!r} is not an array; nothing to promote"
-            raise TOMLError(msg)
-        items = kv.value.items
+        sec, kv, array = self._find_promotable(key, ArrayNode, "an array")
+        items = array.items
         if not items:
             msg = f"{key!r} is an empty array; cannot promote to array-of-tables"
             raise TOMLError(msg)
@@ -2401,16 +2357,7 @@ class _StdTable(Table):
                 )
                 raise TOMLError(msg)
         child_path = (*self._path, key)
-        # Defensive: parser/assignment paths should never let this fire.
-        for existing in self._doc_node.sections:
-            hdr = existing.header
-            if hdr is not None and hdr.key.path == child_path:  # pragma: no cover
-                joined = ".".join(child_path)
-                msg = (
-                    f"cannot promote {key!r}: a [[{joined}]] (or [{joined}]) "
-                    "section already exists"
-                )
-                raise TOMLError(msg)
+        self._refuse_existing_promoted_section(key, child_path, kind="aot")
         new_secs = [
             _build_promoted_aot_section(child_path, item.value)
             for item in items
@@ -2431,18 +2378,87 @@ class _StdTable(Table):
                 last_entries[-1].trailing = kv.trailing
                 last_entries[-1].trailing_comment = kv.trailing_comment
         sec.entries.remove(kv)
-        sections = self._doc_node.sections
-        parent_secs = self._direct_sections()
-        if parent_secs:
-            anchor = parent_secs[-1]
-            insert_at = next(i for i, s in enumerate(sections) if s is anchor) + 1
-        else:
-            insert_at = len(sections)
-        _insert_section_block(self._doc_node, insert_at, new_secs)
+        self._splice_promoted_sections(new_secs)
         aot = AoT._attached_to(self._doc_node, child_path, [])  # noqa: SLF001
         aot._resync()  # noqa: SLF001
         dict.__setitem__(self, key, aot)
         return aot
+
+    def _find_promotable(
+        self,
+        key: str,
+        expected: type[_T],
+        label: str,
+    ) -> tuple[SectionNode, KeyValueNode, _T]:
+        """Find a direct KV at ``key`` whose value is an ``expected`` node.
+
+        Raises a friendly :class:`TOMLError` if the key exists under a
+        different shape (sub-section, dotted-key subtable, AoT) or if
+        the value is the wrong node type. ``label`` is the
+        "an inline table" / "an array" phrasing used in the message.
+        Returns the host section, the KV, and the typed value node so
+        callers don't need to re-narrow.
+        """
+        try:
+            sec, kv = self._find_direct_kv(key)
+        except KeyError:
+            # If the key exists under a different shape (sub-section,
+            # dotted-key subtable, or AoT), raise a clearer error rather
+            # than a bare KeyError that contradicts ``key in self``.
+            if key in self:
+                msg = f"{key!r} is not {label}; nothing to promote"
+                raise TOMLError(msg) from None
+            raise
+        if not isinstance(kv.value, expected):
+            msg = f"{key!r} is not {label}; nothing to promote"
+            raise TOMLError(msg)
+        return sec, kv, kv.value
+
+    def _refuse_existing_promoted_section(
+        self,
+        key: str,
+        child_path: tuple[str, ...],
+        *,
+        kind: str,
+    ) -> None:
+        """Defensive: refuse if ``[child_path]`` (or ``[[child_path]]``)
+        already exists. The parser blocks any source where this would
+        arise and assignment auto-purges conflicts, so this only fires
+        under direct CST manipulation.
+        """
+        for existing in self._doc_node.sections:
+            hdr = existing.header
+            if hdr is not None and hdr.key.path == child_path:  # pragma: no cover
+                joined = ".".join(child_path)
+                if kind == "aot":
+                    msg = (
+                        f"cannot promote {key!r}: a [[{joined}]] (or "
+                        f"[{joined}]) section already exists"
+                    )
+                else:
+                    msg = f"cannot promote {key!r}: a [{joined}] section already exists"
+                raise TOMLError(msg)
+
+    def _splice_promoted_sections(self, new_secs: Sequence[SectionNode]) -> None:
+        """Splice freshly-promoted sections after the parent's last
+        direct section (or at end of document if the parent has none).
+        Uses ``_insert_section_block`` so consecutive AoT entries stay
+        blank-separated.
+        """
+        sections = self._doc_node.sections
+        parent_secs = self._direct_sections()
+        if parent_secs:
+            anchor = parent_secs[-1]
+            insert_at = (
+                next(
+                    (i for i, s in enumerate(sections) if s is anchor),
+                    len(sections) - 1,
+                )
+                + 1
+            )
+        else:
+            insert_at = len(sections)
+        _insert_section_block(self._doc_node, insert_at, new_secs)
 
     @override
     def _install_flavoured(self, parts: tuple[str, ...], value: object) -> None:
