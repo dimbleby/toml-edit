@@ -623,56 +623,64 @@ class _Parser:
                 self._track(sub)
         value_paths.add(full)
         self._track(full)
-        # Inline-table values: validate within-table dups and register their
-        # nested key paths so cross-section headers/keys see the conflicts.
+        # Inline-table values: register their nested key paths so
+        # cross-section headers/keys see the conflicts. (Local
+        # duplicate / dotted-prefix conflicts are caught at parse time
+        # in :meth:`_parse_inline_table`.)
         value = kv.value
         if isinstance(value, InlineTableNode):
-            self._validate_inline_table(value, abs_prefix=full, at=self._pos)
+            self._validate_inline_table(value, abs_prefix=full)
         elif isinstance(value, ArrayNode):
             for item in value.items:
                 if isinstance(item.value, InlineTableNode):
-                    self._validate_inline_table(
-                        item.value,
-                        abs_prefix=None,
-                        at=self._pos,
-                    )
+                    self._validate_inline_table(item.value, abs_prefix=None)
+
+    def _check_inline_key_conflict(
+        self,
+        path: tuple[str, ...],
+        seen_values: set[tuple[str, ...]],
+        seen_prefixes: set[tuple[str, ...]],
+        *,
+        at: int,
+    ) -> None:
+        """Validate ``path`` against keys already seen in this inline table.
+
+        Mutates ``seen_prefixes`` to add the new path's strict prefixes.
+        Caller is responsible for adding ``path`` itself to
+        ``seen_values`` after successful validation.
+        """
+        if path in seen_values:
+            msg = f"duplicate key {'.'.join(path)!r} in inline table"
+            raise self._error(msg, at=at)
+        if path in seen_prefixes:
+            msg = (
+                f"key {'.'.join(path)!r} in inline table conflicts with "
+                "an existing dotted-key prefix"
+            )
+            raise self._error(msg, at=at)
+        for i in range(1, len(path)):
+            sub = path[:i]
+            if sub in seen_values:
+                msg = f"inline-table key {'.'.join(sub)!r} already defined as a value"
+                raise self._error(msg, at=at)
+            seen_prefixes.add(sub)
 
     def _validate_inline_table(
         self,
         table: InlineTableNode,
         *,
         abs_prefix: tuple[str, ...] | None,
-        at: int,
     ) -> None:
-        """Reject duplicate / conflicting keys inside one inline table.
+        """Register an inline table's keys for cross-section conflict checks.
 
-        If ``abs_prefix`` is given, also register the inline table's keys
-        under that prefix in the document-wide tracking sets so later
-        section headers or dotted keys can detect conflicts with paths
-        owned by this inline table.
+        Local duplicate / dotted-prefix conflicts are detected at parse
+        time inside :meth:`_parse_inline_table`; this method only walks
+        nested inline tables and, when ``abs_prefix`` is given, exposes
+        the inline table's keys to document-wide tracking so later
+        section headers or dotted keys see the conflicts.
         """
-        local_values: set[tuple[str, ...]] = set()
-        local_prefixes: set[tuple[str, ...]] = set()
         for entry in table.entries:
             path = entry.key.path
-            if path in local_values:
-                msg = f"duplicate key {'.'.join(path)!r} in inline table"
-                raise self._error(msg, at=at)
-            if path in local_prefixes:
-                msg = (
-                    f"key {'.'.join(path)!r} in inline table conflicts with "
-                    "an existing dotted-key prefix"
-                )
-                raise self._error(msg, at=at)
-            for i in range(1, len(path)):
-                sub = path[:i]
-                if sub in local_values:
-                    msg = (
-                        f"inline-table key {'.'.join(sub)!r} already defined as a value"
-                    )
-                    raise self._error(msg, at=at)
-                local_prefixes.add(sub)
-            local_values.add(path)
             if abs_prefix is not None:
                 full = abs_prefix + path
                 self._value_paths.add(full)
@@ -684,15 +692,11 @@ class _Parser:
             sub_abs: tuple[str, ...] | None
             if isinstance(entry.value, InlineTableNode):
                 sub_abs = (abs_prefix + path) if abs_prefix is not None else None
-                self._validate_inline_table(entry.value, abs_prefix=sub_abs, at=at)
+                self._validate_inline_table(entry.value, abs_prefix=sub_abs)
             elif isinstance(entry.value, ArrayNode):
                 for item in entry.value.items:
                     if isinstance(item.value, InlineTableNode):
-                        self._validate_inline_table(
-                            item.value,
-                            abs_prefix=None,
-                            at=at,
-                        )
+                        self._validate_inline_table(item.value, abs_prefix=None)
 
     # ------------------------------------------------------------------
     # Values
@@ -1332,15 +1336,21 @@ class _Parser:
             node.final_trivia = leading
             self._advance(1)
             return node
-        # Track inline-table-local known keys.
-        seen: set[tuple[str, ...]] = set()
+        # Inline-table-local key tracking. Values and prefixes are
+        # tracked separately so that ``{ x = 1, x.y = 2 }`` and
+        # ``{ a.b = 1, a = 2 }`` both fail at the offending key.
+        seen_values: set[tuple[str, ...]] = set()
+        seen_prefixes: set[tuple[str, ...]] = set()
         while True:
+            key_at = self._pos
             key = self._parse_key()
-            if key.path in seen:
-                msg = f"duplicate key {'.'.join(key.path)!r} in inline table"
-                raise self._error(msg)
-            for i in range(1, len(key.path) + 1):
-                seen.add(key.path[:i])
+            self._check_inline_key_conflict(
+                key.path,
+                seen_values,
+                seen_prefixes,
+                at=key_at,
+            )
+            seen_values.add(key.path)
             pre_eq = self._consume_inline_ws()
             if self._peek() != "=":
                 msg = f"expected '=' in inline table, got {self._peek()!r}"

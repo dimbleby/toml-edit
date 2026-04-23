@@ -255,6 +255,18 @@ def test_deep_inline_table_nesting_raises_parse_error() -> None:
         tomlrt.parse(payload)
 
 
+def test_inline_table_dotted_key_conflict_reports_inline_position() -> None:
+    # The conflict between `x = 1` and `x.y = 2` lives on line 1 inside
+    # the inline table; the error must point there, not at the start of
+    # the next line.
+    src = "a = { x = 1, x.y = 2 }\n"
+    with pytest.raises(tomlrt.TOMLParseError) as exc_info:
+        tomlrt.parse(src)
+    assert exc_info.value.line == 1
+    # The conflicting "x.y" key starts at column 14 (1-based).
+    assert exc_info.value.col == 14
+
+
 def test_moderate_array_nesting_still_parses() -> None:
     payload = "x = " + "[" * 50 + "1" + "]" * 50 + "\n"
     doc = tomlrt.parse(payload)
