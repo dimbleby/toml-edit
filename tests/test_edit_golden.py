@@ -484,6 +484,19 @@ def test_self_overlap_assign_replaces_with_child_block() -> None:
     assert tomlrt.dumps(doc2).startswith("[a]\n")
 
 
+def test_cross_doc_splice_no_doubled_blank_lines() -> None:
+    """Sequential cross-doc copies don't double the blank line between sections.
+
+    Cloned sections retain their original leading blank-line trivia;
+    ``_insert_section_block`` must avoid prepending another one.
+    """
+    src = tomlrt.parse("[a]\nx = 1\n\n[b]\ny = 2\n")
+    dst = tomlrt.document()
+    for k, v in src.items():
+        dst[k] = v
+    assert tomlrt.dumps(dst) == "[a]\nx = 1\n\n[b]\ny = 2\n"
+
+
 def test_install_attached_aot_preserves_comments() -> None:
     # `install` and `__setitem__` should both deep-clone the source CST
     # when given an attached AoT from another document. The previous

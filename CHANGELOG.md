@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Self-overlapping assignment such as `doc[k] = doc[k]["child"]` now lifts
   the child to a `[k]` block, instead of either crashing (when the child
   contains an array-of-tables) or silently flattening to an inline table.
+- Sequential cross-document section copies no longer produce doubled blank
+  lines between sections.
 
 ## [0.4.0] - 2026-04-23
 
