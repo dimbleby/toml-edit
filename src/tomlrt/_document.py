@@ -2244,6 +2244,7 @@ class _StdTable(Table):
                     and (*host_path, *kv.key.path)[:plen] == prefix
                 )
             ]
+        self._doc_node.normalise_top_blank()
 
     @override
     def _set_value(self, key: str, value: object) -> TomlValue | None:
