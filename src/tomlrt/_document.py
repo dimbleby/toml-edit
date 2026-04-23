@@ -2658,6 +2658,7 @@ class _StdTable(Table):
         their original inter-header trivia, so we let
         ``_insert_section_block`` handle only the leading separation.
         """
+        self._drop_redundant_anchor()
         full_path, insert_at = self._prepare_section_slot(parts)
         new_secs = list(_clone_aot_sections(value, full_path))
         _insert_section_block(
@@ -2676,6 +2677,7 @@ class _StdTable(Table):
         parts: tuple[str, ...],
         entries: Iterable[Mapping[str, object]],
     ) -> AoT:
+        self._drop_redundant_anchor()
         full_path, insert_at = self._prepare_section_slot(parts)
         aot = AoT._attached_to(self._doc_node, full_path, [])  # noqa: SLF001
         new_secs: list[SectionNode] = []
@@ -2697,14 +2699,46 @@ class _StdTable(Table):
         parts: tuple[str, ...],
         value: Mapping[str, object] = MappingProxyType({}),
     ) -> Table:
+        self._drop_redundant_anchor()
         full_path, insert_at = self._prepare_section_slot(parts)
         new_sec = _new_section(full_path)
+        new_sec.synthesised_placeholder = True
         _insert_section_block(self._doc_node, insert_at, [new_sec])
         view = _StdTable(self._doc_node, full_path)
         self._install_at_path(parts, view)
         for k, v in value.items():
             view[k] = v
         return view
+
+    def _drop_redundant_anchor(self) -> None:
+        """Drop an empty placeholder ``[X]`` header at ``self._path``.
+
+        Called before installing a child section under this view. An
+        empty ``[X]`` header that holds no entries and no comments
+        serves no purpose once a child ``[X.Y]`` header follows it: the
+        parent table is implied. AoT entry anchors (``[[X]]``) and
+        anything carrying user comments are preserved verbatim.
+        """
+        if self._path == ():
+            return
+        for sec in self._doc_node.sections:
+            hdr = sec.header
+            if (
+                hdr is None
+                or hdr.kind != "table"
+                or not sec.synthesised_placeholder
+                or hdr.key.path != self._path
+                or sec.entries
+                or hdr.trailing_comment is not None
+                or any(isinstance(p, CommentNode) for p in hdr.leading.pieces)
+            ):
+                continue
+            self._doc_node.sections.remove(sec)
+            if self._anchor is sec:
+                self._anchor = None
+            if self._owner_anchor is sec:
+                self._owner_anchor = None
+            return
 
     def _install_attached_table(
         self,
@@ -2726,6 +2760,7 @@ class _StdTable(Table):
         """
         full_path = (*self._path, *parts)
         new_secs = _clone_table_sections(value, full_path)
+        self._drop_redundant_anchor()
         _full_path, insert_at = self._prepare_section_slot(parts)
         if new_secs:
             _insert_section_block(
