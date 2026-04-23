@@ -1285,11 +1285,7 @@ class Table(dict[str, Any]):
         :class:`KeyError` if any segment is missing, or :class:`TypeError`
         if the destination is not a table.
         """
-        value = self._lookup_path(key)
-        if not isinstance(value, Table):
-            msg = f"{key!r} is a {type(value).__name__}, not a Table"
-            raise TypeError(msg)
-        return value
+        return self._typed_lookup(key, Table)
 
     @overload
     def get_table(self, key: str) -> Table | None: ...
@@ -1302,14 +1298,7 @@ class Table(dict[str, Any]):
         is "no answer", but an entry that exists with the wrong shape is
         a real bug worth surfacing.
         """
-        try:
-            value = self._lookup_path(key)
-        except KeyError:
-            return default
-        if not isinstance(value, Table):
-            msg = f"{key!r} is a {type(value).__name__}, not a Table"
-            raise TypeError(msg)
-        return value
+        return self._typed_lookup(key, Table, default=default)
 
     def array(self, key: str) -> Array:
         """Return the array at ``key``, typed as :class:`Array`.
@@ -1318,11 +1307,7 @@ class Table(dict[str, Any]):
         segment is missing, or :class:`TypeError` if the destination is
         not an inline array.
         """
-        value = self._lookup_path(key)
-        if not isinstance(value, Array):
-            msg = f"{key!r} is a {type(value).__name__}, not an Array"
-            raise TypeError(msg)
-        return value
+        return self._typed_lookup(key, Array)
 
     @overload
     def get_array(self, key: str) -> Array | None: ...
@@ -1333,14 +1318,7 @@ class Table(dict[str, Any]):
 
         Wrong-type entries still raise :class:`TypeError`.
         """
-        try:
-            value = self._lookup_path(key)
-        except KeyError:
-            return default
-        if not isinstance(value, Array):
-            msg = f"{key!r} is a {type(value).__name__}, not an Array"
-            raise TypeError(msg)
-        return value
+        return self._typed_lookup(key, Array, default=default)
 
     def aot(self, key: str) -> AoT:
         """Return the array-of-tables at ``key``, typed as :class:`AoT`.
@@ -1349,11 +1327,7 @@ class Table(dict[str, Any]):
         segment is missing, or :class:`TypeError` if the destination is
         not an array of tables.
         """
-        value = self._lookup_path(key)
-        if not isinstance(value, AoT):
-            msg = f"{key!r} is a {type(value).__name__}, not an AoT"
-            raise TypeError(msg)
-        return value
+        return self._typed_lookup(key, AoT)
 
     @overload
     def get_aot(self, key: str) -> AoT | None: ...
@@ -1364,12 +1338,42 @@ class Table(dict[str, Any]):
 
         Wrong-type entries still raise :class:`TypeError`.
         """
+        return self._typed_lookup(key, AoT, default=default)
+
+    @overload
+    def _typed_lookup(self, key: str, expected: type[_T]) -> _T: ...
+    @overload
+    def _typed_lookup(
+        self,
+        key: str,
+        expected: type[_T],
+        *,
+        default: object,
+    ) -> object: ...
+    def _typed_lookup(
+        self,
+        key: str,
+        expected: type[_T],
+        *,
+        default: object = _MISSING,
+    ) -> object:
+        """Shared implementation for ``table`` / ``array`` / ``aot`` and
+        their ``get_*`` variants. Without ``default``, missing keys
+        re-raise :class:`KeyError`; otherwise ``default`` is returned.
+        Wrong-type entries always raise :class:`TypeError`.
+        """
         try:
             value = self._lookup_path(key)
         except KeyError:
+            if default is _MISSING:
+                raise
             return default
-        if not isinstance(value, AoT):
-            msg = f"{key!r} is a {type(value).__name__}, not an AoT"
+        if not isinstance(value, expected):
+            article = "an" if expected.__name__[:1] in "AaEeIiOoUu" else "a"
+            msg = (
+                f"{key!r} is a {type(value).__name__}, "
+                f"not {article} {expected.__name__}"
+            )
             raise TypeError(msg)
         return value
 
