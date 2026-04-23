@@ -654,7 +654,16 @@ def _apply_separator_style(
         return
     items[0].leading = _clone_trivia(style.open_pad)
     for it in items[1:]:
-        if _is_pure_whitespace(it.leading):
+        # items[i>0].leading should be empty: inter-item content,
+        # including comments, lives in items[i-1].post_comma_trivia.
+        # Anything here is a stale residue from the item's previous
+        # position under mutation -- pure-whitespace from a former
+        # indent, or a leading-comment block that duplicates a header
+        # captured by open_pad. Either way, clear it.
+        if (
+            _is_pure_whitespace(it.leading)
+            or _scan_leading_comment_run(it.leading.pieces)[0]
+        ):
             it.leading = Trivia()
     container.final_trivia = Trivia()
     inter_render = style.inter_separator.render()
