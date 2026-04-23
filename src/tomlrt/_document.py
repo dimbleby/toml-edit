@@ -2635,8 +2635,11 @@ class _StdTable(Table):
         Returns ``(full_path, insert_at)`` where ``full_path`` is the
         absolute CST path (``self._path + parts``) and ``insert_at`` is
         the position in ``self._doc_node.sections`` where a new block
-        for ``full_path`` should be spliced in.
+        for ``full_path`` should be spliced in. Drops any redundant
+        empty placeholder header at ``self._path`` first so it doesn't
+        survive as visual noise once the new child section is in place.
         """
+        self._drop_redundant_anchor()
         full_path = (*self._path, *parts)
         if len(parts) == 1:
             kind, _ = self._classify(parts[0])
@@ -2658,7 +2661,6 @@ class _StdTable(Table):
         their original inter-header trivia, so we let
         ``_insert_section_block`` handle only the leading separation.
         """
-        self._drop_redundant_anchor()
         full_path, insert_at = self._prepare_section_slot(parts)
         new_secs = list(_clone_aot_sections(value, full_path))
         _insert_section_block(
@@ -2677,7 +2679,6 @@ class _StdTable(Table):
         parts: tuple[str, ...],
         entries: Iterable[Mapping[str, object]],
     ) -> AoT:
-        self._drop_redundant_anchor()
         full_path, insert_at = self._prepare_section_slot(parts)
         aot = AoT._attached_to(self._doc_node, full_path, [])  # noqa: SLF001
         new_secs: list[SectionNode] = []
@@ -2699,7 +2700,6 @@ class _StdTable(Table):
         parts: tuple[str, ...],
         value: Mapping[str, object] = MappingProxyType({}),
     ) -> Table:
-        self._drop_redundant_anchor()
         full_path, insert_at = self._prepare_section_slot(parts)
         new_sec = _new_section(full_path)
         new_sec.synthesised_placeholder = True
@@ -2760,7 +2760,6 @@ class _StdTable(Table):
         """
         full_path = (*self._path, *parts)
         new_secs = _clone_table_sections(value, full_path)
-        self._drop_redundant_anchor()
         _full_path, insert_at = self._prepare_section_slot(parts)
         if new_secs:
             _insert_section_block(
