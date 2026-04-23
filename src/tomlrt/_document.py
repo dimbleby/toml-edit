@@ -506,11 +506,28 @@ def _sample_separator_style(
             sep = _clone_trivia(it.post_comma_trivia)
             break
     if sep is None:
+        # Fall back to the structural pattern (newline + indent) of any
+        # comment-bearing separator, so authoring intent is preserved
+        # when every existing item carries an inline comment.
+        for it in items[:-1]:
+            if it.has_comma and "\n" in it.post_comma_trivia.render():
+                indent = _indent_after_last_newline(it.post_comma_trivia)
+                pieces: list[Any] = [NewlineNode("\n")]
+                if indent:
+                    pieces.append(WhitespaceNode(indent))
+                sep = Trivia(pieces)
+                break
+    if sep is None:
         sep = Trivia([WhitespaceNode(" ")])
     last = items[-1]
     if last.has_comma:
         trailing_comma = True
-        close_pad = _clone_trivia(last.post_comma_trivia)
+        if _is_pure_whitespace(last.post_comma_trivia):
+            close_pad = _clone_trivia(last.post_comma_trivia)
+        else:
+            # Comment lives in the close slot; derive a clean pad from
+            # the inter-separator instead of dragging it onto new items.
+            close_pad = _derive_close_pad(sep)
     else:
         trailing_comma = False
         # Close-pad combines last.trailing + final_trivia (parser and
@@ -529,6 +546,26 @@ def _sample_separator_style(
         trailing_comma=trailing_comma,
         close_pad=close_pad,
     )
+
+
+def _ensure_trailing_indent(trivia: Trivia, indent: str) -> None:
+    """Ensure ``trivia`` ending in a newline carries ``indent`` after it.
+
+    Only appends pure whitespace; preserves preceding comments and
+    structural newlines. No-op if ``trivia`` already has any
+    whitespace after its last newline (we don't second-guess the
+    user's choice) or if it has no newline at all.
+    """
+    if not indent:
+        return
+    text = trivia.render()
+    nl = text.rfind("\n")
+    if nl < 0:
+        return
+    tail = text[nl + 1 :]
+    if tail or not all(c in " \t" for c in tail):
+        return
+    trivia.pieces.append(WhitespaceNode(indent))
 
 
 def _apply_separator_style(
@@ -553,6 +590,7 @@ def _apply_separator_style(
             it.leading = Trivia()
     container.final_trivia = Trivia()
     inter_render = style.inter_separator.render()
+    inter_indent = _indent_after_last_newline(style.inter_separator)
     close_render = style.close_pad.render()
     for i, item in enumerate(items):
         if i < n - 1:
@@ -567,11 +605,11 @@ def _apply_separator_style(
                         eol,
                         force_newline=True,
                     )
-            elif (
-                _is_pure_whitespace(item.post_comma_trivia)
-                and item.post_comma_trivia.render() != inter_render
-            ):
-                item.post_comma_trivia = _clone_trivia(style.inter_separator)
+            elif _is_pure_whitespace(item.post_comma_trivia):
+                if item.post_comma_trivia.render() != inter_render:
+                    item.post_comma_trivia = _clone_trivia(style.inter_separator)
+            else:
+                _ensure_trailing_indent(item.post_comma_trivia, inter_indent)
             if _is_pure_whitespace(item.trailing) and item.trailing.pieces:
                 item.trailing = Trivia()
         elif style.trailing_comma:
