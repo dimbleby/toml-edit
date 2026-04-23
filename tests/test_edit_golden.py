@@ -604,6 +604,17 @@ def test_array_set_multiline_survives_view_refetch() -> None:
     assert tomlrt.dumps(doc) == "a = [\n    1,\n]\n"
 
 
+def test_array_set_multiline_indent_preserved_on_install() -> None:
+    # Calling set_multiline(indent=...) on a standalone Array and then
+    # installing it should honour the requested indent, not silently
+    # revert to the indent passed to the Array constructor.
+    arr = tomlrt.Array([1, 2, 3])
+    arr.set_multiline(multiline=True, indent="  ")
+    doc = tomlrt.document()
+    doc["x"] = arr
+    assert tomlrt.dumps(doc) == "x = [\n  1,\n  2,\n  3,\n]\n"
+
+
 def test_array_parsed_empty_with_newline_is_multiline() -> None:
     doc = tomlrt.loads("a = [\n]\n")
     arr = doc.array("a")
