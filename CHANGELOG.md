@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A broad sweep of correctness fixes in the mutation API, covering
+  every flavour of structural change: assignment into and through
+  array-of-tables, append/insert/pop on multi-line arrays with
+  comments, attached-AoT installation, comment-trivia preservation
+  across promotion and shifts, CRLF line-ending preservation, and
+  copy/deepcopy of `Array` and `AoT` subviews. Several long-standing
+  silent corruptions (CST and dict-side state diverging after a
+  mutation) are gone, and a number of error messages are now more
+  specific about which value was rejected and why.
+
+### Changed
+
+- Internal consolidation: many parallel code paths in the synthesis,
+  comment-trivia, and AoT installation layers have been unified, with
+  no behaviour change for callers.
+
 ## [0.3.0] - 2026-04-21
 
 ### Changed
