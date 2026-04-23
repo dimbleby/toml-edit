@@ -2031,15 +2031,19 @@ class _StdTable(Table):
         """
         if self._anchor is not None:
             # AoT-anchored slow path: direct sections is just the anchor;
-            # child sections may live anywhere in the doc, so we keep the
-            # original two-pass shape.
+            # child sections may live anywhere within the entry's owned
+            # sub-section run, so search just that scope (not the whole
+            # document) — otherwise siblings' same-path sub-sections
+            # would be misattributed to this entry.
             for kv in self._anchor.entries:
                 if kv.key.path[0] == key:
                     if len(kv.key.path) == 1:
                         return ("direct", kv)
                     return ("dotted", None)
             child = (*self._path, key)
-            for sec in self._doc_node.sections:
+            scope = self._scope()
+            assert scope is not None  # _anchor is not None ⇒ owner_anchor is set
+            for sec in scope:
                 hdr = sec.header
                 if hdr is None:
                     continue
@@ -2117,27 +2121,34 @@ class _StdTable(Table):
         sub-table (and any nested children) rather than raising. Also
         removes any ancestor-section dotted entries that contribute
         to ``self._path + (key, ...)`` so they don't survive as ghosts.
+        Constrained to ``self._scope()`` so an AoT entry can't reach
+        across its boundary and delete a sibling entry's same-path
+        sub-section.
         """
         for sec in self._direct_sections():
             sec.entries[:] = [kv for kv in sec.entries if kv.key.path[0] != key]
         prefix = (*self._path, key)
         plen = len(prefix)
+        scope = self._scope()
+        scope_ids = None if scope is None else {id(s) for s in scope}
         doc_sections = self._doc_node.sections
         doc_sections[:] = [
             sec
             for sec in doc_sections
             if not (
-                sec.header is not None
+                (scope_ids is None or id(sec) in scope_ids)
+                and sec.header is not None
                 and len(sec.header.key.path) >= plen
                 and sec.header.key.path[:plen] == prefix
             )
         ]
         # Drop any ancestor-section dotted KV that contributes to our
         # path + key (e.g. ``[tool] poetry.name = "x"`` when purging
-        # ``name`` from the ``tool.poetry`` view).
-        ppath = self._path
-        ppath_len = len(ppath)
-        for sec in doc_sections:
+        # ``name`` from the ``tool.poetry`` view). The ``hlen >= plen``
+        # check below skips every section we just removed, so iterating
+        # the pre-splice scope is safe.
+        ppath_len = len(self._path)
+        for sec in scope if scope is not None else doc_sections:
             hdr = sec.header
             host_path: tuple[str, ...] = hdr.key.path if hdr is not None else ()
             hlen = len(host_path)
