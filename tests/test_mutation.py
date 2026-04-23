@@ -212,6 +212,22 @@ def test_array_setitem_slice() -> None:
     assert _reparses(out) == {"xs": [1, 22, 33, 44, 4]}
 
 
+def test_array_setitem_slice_matches_list_semantics() -> None:
+    # Array slice-assignment should accept any iterable (matching plain
+    # ``list``), and reject non-iterables with TypeError. The previous
+    # implementation used ``assert``, which silently did the wrong
+    # thing under ``python -O``.
+    doc = tomlrt.parse("xs = [1, 2, 3]\n")
+    xs = doc["xs"]
+    assert isinstance(xs, tomlrt.Array)
+    # Strings iterate to characters, like list.__setitem__ does.
+    xs[0:1] = "ab"
+    assert list(xs) == ["a", "b", 2, 3]
+    # Non-iterables raise TypeError, like list.__setitem__ does.
+    with pytest.raises(TypeError):
+        xs[0:1] = 5  # type: ignore[call-overload]
+
+
 def test_array_delitem_slice() -> None:
     doc = tomlrt.parse("xs = [1, 2, 3, 4]\n")
     xs = doc["xs"]
