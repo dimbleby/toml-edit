@@ -732,6 +732,34 @@ def test_promote_array_rejects_non_array() -> None:
         doc.promote_array("a")
 
 
+def test_promote_inline_rejects_non_inline_for_present_keys() -> None:
+    """When ``key`` is present but isn't a simple inline-table KV, the
+    user should see a clear "nothing to promote" message, not a bare
+    ``KeyError`` that contradicts ``key in self``.
+    """
+    for src, target in [
+        ("[a]\nb.c = 1\n", "b"),  # dotted-key subtable
+        ("[a.b]\nc = 1\n", "b"),  # subsection
+        ("[[a.b]]\nc = 1\n", "b"),  # array-of-tables
+    ]:
+        doc = tomlrt.loads(src)
+        assert target in doc["a"]
+        with pytest.raises(tomlrt.TOMLError, match="not an inline table"):
+            doc["a"].promote_inline(target)
+
+
+def test_promote_array_rejects_non_array_for_present_keys() -> None:
+    for src, target in [
+        ("[a]\nb.c = 1\n", "b"),
+        ("[a.b]\nc = 1\n", "b"),
+        ("[[a.b]]\nc = 1\n", "b"),
+    ]:
+        doc = tomlrt.loads(src)
+        assert target in doc["a"]
+        with pytest.raises(tomlrt.TOMLError, match="not an array"):
+            doc["a"].promote_array(target)
+
+
 # ---------------------------------------------------------------------------
 # Table.set_table / Table.ensure_table / dotted-path navigation
 # ---------------------------------------------------------------------------
