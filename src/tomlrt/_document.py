@@ -3013,8 +3013,9 @@ class Array(list[Any]):
         value: object,
     ) -> None:
         if isinstance(index, slice):
-            assert not isinstance(value, (str, bytes))
-            assert isinstance(value, Iterable)
+            if not isinstance(value, Iterable):
+                msg = "must assign iterable to extended slice"
+                raise TypeError(msg)
             new_items = [self._make_item(v, with_comma=False) for v in list(value)]
             self._node.items[index] = new_items
         else:
