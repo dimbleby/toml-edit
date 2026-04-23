@@ -2323,7 +2323,11 @@ class _StdTable(Table):
                 indent=indent,
             )
             return
-        super()._install_flavoured(parts, value)  # pragma: no cover
+        # Non-flavoured value: descend (creating implicit parents as
+        # needed) and assign at the leaf with normal __setitem__
+        # semantics.
+        target: Table = self if len(parts) == 1 else self.ensure_table(parts[:-1])
+        target[parts[-1]] = value
 
     def _prepare_section_slot(
         self,

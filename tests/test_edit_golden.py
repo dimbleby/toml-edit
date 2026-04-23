@@ -850,6 +850,30 @@ def test_set_table_rejects_empty_segment() -> None:
         doc.install("tool..poetry", Table.section())
 
 
+def test_install_scalar_at_dotted_path() -> None:
+    doc = tomlrt.loads("")
+    doc.install("tool.poetry.version", "0.1.0")
+    rendered = tomlrt.dumps(doc)
+    assert rendered == '[tool.poetry]\nversion = "0.1.0"\n'
+    # Repeated install at a sibling under the same parent should reuse
+    # the existing [tool.poetry] section rather than create a new one.
+    doc.install(("tool", "poetry", "name"), "x")
+    rendered = tomlrt.dumps(doc)
+    assert rendered.count("[tool.poetry]") == 1
+
+
+def test_install_scalar_at_literal_dot_segment() -> None:
+    doc = tomlrt.loads("")
+    doc.install(("tool", "weird.key"), 1)
+    assert tomlrt.dumps(doc) == '[tool]\n"weird.key" = 1\n'
+
+
+def test_install_plain_dict_at_dotted_path() -> None:
+    doc = tomlrt.loads("")
+    doc.install("tool.xy", {"x": 1, "y": 2})
+    assert tomlrt.dumps(doc) == "[tool]\nxy = { x = 1, y = 2 }\n"
+
+
 def test_table_accepts_dotted_path() -> None:
     doc = tomlrt.loads('[tool.poetry]\nname = "x"\n')
     assert doc.table("tool.poetry")["name"] == "x"
