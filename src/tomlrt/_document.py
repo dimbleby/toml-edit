@@ -171,14 +171,7 @@ def _detect_indent(section: SectionNode) -> str:
     """Return the leading-whitespace indent used by the section's last entry."""
     if not section.entries:
         return ""
-    last = section.entries[-1]
-    text = last.leading.render()
-    # Take everything after the final newline (the line's indent).
-    nl = text.rfind("\n")
-    candidate = text[nl + 1 :] if nl >= 0 else text
-    if all(c in " \t" for c in candidate):
-        return candidate
-    return ""
+    return _indent_after_last_newline(section.entries[-1].leading)
 
 
 def _ensure_trailing_newline(section: SectionNode) -> None:
