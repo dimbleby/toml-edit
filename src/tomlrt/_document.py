@@ -2833,6 +2833,23 @@ class _TableLeadingCommentsView(MutableMapping[str, "tuple[str, ...]"]):
         return f"{type(self).__name__}({{{body}}})"
 
 
+def _array_index_or_raise(array: Array, key: object, view_name: str) -> int:
+    """Validate ``key`` as an in-bounds int index for ``array``.
+
+    Raises :class:`TypeError` for non-int keys (with a message naming
+    the offending view) and :class:`KeyError` for out-of-range ones.
+    Centralised so the array-backed comment views share one
+    implementation.
+    """
+    if not isinstance(key, int):
+        msg = f"Array.{view_name} index must be int, got {type(key).__name__}"
+        raise TypeError(msg)
+    n = len(array._node.items)  # noqa: SLF001
+    if not 0 <= key < n:
+        raise KeyError(key)
+    return key
+
+
 class _ArrayCommentsView(MutableMapping[int, str]):
     """Live mapping from array index to that item's end-of-line comment.
 
@@ -2848,13 +2865,7 @@ class _ArrayCommentsView(MutableMapping[int, str]):
         self._array = array
 
     def _check_index(self, key: object) -> int:
-        if not isinstance(key, int):
-            msg = f"Array.comments index must be int, got {type(key).__name__}"
-            raise TypeError(msg)
-        n = len(self._array._node.items)  # noqa: SLF001
-        if not 0 <= key < n:
-            raise KeyError(key)
-        return key
+        return _array_index_or_raise(self._array, key, "comments")
 
     def _read_eol(self, i: int) -> str | None:
         item = self._array._node.items[i]  # noqa: SLF001
@@ -2979,13 +2990,7 @@ class _ArrayLeadingCommentsView(MutableMapping[int, "tuple[str, ...]"]):
         self._array = array
 
     def _check_index(self, key: object) -> int:
-        if not isinstance(key, int):
-            msg = f"Array.leading_comments index must be int, got {type(key).__name__}"
-            raise TypeError(msg)
-        n = len(self._array._node.items)  # noqa: SLF001
-        if not 0 <= key < n:
-            raise KeyError(key)
-        return key
+        return _array_index_or_raise(self._array, key, "leading_comments")
 
     def _trivia_for(self, i: int) -> Trivia:
         items = self._array._node.items  # noqa: SLF001
@@ -3022,14 +3027,9 @@ class _ArrayLeadingCommentsView(MutableMapping[int, "tuple[str, ...]"]):
     @override
     def __delitem__(self, key: int) -> None:
         i = self._check_index(key)
-        trivia = self._trivia_for(i)
-        if not _extract_trailing_comment_block(trivia):
+        if not _extract_trailing_comment_block(self._trivia_for(i)):
             raise KeyError(key)
-        _replace_trailing_comment_block(
-            trivia,
-            (),
-            _array_indent(self._array._node),  # noqa: SLF001
-        )
+        self[key] = ()
 
     @override
     def __iter__(self) -> Iterator[int]:
@@ -3528,26 +3528,20 @@ class AoT(list[Table]):
 
         Accepts a plain dict, a :class:`Table`, or any
         :class:`collections.abc.Mapping`. Cross-document Tables are
-        deep-cloned to satisfy the "no shared mutable state" rule.
+        deep-cloned by ``make_keyvalue_node`` (via ``value_to_node``)
+        so inline tables / arrays aren't aliased.
         """
-        if isinstance(value, Table):
-            # Walk the source table's items; values are deep-cloned by
-            # value_to_node so inline tables / arrays aren't aliased.
-            for k, v in value.items():
-                sec.entries.append(make_keyvalue_node(k, v))
-            return
-        if isinstance(value, Mapping):
-            for k, v in value.items():
-                if not isinstance(k, str):
-                    msg = f"AoT entry keys must be strings, got {type(k).__name__}"
-                    raise TOMLError(msg)
-                sec.entries.append(make_keyvalue_node(k, v))
-            return
-        msg = (
-            f"cannot append a value of type {type(value).__name__} to an "
-            "array-of-tables; expected a dict or Table"
-        )
-        raise TOMLError(msg)
+        if not isinstance(value, Mapping):
+            msg = (
+                f"cannot append a value of type {type(value).__name__} to an "
+                "array-of-tables; expected a dict or Table"
+            )
+            raise TOMLError(msg)
+        for k, v in value.items():
+            if not isinstance(k, str):
+                msg = f"AoT entry keys must be strings, got {type(k).__name__}"
+                raise TOMLError(msg)
+            sec.entries.append(make_keyvalue_node(k, v))
 
     # ------------------------------------------------------------------
     # Mutators
