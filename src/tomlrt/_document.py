@@ -525,8 +525,20 @@ def _sample_separator_style(
             # whitespace following the (last) newline in the close pad.
             indent_text = pad_text.rsplit("\n", 1)[1] or "    "
             inter = Trivia([NewlineNode("\n"), WhitespaceNode(indent_text)])
+            open_pad: Trivia
+            if _is_pure_whitespace(final_trivia):
+                open_pad = _clone_trivia(inter)
+            else:
+                # Preserve authoring content (e.g. comments) inside an
+                # otherwise-empty container by parking it in open_pad,
+                # where it becomes the leading trivia of the first
+                # inserted item. Ensure the pad ends with the item
+                # indent so the new value lines up.
+                open_pad = _clone_trivia(final_trivia)
+                if _indent_after_last_newline(open_pad) != indent_text:
+                    open_pad.pieces.append(WhitespaceNode(indent_text))
             return _SeparatorStyle(
-                open_pad=_clone_trivia(inter),
+                open_pad=open_pad,
                 inter_separator=_clone_trivia(inter),
                 trailing_comma=True,
                 close_pad=Trivia([NewlineNode("\n")]),
@@ -545,6 +557,7 @@ def _sample_separator_style(
             close_pad=_clone_trivia(single_pad),
         )
     open_pad = _clone_trivia(items[0].leading)
+    last = items[-1]
     sep: Trivia | None = None
     for it in items[:-1]:
         if it.has_comma and _is_pure_whitespace(it.post_comma_trivia):
@@ -563,8 +576,17 @@ def _sample_separator_style(
                 sep = Trivia(pieces)
                 break
     if sep is None:
+        # Last-resort multiline detection: when ``items[:-1]`` yields
+        # nothing usable (e.g. single-item containers), inspect the
+        # surrounding trivia for any newline pattern. If present the
+        # author intended multi-line layout; seed ``sep`` from the
+        # first item's leading indent so appended items line up.
+        hints = (items[0].leading, last.post_comma_trivia, last.trailing, final_trivia)
+        if any("\n" in h.render() for h in hints):
+            indent = _indent_after_last_newline(items[0].leading) or "    "
+            sep = Trivia([NewlineNode("\n"), WhitespaceNode(indent)])
+    if sep is None:
         sep = Trivia([WhitespaceNode(" ")])
-    last = items[-1]
     if last.has_comma:
         trailing_comma = True
         if _is_pure_whitespace(last.post_comma_trivia):

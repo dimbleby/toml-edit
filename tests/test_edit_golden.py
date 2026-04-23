@@ -643,6 +643,36 @@ def test_array_parsed_empty_with_newline_indent_is_inferred() -> None:
     assert tomlrt.dumps(doc) == "a = [\n  1,\n]\n"
 
 
+def test_append_preserves_empty_array_inner_comment() -> None:
+    # An empty multiline array with only a comment inside used to lose
+    # the comment entirely on first append. The comment should survive
+    # as leading trivia of the newly inserted first item.
+    src = "a = [\n    # placeholder\n]\n"
+    doc = tomlrt.loads(src)
+    doc.array("a").append(1)
+    assert tomlrt.dumps(doc) == "a = [\n    # placeholder\n    1,\n]\n"
+
+
+def test_append_preserves_trailing_comment_in_single_item_array() -> None:
+    # A single-item multiline array whose last-item post-comma slot
+    # carries a comment used to have that comment collapse onto the
+    # same line as the new item, producing valid-but-ugly output.
+    src = "a = [\n    1,\n    # tail\n]\n"
+    doc = tomlrt.loads(src)
+    doc.array("a").append(2)
+    assert tomlrt.dumps(doc) == "a = [\n    1,\n    # tail\n    2,\n]\n"
+
+
+def test_append_preserves_leading_comment_in_single_item_array() -> None:
+    # A single-item multiline array with a leading comment used to
+    # collapse to single-line layout on append because the inter-item
+    # separator could not be sampled from items[:-1] (which is empty).
+    src = "a = [\n    # head\n    1,\n]\n"
+    doc = tomlrt.loads(src)
+    doc.array("a").append(2)
+    assert tomlrt.dumps(doc) == "a = [\n    # head\n    1,\n    2,\n]\n"
+
+
 # ---------------------------------------------------------------------------
 # Table.set_aot / Table.promote_array
 # ---------------------------------------------------------------------------
