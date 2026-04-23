@@ -167,6 +167,18 @@ def _normalise_newlines(node: DocumentNode, target: str) -> None:
             nl.text = target
 
 
+def _first_indent_after_newline(pieces: Sequence[TriviaPiece]) -> str:
+    """Indent (run of spaces/tabs) immediately following the *first*
+    newline in ``pieces``, or empty string if no such pattern exists.
+    """
+    for i in range(len(pieces) - 1):
+        if isinstance(pieces[i], NewlineNode) and isinstance(
+            pieces[i + 1], WhitespaceNode
+        ):
+            return pieces[i + 1].text
+    return ""
+
+
 def _detect_indent(section: SectionNode) -> str:
     """Return the leading-whitespace indent used by the section's last entry."""
     if not section.entries:
@@ -522,9 +534,12 @@ def _sample_separator_style(
     if not items:
         pad_text = final_trivia.render()
         if "\n" in pad_text:
-            # Multiline-intent empty container: infer indent from the
-            # whitespace following the (last) newline in the close pad.
-            indent_text = pad_text.rsplit("\n", 1)[1] or "    "
+            # Multiline-intent empty container: infer the per-item
+            # indent from the first whitespace run that follows a
+            # newline in the close pad. Scanning pieces (rather than
+            # the rendered text) catches indents that sit before a
+            # comment, which the simpler ``rsplit('\n', 1)`` misses.
+            indent_text = _first_indent_after_newline(final_trivia.pieces) or "    "
             inter = Trivia([NewlineNode("\n"), WhitespaceNode(indent_text)])
             open_pad: Trivia
             if _is_pure_whitespace(final_trivia):
