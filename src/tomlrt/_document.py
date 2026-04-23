@@ -809,10 +809,21 @@ def _parse_key_path(path: str | tuple[str, ...]) -> tuple[str, ...]:
         if not path:
             msg = "key path must not be empty"
             raise TOMLError(msg)
-        if any(not p for p in path):
+        for p in path:
+            if not isinstance(p, str):
+                msg = (  # type: ignore[unreachable]
+                    f"key path {path!r} segment must be str, not {type(p).__name__}"
+                )
+                raise TypeError(msg)
+        if any(p == "" for p in path):
             msg = f"key path {path!r} contains an empty segment"
             raise TOMLError(msg)
         return path
+    if not isinstance(path, str):
+        msg = (  # type: ignore[unreachable]
+            f"key path must be str or tuple of str, not {type(path).__name__}"
+        )
+        raise TypeError(msg)
     if not path:
         msg = "key path must not be empty"
         raise TOMLError(msg)

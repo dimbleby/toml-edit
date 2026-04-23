@@ -993,3 +993,26 @@ def test_table_getitem_returns_any_pop_too() -> None:
     popped = doc.pop("t")
     assert popped == {"name": "x"}
     assert "t" not in doc
+
+
+def test_non_string_keys_rejected() -> None:
+    """``doc[k] = v`` and friends must reject keys that can't round-trip
+    through TOML. TOML keys are strings; anything else (``None``, ``42``,
+    ``True``, ``0.5``) should fail loudly rather than silently coerce to
+    an empty ``""`` key and lie about the stored state.
+    """
+    for bad in (None, 42, 3.14, True, False, (1,), b"bytes"):
+        doc = tomlrt.parse("")
+        with pytest.raises(TypeError):
+            doc[bad] = 1  # type: ignore[index]
+
+    # Empty string key IS valid TOML (``"" = 1``) and must still work.
+    doc = tomlrt.parse("")
+    doc[""] = 1
+    assert tomlrt.dumps(doc) == '"" = 1\n'
+    assert tomlrt.loads(tomlrt.dumps(doc))[""] == 1
+
+    # install() should reject non-string segments too.
+    doc = tomlrt.parse("")
+    with pytest.raises((TypeError, tomlrt.TOMLError)):
+        doc.install((None,), 1)  # type: ignore[arg-type]
