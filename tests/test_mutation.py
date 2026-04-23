@@ -163,7 +163,7 @@ def test_inline_table_rejects_section_spec() -> None:
     doc = tomlrt.parse("obj = { a = 1 }\n")
     obj = doc["obj"]
     assert isinstance(obj, tomlrt.Table)
-    with pytest.raises(tomlrt.TOMLError, match="not section-backed"):
+    with pytest.raises(tomlrt.TOMLError, match="inline-style table"):
         obj["bad"] = Table.section({"x": 1})
 
 

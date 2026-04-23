@@ -995,28 +995,31 @@ class Table(dict[str, Any]):
 
         Subclasses that support structural assignment (``_StdTable``,
         ``Document``) override this. The base implementation rejects
-        ``SectionSpec`` / ``AoT`` because inline/dotted-sub tables
-        cannot hold ``[k]`` sections or ``[[k]]`` array-of-tables.
-        Standalone :class:`Array` is accepted at a single-segment
-        path and installed as a plain list value (the ``multiline``
-        layout request is dropped; inline tables do not admit
-        multi-line array values).
+        ``SectionSpec`` / ``AoT`` because inline-style tables cannot
+        hold ``[k]`` sections or ``[[k]]`` array-of-tables, and
+        rejects multi-segment paths for the same reason. Standalone
+        :class:`Array` is accepted at a single-segment path and
+        installed as a plain list value (the ``multiline`` layout
+        request is dropped; inline tables do not admit multi-line
+        array values).
         """
-        if (
-            isinstance(value, Array)
-            and not value._attached  # noqa: SLF001
-            and len(parts) == 1
-        ):
+        if isinstance(value, SectionSpec):
+            msg = "cannot install a [section] inside an inline-style table"
+            raise TOMLError(msg)
+        if isinstance(value, AoT):
+            msg = "cannot install an array-of-tables inside an inline-style table"
+            raise TOMLError(msg)
+        if len(parts) > 1:
+            path = ".".join(parts)
+            msg = (
+                f"cannot install at multi-segment path {path!r} inside "
+                "an inline-style table"
+            )
+            raise TOMLError(msg)
+        if isinstance(value, Array) and not value._attached:  # noqa: SLF001
             self[parts[0]] = list(value)
             return
-        if isinstance(value, SectionSpec):
-            what = "a Table.section() spec"
-        elif isinstance(value, AoT):
-            what = "an array-of-tables"
-        else:
-            what = "a multi-segment path"
-        msg = f"cannot assign {what} here: the containing table is not section-backed"
-        raise TOMLError(msg)
+        self[parts[0]] = value
 
     @override
     def __delitem__(self, key: str) -> None:

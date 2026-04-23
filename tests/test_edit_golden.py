@@ -874,6 +874,20 @@ def test_install_plain_dict_at_dotted_path() -> None:
     assert tomlrt.dumps(doc) == "[tool]\nxy = { x = 1, y = 2 }\n"
 
 
+def test_install_scalar_on_inline_table() -> None:
+    doc = tomlrt.loads("it = { a = 1 }\n")
+    inline = doc.table("it")
+    inline.install("b", 2)
+    assert tomlrt.dumps(doc) == "it = { a = 1, b = 2 }\n"
+
+
+def test_install_multi_segment_on_inline_table_errors() -> None:
+    doc = tomlrt.loads("it = { a = 1 }\n")
+    inline = doc.table("it")
+    with pytest.raises(tomlrt.TOMLError, match="inline-style table"):
+        inline.install("a.b", 1)
+
+
 def test_table_accepts_dotted_path() -> None:
     doc = tomlrt.loads('[tool.poetry]\nname = "x"\n')
     assert doc.table("tool.poetry")["name"] == "x"
