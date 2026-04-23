@@ -2290,7 +2290,16 @@ class _StdTable(Table):
 
     @override
     def promote_inline(self, key: str) -> Table:
-        sec, kv = self._find_direct_kv(key)
+        try:
+            sec, kv = self._find_direct_kv(key)
+        except KeyError:
+            # If the key exists under a different shape (sub-section,
+            # dotted-key subtable, or AoT), raise a clearer error rather
+            # than a bare KeyError that contradicts ``key in self``.
+            if key in self:
+                msg = f"{key!r} is not an inline table; nothing to promote"
+                raise TOMLError(msg) from None
+            raise
         if not isinstance(kv.value, InlineTableNode):
             msg = f"{key!r} is not an inline table; nothing to promote"
             raise TOMLError(msg)
@@ -2328,7 +2337,13 @@ class _StdTable(Table):
 
     @override
     def promote_array(self, key: str) -> AoT:
-        sec, kv = self._find_direct_kv(key)
+        try:
+            sec, kv = self._find_direct_kv(key)
+        except KeyError:
+            if key in self:
+                msg = f"{key!r} is not an array; nothing to promote"
+                raise TOMLError(msg) from None
+            raise
         if not isinstance(kv.value, ArrayNode):
             msg = f"{key!r} is not an array; nothing to promote"
             raise TOMLError(msg)
