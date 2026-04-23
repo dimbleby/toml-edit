@@ -615,6 +615,19 @@ def test_array_set_multiline_indent_preserved_on_install() -> None:
     assert tomlrt.dumps(doc) == "x = [\n  1,\n  2,\n  3,\n]\n"
 
 
+def test_append_to_multiline_array_with_eol_comments() -> None:
+    # When every existing item carries an inline comment, the
+    # separator-style sampler used to give up and fall back to
+    # ", " for the inter-item separator, and to drag the last
+    # item's trailing comment into the close-pad. Newly appended
+    # items must instead inherit the structural indent and leave
+    # the existing comments alone.
+    src = "a = [\n    1,  # one\n    2,  # two\n]\n"
+    doc = tomlrt.loads(src)
+    doc.array("a").append(3)
+    assert tomlrt.dumps(doc) == ("a = [\n    1,  # one\n    2,  # two\n    3,\n]\n")
+
+
 def test_array_parsed_empty_with_newline_is_multiline() -> None:
     doc = tomlrt.loads("a = [\n]\n")
     arr = doc.array("a")
