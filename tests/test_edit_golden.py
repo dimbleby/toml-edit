@@ -345,6 +345,36 @@ def test_cross_doc_array_assign_deep_clones() -> None:
     assert _reparses(tomlrt.dumps(b))["ports"] == [80, 443]
 
 
+def test_install_attached_aot_preserves_comments() -> None:
+    # `install` and `__setitem__` should both deep-clone the source CST
+    # when given an attached AoT from another document. The previous
+    # `install` implementation always routed through `to_dict()`, which
+    # silently stripped comments and formatting, diverging from the
+    # subscript path.
+    src = "[[t]]\n# leading\na = 1  # eol\n[[t]]\nb = 2\n"
+    a = tomlrt.parse(src)
+    b = tomlrt.parse("")
+    b.install("y", a["t"])
+    assert tomlrt.dumps(b) == ("[[y]]\n# leading\na = 1  # eol\n[[y]]\nb = 2\n")
+
+
+def test_install_attached_aot_at_dotted_path_preserves_comments() -> None:
+    src = "[[t]]\n# leading\na = 1\n"
+    a = tomlrt.parse(src)
+    b = tomlrt.parse("")
+    b.install("p.q", a["t"])
+    assert tomlrt.dumps(b) == "[[p.q]]\n# leading\na = 1\n"
+
+
+def test_install_attached_aot_is_independent_of_source() -> None:
+    src = '[[t]]\nname = "alice"\n'
+    a = tomlrt.parse(src)
+    b = tomlrt.parse("")
+    b.install("y", a["t"])
+    a["t"][0]["name"] = "MUT"
+    assert _reparses(tomlrt.dumps(b))["y"][0]["name"] == "alice"
+
+
 # ---------------------------------------------------------------------------
 # Cross-section conflict on mutation
 # ---------------------------------------------------------------------------

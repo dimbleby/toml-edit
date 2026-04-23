@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import operator
 import sys
-from collections.abc import Iterable, Mapping, MutableMapping
+from collections.abc import Iterable, Iterator, Mapping, MutableMapping
 from copy import deepcopy
 from datetime import date, datetime, time
 from types import MappingProxyType
@@ -800,6 +800,27 @@ def _build_promoted_aot_section(
     section = _new_section(path, kind="array")
     section.entries = [_kv_from_inline_entry(e, deep=True) for e in inline.entries]
     return section
+
+
+def _clone_aot_sections(
+    value: AoT,
+    full_path: tuple[str, ...],
+) -> Iterator[SectionNode]:
+    """Deep-clone ``value``'s own sections, rewriting each header to ``full_path``.
+
+    Used to copy an attached AoT into a (possibly different) document
+    while preserving every byte of its formatting and comments. Each
+    yielded section has ``header is not None`` and a fresh :class:`Key`
+    matching ``full_path``; surrounding placement (insert index,
+    blank-line policy, dict-storage sync) is the caller's job.
+    """
+    new_parts = [make_key_part(p) for p in full_path]
+    new_seps = ["."] * (len(new_parts) - 1)
+    for src_sec in value._own_sections():  # noqa: SLF001
+        cloned = deepcopy(src_sec)
+        assert cloned.header is not None
+        cloned.header.key = Key(parts=list(new_parts), separators=list(new_seps))
+        yield cloned
 
 
 def _insert_section_block(
@@ -2109,7 +2130,7 @@ class _StdTable(Table):
         # Special case: assigning an AoT (or list of dicts targeted as AoT)
         # is a *structural* edit, not a value assignment.
         if isinstance(value, AoT):
-            self._set_aot_value(key, value)
+            self._install_attached_aot((key,), value)
             return None
 
         kind, payload = self._classify(key)
@@ -2155,29 +2176,6 @@ class _StdTable(Table):
         # kind because _purge_conflicting only removes things keyed by
         # ``key`` in this scope, so no other dict slot is invalidated.
         return _value_for(new_kv.value)
-
-    def _set_aot_value(self, key: str, value: AoT) -> None:
-        """Assign a (possibly cross-document) AoT to ``key``.
-
-        Each source entry's ``[[..]]`` section is deep-cloned and its
-        header path rewritten to ``(*self._path, key)``. New sections
-        are appended to the document.
-        """
-        kind, _ = self._classify(key)
-        if kind != "absent":
-            self._purge_conflicting(key)
-        new_path = (*self._path, key)
-        new_parts = [make_key_part(p) for p in new_path]
-        new_seps = ["."] * (len(new_parts) - 1)
-        # Source sections to clone, in source-document order:
-        src_own = value._own_sections()  # noqa: SLF001
-        doc_node = self._doc_node
-        for src_sec in src_own:
-            cloned = deepcopy(src_sec)
-            assert cloned.header is not None
-            cloned.header.key = Key(parts=list(new_parts), separators=list(new_seps))
-            doc_node.adopt_preamble_into(cloned.header.leading)
-            doc_node.sections.append(cloned)
 
     @override
     def _delete_value(self, key: str) -> None:
@@ -2448,9 +2446,16 @@ class _StdTable(Table):
             self._install_section(parts, value)
             return
         if isinstance(value, AoT):
+            if value._attached:  # noqa: SLF001
+                # Deep-clone the source CST so comments and formatting
+                # survive — same code path used by ``__setitem__`` for
+                # an attached AoT. Without this, ``install`` would
+                # silently strip everything by routing through
+                # ``to_dict()``.
+                self._install_attached_aot(parts, value)
+                return
             # Snapshot entries as plain dicts so the target is fully
-            # independent of the source (which might be attached to a
-            # different document).
+            # independent of the source standalone spec.
             entries = [t.to_dict() for t in value]
             self._install_aot(parts, entries)
             return
@@ -2493,6 +2498,37 @@ class _StdTable(Table):
         else:
             self._doc_node.purge_path(full_path)
         return full_path, _section_insert_index(self._doc_node.sections, full_path)
+
+    def _install_attached_aot(
+        self,
+        parts: tuple[str, ...],
+        value: AoT,
+    ) -> AoT:
+        """Deep-clone an attached source AoT into ``parts``.
+
+        Used by both ``__setitem__`` (single-segment key) and
+        ``install`` (possibly dotted path). Cloned sections retain
+        their original inter-header trivia, so we splice them in
+        directly rather than via ``_insert_section_block`` (which
+        would add a redundant blank between consecutive entries).
+        """
+        full_path, insert_at = self._prepare_section_slot(parts)
+        doc_node = self._doc_node
+        sections = doc_node.sections
+        preceding_has_content = any(
+            s.header is not None or s.entries for s in sections[:insert_at]
+        )
+        new_secs = list(_clone_aot_sections(value, full_path))
+        for i, cloned in enumerate(new_secs):
+            assert cloned.header is not None
+            if i == 0 and preceding_has_content:
+                cloned.header.leading.pieces.insert(0, NewlineNode("\n"))
+            doc_node.adopt_preamble_into(cloned.header.leading)
+        sections[insert_at:insert_at] = new_secs
+        aot = AoT._attached_to(doc_node, full_path, [])  # noqa: SLF001
+        aot._resync()  # noqa: SLF001
+        self._install_at_path(parts, aot)
+        return aot
 
     def _install_aot(
         self,
