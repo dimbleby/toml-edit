@@ -3130,6 +3130,19 @@ class Array(list[Any]):
         list.clear(self)
         list.extend(self, _materialise_array(self._node))
 
+    def __copy__(self) -> Array:
+        return self.__deepcopy__({})
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Array:
+        new = Array.__new__(Array)
+        memo[id(self)] = new
+        new._node = deepcopy(self._node, memo)  # noqa: SLF001
+        new._style = deepcopy(self._style, memo)  # noqa: SLF001
+        new._indent = self._indent  # noqa: SLF001
+        new._attached = self._attached  # noqa: SLF001
+        list.__init__(new, _materialise_array(new._node))  # noqa: SLF001
+        return new
+
     def _rebuild_separators(self) -> None:
         _apply_separator_style(self._node, self._style)
 
@@ -3535,6 +3548,19 @@ class AoT(list[Table]):
                 entry._detach()  # noqa: SLF001
         list.clear(self)
         list.extend(self, new_entries)
+
+    def __copy__(self) -> AoT:
+        return self.__deepcopy__({})
+
+    def __deepcopy__(self, memo: dict[int, object]) -> AoT:
+        new = AoT.__new__(AoT)
+        memo[id(self)] = new
+        new._doc_node = deepcopy(self._doc_node, memo)  # noqa: SLF001
+        new._path = self._path  # noqa: SLF001
+        new._attached = self._attached  # noqa: SLF001
+        list.__init__(new)
+        new._resync()  # noqa: SLF001
+        return new
 
     def _make_header_section(self) -> SectionNode:
         return _new_section(self._path, kind="array")

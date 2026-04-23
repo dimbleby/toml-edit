@@ -421,3 +421,78 @@ def test_copy_yields_independent_document() -> None:
     doc2 = copy(doc1)
     doc2["a"]["x"] = 99
     assert doc1["a"]["x"] == 1
+
+
+def test_deepcopy_table_subview_is_independent_and_round_trips() -> None:
+
+    src = "[t]\nx = 1\ny = 2\n"
+    doc = tomlrt.loads(src)
+    t = doc.table("t")
+    t2 = deepcopy(t)
+    assert dict(t2) == {"x": 1, "y": 2}
+    t2["x"] = 99
+    assert t["x"] == 1
+    assert t2["x"] == 99
+    # The original document's bytes are unaffected.
+    assert tomlrt.dumps(doc) == src
+
+
+def test_deepcopy_array_subview_does_not_double_cst() -> None:
+
+    src = "xs = [1, 2, 3]\n"
+    doc = tomlrt.loads(src)
+    arr = doc.array("xs")
+    arr2 = deepcopy(arr)
+    assert list(arr2) == [1, 2, 3]
+    # The CST must not have doubled items: appending one and rendering
+    # the array node in isolation should reflect exactly four entries.
+    arr2.append(4)
+    assert list(arr2) == [1, 2, 3, 4]
+    assert arr2._node.render() == "[1, 2, 3, 4]"  # noqa: SLF001
+    # Original is untouched.
+    assert tomlrt.dumps(doc) == src
+
+
+def test_deepcopy_aot_subview_preserves_length() -> None:
+
+    src = "[[t]]\nx = 1\n[[t]]\nx = 2\n"
+    doc = tomlrt.loads(src)
+    aot = doc.aot("t")
+    aot2 = deepcopy(aot)
+    assert len(aot2) == 2
+    assert [dict(e) for e in aot2] == [{"x": 1}, {"x": 2}]
+    # Mutations on the copy do not leak.
+    aot2[0]["x"] = 99
+    assert aot[0]["x"] == 1
+    assert tomlrt.dumps(doc) == src
+
+
+def test_copy_array_subview_does_not_double_cst() -> None:
+
+    src = "xs = [1, 2, 3]\n"
+    doc = tomlrt.loads(src)
+    arr = doc.array("xs")
+    arr2 = copy(arr)
+    arr2.append(4)
+    assert arr2._node.render() == "[1, 2, 3, 4]"  # noqa: SLF001
+    assert tomlrt.dumps(doc) == src
+
+
+def test_copy_aot_subview_preserves_length() -> None:
+
+    src = "[[t]]\nx = 1\n[[t]]\nx = 2\n"
+    doc = tomlrt.loads(src)
+    aot = doc.aot("t")
+    aot2 = copy(aot)
+    assert len(aot2) == 2
+
+
+def test_deepcopy_table_subview_supports_nested_mutation() -> None:
+
+    src = "[t]\n[t.inner]\nx = 1\n"
+    doc = tomlrt.loads(src)
+    t = doc.table("t")
+    t2 = deepcopy(t)
+    t2.table("inner")["x"] = 42
+    assert t.table("inner")["x"] == 1
+    assert tomlrt.dumps(doc) == src
