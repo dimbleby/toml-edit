@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import math
+from copy import copy, deepcopy
 from datetime import date, datetime, time, timedelta, timezone
 from typing import TYPE_CHECKING
 
@@ -367,3 +368,32 @@ def test_document_factory_with_data_does_not_share_mutable_state() -> None:
     server_dict["port"] = 9999  # mutate the source after construction
     server = doc.table("server")
     assert server["port"] == 8080
+
+
+def test_deepcopy_preserves_document_structure() -> None:
+
+    src = "[a]\nx = 1\n\n[[b]]\ny = 2\n[[b]]\ny = 3\n"
+    doc1 = tomlrt.loads(src)
+    doc2 = deepcopy(doc1)
+    assert tomlrt.dumps(doc2) == src
+
+
+def test_deepcopy_yields_independent_document() -> None:
+
+    src = "[a]\nx = 1\n"
+    doc1 = tomlrt.loads(src)
+    doc2 = deepcopy(doc1)
+    doc2["a"]["x"] = 99
+    assert doc1["a"]["x"] == 1
+    assert doc2["a"]["x"] == 99
+    # And the unmutated half stays format-preserved.
+    assert tomlrt.dumps(doc1) == src
+
+
+def test_copy_yields_independent_document() -> None:
+
+    src = "[a]\nx = 1\n"
+    doc1 = tomlrt.loads(src)
+    doc2 = copy(doc1)
+    doc2["a"]["x"] = 99
+    assert doc1["a"]["x"] == 1

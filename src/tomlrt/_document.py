@@ -2523,6 +2523,14 @@ class Document(_StdTable):
             _normalise_newlines(self._doc_node, self._newline)
         return self._doc_node.render()
 
+    def __copy__(self) -> Document:
+        # The CST is the source of truth; sharing it across "copies" would
+        # mean mutations on one bled into the other. Always clone.
+        return Document(deepcopy(self._doc_node))
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> Document:
+        return Document(deepcopy(self._doc_node, memo))
+
     @property
     def preamble(self) -> tuple[str, ...]:
         """Comment block at the top of the document.
