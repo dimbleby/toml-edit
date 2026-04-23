@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-line arrays.
 - Installing a sub-section under one AoT entry no longer silently deletes a
   sibling entry's same-named sub-section.
+- Cross-document assignment of a section-backed `Table` (e.g.
+  `dest[k] = src[k]`) now deep-clones the source's CST, so comments and
+  formatting survive and any nested array-of-tables is emitted as `[[..]]`
+  instead of crashing the inline-table synthesiser.
 
 ## [0.4.0] - 2026-04-23
 

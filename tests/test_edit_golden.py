@@ -364,6 +364,106 @@ def test_cross_doc_array_assign_deep_clones() -> None:
     assert _reparses(tomlrt.dumps(b))["ports"] == [80, 443]
 
 
+def test_cross_doc_table_assign_with_nested_aot() -> None:
+    """Cross-doc copy of a section that contains an AoT in its subtree.
+
+    Regression: previously the inline-table synthesiser bailed out with a
+    confusing "Cannot store an array-of-tables as an inline value" error,
+    even though the caller *was* assigning at the table-key level.
+    """
+    src = (
+        '[project]\nname = "foo"\n\n'
+        '[[tool.poetry.source]]\nname = "pypi"\n'
+        'url = "https://pypi.org/simple"\n\n'
+        '[build-system]\nrequires = ["poetry-core"]\n'
+    )
+    a = tomlrt.parse(src)
+    b = tomlrt.document()
+    for k, v in a.items():
+        b[k] = v
+    out = tomlrt.dumps(b)
+    # Logical content matches.
+    assert _reparses(out) == _reparses(src)
+    # The nested AoT lands as ``[[..]]`` rather than getting flattened
+    # to an inline table or raising.
+    assert "[[tool.poetry.source]]" in out
+    # Implicit super-tables stay implicit: no empty ``[tool]`` /
+    # ``[tool.poetry]`` headers polluting the output.
+    for line in out.splitlines():
+        stripped = line.strip()
+        assert stripped not in ("[tool]", "[tool.poetry]")
+    # And mutating the source must not bleed into the destination.
+    a_src = a["tool"]["poetry"]["source"]
+    assert isinstance(a_src, tomlrt.AoT)
+    a_src[0]["name"] = "MUT"
+    assert "MUT" not in tomlrt.dumps(b)
+
+
+def test_cross_doc_table_assign_preserves_comments() -> None:
+    """Cross-doc copy of a section preserves its comments and layout."""
+    src = '# top comment\n[srv]\n# inner\nhost = "a.example"\nport = 80\n'
+    a = tomlrt.parse(src)
+    b = tomlrt.document()
+    b["srv"] = a["srv"]
+    out = tomlrt.dumps(b)
+    assert "# inner" in out
+    assert 'host = "a.example"' in out
+
+
+def test_cross_doc_assign_whole_document() -> None:
+    """Assigning a whole ``Document`` as a value snapshots its full content.
+
+    Exercises the ``splen == 0`` branch in ``_clone_table_sections``: the
+    source's implicit pre-header entries must survive as dotted KVs under
+    the new host section, and any ``[X]`` / ``[[X]]`` sections must be
+    re-rooted under the destination key.
+    """
+    src = 'top = 1\nlit = "x"\n[s]\nx = 1\n[[a]]\nn = 1\n'
+    a = tomlrt.parse(src)
+    b = tomlrt.document()
+    b["wrap"] = a
+    out = tomlrt.dumps(b)
+    assert _reparses(out) == {
+        "wrap": {"top": 1, "lit": "x", "s": {"x": 1}, "a": [{"n": 1}]},
+    }
+    # Nested AoT survives as `[[..]]`, not flattened.
+    assert "[[wrap.a]]" in out
+
+
+def test_cross_doc_table_assign_dotted_kv_only_source() -> None:
+    """Source table backed solely by ancestor dotted KVs (no own header).
+
+    Exercises the ``host is None`` branch in ``_clone_table_sections``:
+    the source's contents live entirely as dotted KVs under an ancestor
+    section, so the cloned block has to synthesise a host section.
+    """
+    src = "[a]\nb.c = 1\nb.d = 2\n"
+    a = tomlrt.parse(src)
+    b = tomlrt.document()
+    inner = a["a"]["b"]
+    assert isinstance(inner, tomlrt.Table)
+    b["x"] = inner
+    out = tomlrt.dumps(b)
+    assert _reparses(out) == {"x": {"c": 1, "d": 2}}
+
+
+def test_cross_doc_table_assign_merges_dotted_and_own_section() -> None:
+    """Source has both a pre-header section and an own header at full_path.
+
+    Exercises the branch where ``host`` is a cloned own-section (rather
+    than a freshly synthesised one) into which extras must be merged.
+    Achievable via the ``Document``-as-value path: the implicit
+    pre-header entries become extras, while a top-level ``[k]`` section
+    in the source clones to the host at the destination's ``[k]``.
+    """
+    src = "pre = 1\n[k]\nx = 2\n"
+    a = tomlrt.parse(src)
+    b = tomlrt.document()
+    b["k"] = a
+    out = tomlrt.dumps(b)
+    assert _reparses(out) == {"k": {"pre": 1, "k": {"x": 2}}}
+
+
 def test_install_attached_aot_preserves_comments() -> None:
     # `install` and `__setitem__` should both deep-clone the source CST
     # when given an attached AoT from another document. The previous

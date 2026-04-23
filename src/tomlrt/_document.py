@@ -841,6 +841,85 @@ def _clone_aot_sections(
         yield cloned
 
 
+def _new_host_section(path: tuple[str, ...]) -> SectionNode:
+    """Synthesize an empty ``[path]`` section, ready to host dotted KVs."""
+    return SectionNode(
+        header=TableHeaderNode(
+            leading=Trivia(),
+            kind="table",
+            inner_pre=None,
+            key=_make_dotted_key(path),
+            inner_post=None,
+            trailing=None,
+            trailing_comment=None,
+            newline=NewlineNode("\n"),
+        ),
+        entries=[],
+    )
+
+
+def _clone_table_sections(
+    value: _StdTable,
+    full_path: tuple[str, ...],
+) -> list[SectionNode]:
+    """Deep-clone every CST section that contributes to ``value``, rebased.
+
+    The returned sections are independent of ``value._doc_node`` and have
+    their headers rewritten so the ``len(value._path)``-prefix is replaced
+    by ``full_path``. Surrounding placement is the caller's responsibility.
+
+    Two sources of contributing CST data are handled: sections at or below
+    ``value._path`` (cloned and re-keyed) and dotted KVs in ancestor
+    sections that extend into ``value._path`` (cloned into a host section
+    at ``full_path``, synthesised on demand). For a ``Document`` source
+    (``value._path == ()``) the implicit pre-header section's entries are
+    treated as ancestor extras, since :meth:`_compute_extras` returns
+    ``None`` in that case.
+    """
+    src_path = value._path  # noqa: SLF001
+    splen = len(src_path)
+    fplen = len(full_path)
+    doc = value._doc_node  # noqa: SLF001
+
+    src_scope = value._scope()  # noqa: SLF001
+    src_sections = src_scope if src_scope is not None else doc.sections
+
+    new_secs: list[SectionNode] = []
+    host: SectionNode | None = None  # the cloned section whose header == full_path
+    for sec in src_sections:
+        hdr = sec.header
+        if hdr is None or len(hdr.key.path) < splen or hdr.key.path[:splen] != src_path:
+            continue
+        cloned = deepcopy(sec)
+        assert cloned.header is not None
+        new_path = (*full_path, *hdr.key.path[splen:])
+        cloned.header.key = _make_dotted_key(new_path)
+        if cloned.header.kind == "table" and len(new_path) == fplen:
+            host = cloned
+        new_secs.append(cloned)
+
+    if splen == 0:
+        extras = [
+            (kv.key.path, kv)
+            for sec in doc.sections
+            if sec.header is None
+            for kv in sec.entries
+        ]
+    else:
+        extras = value._compute_extras() or []  # noqa: SLF001
+
+    if extras:
+        if host is None:
+            host = _new_host_section(full_path)
+            new_secs.insert(0, host)
+        for rel_path, kv in extras:
+            cloned_kv = deepcopy(kv)
+            cloned_kv.key = _make_dotted_key(rel_path)
+            host.entries.append(cloned_kv)
+
+    return new_secs
+
+
 def _insert_section_block(
     doc_node: DocumentNode,
     insert_at: int,
@@ -2170,6 +2249,23 @@ class _StdTable(Table):
         if isinstance(value, AoT):
             self._install_attached_aot((key,), value)
             return None
+        # Same for an attached section-backed Table: route to
+        # ``_install_section`` so the contents land as a ``[section]``
+        # block rather than getting flattened into an inline table.
+        # Without this, copying a section that contains an AoT (e.g.
+        # ``dest[k] = src[k]`` where ``src[k]`` holds ``[[..]]``
+        # entries somewhere in its subtree) blows up inside the
+        # inline-table synthesiser instead of doing the obvious thing.
+        if (
+            isinstance(value, _StdTable)
+            and value._attached  # noqa: SLF001
+            and not (
+                value._doc_node is self._doc_node  # noqa: SLF001
+                and value._path == (*self._path, key)  # noqa: SLF001
+            )
+        ):
+            self._install_attached_table((key,), value)
+            return None
 
         kind, payload = self._classify(key)
         if kind in ("direct", "extras"):
@@ -2499,6 +2595,21 @@ class _StdTable(Table):
             # through ``to_dict()`` here would silently strip all of that.
             self._install_attached_aot(parts, value)
             return
+        if (
+            isinstance(value, _StdTable)
+            and value._attached  # noqa: SLF001
+            and not (
+                value._doc_node is self._doc_node  # noqa: SLF001
+                and value._path == (*self._path, *parts)  # noqa: SLF001
+            )
+        ):
+            # Attached section-backed Table: deep-clone the source CST
+            # so comments and formatting survive, and so any nested AoT
+            # lands as ``[[..]]`` rather than crashing the inline-table
+            # synthesiser. Skip when the value is already installed at
+            # the target path (e.g. during ``deepcopy`` reconstruction).
+            self._install_attached_table(parts, value)
+            return
         if isinstance(value, Array) and not value._attached:  # noqa: SLF001
             # Standalone Arrays are specs: re-synthesise at the target
             # with the requested layout. Attached Arrays take the
@@ -2597,6 +2708,38 @@ class _StdTable(Table):
         self._install_at_path(parts, view)
         for k, v in value.items():
             view[k] = v
+        return view
+
+    def _install_attached_table(
+        self,
+        parts: tuple[str, ...],
+        value: _StdTable,
+    ) -> _StdTable:
+        """Deep-clone an attached source ``_StdTable`` into ``parts``.
+
+        Mirrors :meth:`_install_attached_aot` for the table case: deep-clones
+        the source's contributing CST sections (and any ancestor-section
+        dotted KVs) and rewrites their headers to the target prefix, so all
+        comments, formatting, and per-value layout survive the move.
+        Implicit super-tables in the source remain implicit in the target —
+        no empty intermediate ``[a]`` / ``[a.b]`` headers are emitted.
+
+        We snapshot the source CST *before* purging the destination slot so
+        same-document assignments where ``parts`` overlaps ``value._path``
+        (e.g. ``doc["a"] = doc["a"]["b"]``) still work.
+        """
+        full_path = (*self._path, *parts)
+        new_secs = _clone_table_sections(value, full_path)
+        _full_path, insert_at = self._prepare_section_slot(parts)
+        if new_secs:
+            _insert_section_block(
+                self._doc_node,
+                insert_at,
+                new_secs,
+                separate_within=False,
+            )
+        view = _StdTable(self._doc_node, full_path)
+        self._install_at_path(parts, view)
         return view
 
     def _install_at_path(self, parts: tuple[str, ...], obj: object) -> None:
