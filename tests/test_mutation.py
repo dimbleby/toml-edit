@@ -494,6 +494,97 @@ def test_aot_setitem_slice_validates_before_mutating() -> None:
     assert tomlrt.dumps(doc) == original
 
 
+def test_aot_iadd_appends_entries_to_cst() -> None:
+    doc = _aot_doc()
+    aot = doc.aot("pkg")
+    aot += [{"name": "d"}, {"name": "e"}]
+    rendered = tomlrt.dumps(doc)
+    assert _reparses(rendered)["pkg"] == [
+        {"name": "a", "dep": {"x": 1}},
+        {"name": "b"},
+        {"name": "c"},
+        {"name": "d"},
+        {"name": "e"},
+    ]
+
+
+def test_aot_imul_replicates_entries_in_cst() -> None:
+    doc = tomlrt.parse("[[t]]\nx = 1\n[[t]]\nx = 2\n")
+    aot = doc.aot("t")
+    aot *= 3
+    rendered = tomlrt.dumps(doc)
+    assert _reparses(rendered)["t"] == [
+        {"x": 1},
+        {"x": 2},
+        {"x": 1},
+        {"x": 2},
+        {"x": 1},
+        {"x": 2},
+    ]
+
+
+def test_aot_imul_zero_clears() -> None:
+    doc = tomlrt.parse("[[t]]\nx = 1\n[[t]]\nx = 2\n")
+    aot = doc.aot("t")
+    aot *= 0
+    assert "t" not in tomlrt.loads(tomlrt.dumps(doc))
+
+
+def test_aot_reverse_reorders_cst() -> None:
+    doc = tomlrt.parse("[[t]]\nx = 1\n[[t]]\nx = 2\n[[t]]\nx = 3\n")
+    aot = doc.aot("t")
+    aot.reverse()
+    assert _reparses(tomlrt.dumps(doc))["t"] == [{"x": 3}, {"x": 2}, {"x": 1}]
+
+
+def test_aot_sort_reorders_cst() -> None:
+    doc = tomlrt.parse("[[t]]\nx = 3\n[[t]]\nx = 1\n[[t]]\nx = 2\n")
+    aot = doc.aot("t")
+    aot.sort(key=lambda e: e["x"])
+    assert _reparses(tomlrt.dumps(doc))["t"] == [{"x": 1}, {"x": 2}, {"x": 3}]
+
+
+def test_aot_imul_preserves_inter_entry_separator() -> None:
+    src = "[[t]]\nx = 1  # one\n\n[[t]]\nx = 2  # two\n"
+    doc = tomlrt.parse(src)
+    doc.aot("t").__imul__(2)
+    assert tomlrt.dumps(doc) == (
+        "[[t]]\nx = 1  # one\n\n[[t]]\nx = 2  # two\n\n"
+        "[[t]]\nx = 1  # one\n\n[[t]]\nx = 2  # two\n"
+    )
+
+
+def test_aot_sort_preserves_formatting_byte_exact() -> None:
+    src = "[[t]]\nx = 3  # third\n\n[[t]]\nx = 1  # first\n\n[[t]]\nx = 2  # second\n"
+    doc = tomlrt.parse(src)
+    doc.aot("t").sort(key=lambda e: e["x"])
+    assert tomlrt.dumps(doc) == (
+        "[[t]]\nx = 1  # first\n\n[[t]]\nx = 2  # second\n\n[[t]]\nx = 3  # third\n"
+    )
+
+
+def test_aot_reverse_preserves_formatting_byte_exact() -> None:
+    src = '[[t]]\nname = "a"  # first\n\n[[t]]\nname = "b"  # second\n'
+    doc = tomlrt.parse(src)
+    doc.aot("t").reverse()
+    assert tomlrt.dumps(doc) == (
+        '[[t]]\nname = "b"  # second\n\n[[t]]\nname = "a"  # first\n'
+    )
+
+
+def test_aot_reverse_preserves_owned_subtables() -> None:
+    doc = tomlrt.parse(
+        '[[t]]\nname = "a"\n[t.sub]\ny = 1\n[[t]]\nname = "b"\n[t.sub]\ny = 2\n'
+    )
+    aot = doc.aot("t")
+    aot.reverse()
+    parsed = _reparses(tomlrt.dumps(doc))["t"]
+    assert parsed == [
+        {"name": "b", "sub": {"y": 2}},
+        {"name": "a", "sub": {"y": 1}},
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Array.sort(key=...), Array *= n, Array.table() type-error
 # ---------------------------------------------------------------------------

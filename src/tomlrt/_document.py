@@ -3345,6 +3345,33 @@ class AoT(list[Table]):
             and s.header.key.path == self._path
         ]
 
+    def _own_blocks(self) -> tuple[int, list[list[SectionNode]]]:
+        """Each entry's [header, *owned-subsections] block, plus splice index.
+
+        Reordering operations (reverse / sort) require entries to occupy a
+        contiguous run of ``_doc_node.sections``. If unrelated sections sit
+        between two entries this raises, since permuting blocks would change
+        the meaning of those interleaved sections.
+        """
+        own = self._own_sections()
+        if not own:
+            return 0, []
+        sections = self._doc_node.sections
+        blocks: list[list[SectionNode]] = [
+            [header, *self._doc_node.aot_owned_range(header)] for header in own
+        ]
+        start = _index_of(sections, blocks[0][0])
+        cursor = start
+        for block in blocks:
+            if sections[cursor] is not block[0]:
+                msg = (
+                    "cannot reorder AoT entries: unrelated sections are "
+                    "interleaved between entries"
+                )
+                raise RuntimeError(msg)
+            cursor += len(block)
+        return start, blocks
+
     def _resync(self) -> None:
         # Preserve identity for entries whose anchor section is unchanged.
         existing: dict[int, Table] = {}
@@ -3585,6 +3612,84 @@ class AoT(list[Table]):
         target = self[index]
         target.clear()
         target.update(value)
+
+    @override
+    def __iadd__(self, values: Iterable[Mapping[str, object]]) -> Self:  # type: ignore[override]
+        self.extend(values)
+        return self
+
+    @override
+    def __imul__(self, count: SupportsIndex) -> Self:
+        n = operator.index(count)
+        if n <= 0:
+            self.clear()
+            return self
+        if n == 1:
+            return self
+        start, blocks = self._own_blocks()
+        base: list[SectionNode] = [s for block in blocks for s in block]
+        # Use the second entry's leading (the natural inter-entry separator)
+        # at the boundary between repetitions, so doubling a doc with blank-line
+        # separators stays visually consistent.
+        inter_leading = self._block_leading(blocks[1]) if len(blocks) >= 2 else Trivia()
+        repeated = list(base)
+        for _ in range(n - 1):
+            copy_blocks: list[list[SectionNode]] = [
+                [deepcopy(s) for s in block] for block in blocks
+            ]
+            self._set_block_leading(copy_blocks[0], inter_leading)
+            repeated.extend(s for block in copy_blocks for s in block)
+        self._doc_node.sections[start : start + len(base)] = repeated
+        self._resync()
+        return self
+
+    @override
+    def reverse(self) -> None:
+        start, blocks = self._own_blocks()
+        if not blocks:
+            return
+        end = start + sum(len(b) for b in blocks)
+        leadings = [self._block_leading(b) for b in blocks]
+        blocks.reverse()
+        for block, leading in zip(blocks, leadings, strict=True):
+            self._set_block_leading(block, leading)
+        self._doc_node.sections[start:end] = [s for block in blocks for s in block]
+        self._resync()
+
+    @override
+    def sort(
+        self,
+        *,
+        key: Callable[[Table], object] | None = None,
+        reverse: bool = False,
+    ) -> None:
+        start, blocks = self._own_blocks()
+        if not blocks:
+            return
+        end = start + sum(len(b) for b in blocks)
+        leadings = [self._block_leading(b) for b in blocks]
+        pairs = list(zip(list(self), blocks, strict=True))
+        if key is None:
+            pairs.sort(key=lambda p: p[0], reverse=reverse)  # type: ignore[arg-type,return-value]
+        else:
+            pairs.sort(key=lambda p: key(p[0]), reverse=reverse)  # type: ignore[arg-type,return-value]
+        new_blocks = [block for _, block in pairs]
+        for block, leading in zip(new_blocks, leadings, strict=True):
+            self._set_block_leading(block, leading)
+        self._doc_node.sections[start:end] = [s for block in new_blocks for s in block]
+        self._resync()
+
+    @staticmethod
+    def _block_leading(block: list[SectionNode]) -> Trivia:
+        header = block[0].header
+        assert header is not None
+        return header.leading
+
+    @staticmethod
+    def _set_block_leading(block: list[SectionNode], leading: Trivia) -> None:
+        header = block[0].header
+        assert header is not None
+        header.leading = leading
 
 
 def _index_of(sections: list[SectionNode], target: SectionNode) -> int:
