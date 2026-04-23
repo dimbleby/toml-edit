@@ -183,6 +183,16 @@ def test_array_append() -> None:
     assert _reparses(out) == {"xs": [1, 2, 3, 4]}
 
 
+def test_array_append_to_empty_with_tab_indented_comment_preserves_tab() -> None:
+    # The only indent signal in the empty container is the tab before
+    # the comment line. Appending must reuse it instead of falling back
+    # to the four-space default.
+    doc = tomlrt.parse("a = [\n\t# hi\n]\n")
+    arr = doc.array("a")
+    arr.append(1)
+    assert tomlrt.dumps(doc) == "a = [\n\t# hi\n\t1,\n]\n"
+
+
 def test_array_pop() -> None:
     doc = tomlrt.parse("xs = [10, 20, 30]\n")
     xs = doc["xs"]
