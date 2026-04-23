@@ -64,6 +64,12 @@ def test_load_preserves_crlf_line_endings(tmp_path: Path) -> None:
     assert out.getvalue() == b"a = 1\r\nb = 2\r\n"
 
 
+def test_crlf_document_keeps_crlf_after_mutation() -> None:
+    doc = tomlrt.loads("a = 1\r\nb = 2\r\n")
+    doc["c"] = 3
+    assert tomlrt.dumps(doc) == "a = 1\r\nb = 2\r\nc = 3\r\n"
+
+
 def test_dump_writes_to_binary_stream() -> None:
     doc = tomlrt.parse("x = 1\n")
     out = io.BytesIO()
