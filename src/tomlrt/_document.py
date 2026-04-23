@@ -307,6 +307,32 @@ def _set_eol_comment(node: _HasEolComment, value: str | None) -> None:
         node.newline = NewlineNode("\n")
 
 
+def _trailing_comment_block_span(pieces: Sequence[TriviaPiece]) -> tuple[int, int]:
+    """Locate the trailing-comment block within ``pieces``.
+
+    Returns ``(start, end)`` such that ``pieces[start:end]`` is the
+    contiguous run of ``[WS] CommentNode NewlineNode`` triples
+    immediately preceding the trivia's anchoring whitespace, and
+    ``pieces[end:]`` is that anchor. Earlier comment lines that are
+    separated from the run by a blank line are excluded.
+    """
+    end = len(pieces)
+    while end > 0 and isinstance(pieces[end - 1], WhitespaceNode):
+        end -= 1
+    start = end
+    i = end
+    while i >= 2:
+        nl = pieces[i - 1]
+        cm = pieces[i - 2]
+        if not (isinstance(nl, NewlineNode) and isinstance(cm, CommentNode)):
+            break
+        i -= 2
+        if i > 0 and isinstance(pieces[i - 1], WhitespaceNode):
+            i -= 1
+        start = i
+    return start, end
+
+
 def _extract_trailing_comment_block(trivia: Trivia) -> tuple[str, ...]:
     """Return the contiguous run of comment lines at the *end* of ``trivia``.
 
@@ -316,22 +342,12 @@ def _extract_trailing_comment_block(trivia: Trivia) -> tuple[str, ...]:
     are separated from the run by a blank line are *not* included.
     """
     pieces = trivia.pieces
-    end = len(pieces)
-    while end > 0 and isinstance(pieces[end - 1], WhitespaceNode):
-        end -= 1
-    comments: list[str] = []
-    i = end
-    while i >= 2:
-        nl = pieces[i - 1]
-        cm = pieces[i - 2]
-        if not (isinstance(nl, NewlineNode) and isinstance(cm, CommentNode)):
-            break
-        comments.append(cm.text)
-        i -= 2
-        if i > 0 and isinstance(pieces[i - 1], WhitespaceNode):
-            i -= 1
-    comments.reverse()
-    return tuple(_strip_comment_marker(c) for c in comments)
+    start, end = _trailing_comment_block_span(pieces)
+    return tuple(
+        _strip_comment_marker(p.text)
+        for p in pieces[start:end]
+        if isinstance(p, CommentNode)
+    )
 
 
 def _replace_trailing_comment_block(
@@ -345,29 +361,14 @@ def _replace_trailing_comment_block(
     and the trailing whitespace anchor are preserved.
     """
     pieces = trivia.pieces
-    end = len(pieces)
-    tail_ws: list[TriviaPiece] = []
-    while end > 0 and isinstance(pieces[end - 1], WhitespaceNode):
-        tail_ws.insert(0, pieces[end - 1])
-        end -= 1
-    start = end
-    i = end
-    while i >= 2:
-        nl = pieces[i - 1]
-        cm = pieces[i - 2]
-        if not (isinstance(nl, NewlineNode) and isinstance(cm, CommentNode)):
-            break
-        i -= 2
-        if i > 0 and isinstance(pieces[i - 1], WhitespaceNode):
-            i -= 1
-        start = i
+    start, end = _trailing_comment_block_span(pieces)
     new_pieces: list[TriviaPiece] = []
     for line in lines:
         if indent:
             new_pieces.append(WhitespaceNode(indent))
         new_pieces.append(CommentNode(text=_format_comment(line)))
         new_pieces.append(NewlineNode("\n"))
-    trivia.pieces = list(pieces[:start]) + new_pieces + tail_ws
+    trivia.pieces = list(pieces[:start]) + new_pieces + list(pieces[end:])
 
 
 def _extract_eol_comment(trivia: Trivia) -> str | None:
@@ -827,19 +828,24 @@ def _insert_section_block(
     doc_node: DocumentNode,
     insert_at: int,
     new_secs: Sequence[SectionNode],
+    *,
+    separate_within: bool = True,
 ) -> None:
     """Splice a freshly-built block of ``[ ... ]`` / ``[[ ... ]]`` sections.
 
-    Entries are blank-separated from each other, and a blank line is
-    inserted before the block whenever ``sections[:insert_at]`` already
-    holds rendered content.
+    A blank line is inserted before the block whenever
+    ``sections[:insert_at]`` already holds rendered content. With
+    ``separate_within=True`` (the default) consecutive entries within
+    ``new_secs`` are also blank-separated; pass ``False`` when each
+    section already carries its own inter-header trivia (e.g. cloned
+    sections from another document).
     """
     sections = doc_node.sections
     preceding_has_content = any(
         s.header is not None or s.entries for s in sections[:insert_at]
     )
     for i, ns in enumerate(new_secs):
-        if i > 0 or preceding_has_content:
+        if (i == 0 and preceding_has_content) or (i > 0 and separate_within):
             assert ns.header is not None
             ns.header.leading.pieces.insert(0, NewlineNode("\n"))
     if new_secs and new_secs[0].header is not None:
@@ -2528,24 +2534,18 @@ class _StdTable(Table):
 
         Used by both ``__setitem__`` (single-segment key) and
         ``install`` (possibly dotted path). Cloned sections retain
-        their original inter-header trivia, so we splice them in
-        directly rather than via ``_insert_section_block`` (which
-        would add a redundant blank between consecutive entries).
+        their original inter-header trivia, so we let
+        ``_insert_section_block`` handle only the leading separation.
         """
         full_path, insert_at = self._prepare_section_slot(parts)
-        doc_node = self._doc_node
-        sections = doc_node.sections
-        preceding_has_content = any(
-            s.header is not None or s.entries for s in sections[:insert_at]
-        )
         new_secs = list(_clone_aot_sections(value, full_path))
-        for i, cloned in enumerate(new_secs):
-            assert cloned.header is not None
-            if i == 0 and preceding_has_content:
-                cloned.header.leading.pieces.insert(0, NewlineNode("\n"))
-            doc_node.adopt_preamble_into(cloned.header.leading)
-        sections[insert_at:insert_at] = new_secs
-        aot = AoT._attached_to(doc_node, full_path, [])  # noqa: SLF001
+        _insert_section_block(
+            self._doc_node,
+            insert_at,
+            new_secs,
+            separate_within=False,
+        )
+        aot = AoT._attached_to(self._doc_node, full_path, [])  # noqa: SLF001
         aot._resync()  # noqa: SLF001
         self._install_at_path(parts, aot)
         return aot
