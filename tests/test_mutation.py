@@ -461,6 +461,39 @@ def test_aot_delitem_slice_with_step() -> None:
     assert _reparses(tomlrt.dumps(doc)) == {"p": [{"n": 2}, {"n": 4}]}
 
 
+def test_aot_setitem_replaces_entry() -> None:
+    doc = _aot_doc()
+    aot = doc.aot("pkg")
+    aot[0] = {"new": True}
+    rendered = tomlrt.dumps(doc)
+    assert _reparses(rendered)["pkg"][0] == {"new": True}
+    assert len(doc.aot("pkg")) == 3
+
+
+def test_aot_setitem_negative_index() -> None:
+    doc = _aot_doc()
+    aot = doc.aot("pkg")
+    aot[-1] = {"replaced": True}
+    rendered = tomlrt.dumps(doc)
+    assert _reparses(rendered)["pkg"][-1] == {"replaced": True}
+
+
+def test_aot_setitem_out_of_range_raises() -> None:
+    doc = _aot_doc()
+    aot = doc.aot("pkg")
+    with pytest.raises(IndexError):
+        aot[99] = {"x": 1}
+
+
+def test_aot_setitem_slice_validates_before_mutating() -> None:
+    doc = _aot_doc()
+    original = tomlrt.dumps(doc)
+    aot = doc.aot("pkg")
+    with pytest.raises(TypeError):
+        aot[0:2] = [{"ok": True}, "not a mapping"]  # type: ignore[list-item]
+    assert tomlrt.dumps(doc) == original
+
+
 # ---------------------------------------------------------------------------
 # Array.sort(key=...), Array *= n, Array.table() type-error
 # ---------------------------------------------------------------------------
