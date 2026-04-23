@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lines between sections.
 - Deleting the first section in a document no longer leaves a stray blank
   line at the top of the rendered output.
+- Assigning `Table.section({})` and then a child section (e.g.
+  `doc[k] = Table.section({}); doc[k][c] = ...`) no longer leaves an
+  empty `[k]` header above the child.
 
 ## [0.4.0] - 2026-04-23
 

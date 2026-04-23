@@ -513,6 +513,42 @@ def test_delete_first_section_strips_top_blank() -> None:
     assert tomlrt.dumps(doc2) == "[a]\nx = 1\n\n[c]\nz = 3\n"
 
 
+def test_chained_supertable_assignment_drops_empty_parent() -> None:
+    """``doc[t] = Table.section({}); doc[t][c] = ...`` doesn't leave ``[t]``.
+
+    A synthesised empty parent header is redundant once a child section
+    gives it a ``[t.c]`` sibling — the parent table is implied by the
+    dotted child key. Mirrors the long-standing behaviour of
+    ``Document.install(("t", "c"), Table.section({}))``.
+    """
+    doc = tomlrt.document()
+    doc["tool"] = Table.section({})
+    doc["tool"]["poetry"] = Table.section({"name": "foo"})
+    assert tomlrt.dumps(doc) == '[tool.poetry]\nname = "foo"\n'
+
+    # Same behaviour with an AoT child.
+    doc2 = tomlrt.document()
+    doc2["tool"] = Table.section({})
+    doc2["tool"]["list"] = AoT([{"n": 1}])
+    assert tomlrt.dumps(doc2) == "[[tool.list]]\nn = 1\n"
+
+    # Non-empty parent must be preserved.
+    doc3 = tomlrt.document()
+    doc3["tool"] = Table.section({"extra": 1})
+    doc3["tool"]["poetry"] = Table.section({"name": "foo"})
+    assert tomlrt.dumps(doc3) == '[tool]\nextra = 1\n\n[tool.poetry]\nname = "foo"\n'
+
+    # Parser-authored empty header must be preserved.
+    doc4 = tomlrt.parse("[product]\n")
+    doc4.table("product")["variant"] = AoT([{"sku": "X"}])
+    assert tomlrt.dumps(doc4) == '[product]\n\n[[product.variant]]\nsku = "X"\n'
+
+    # An empty parent installed alone (no child) stays as the user wrote it.
+    doc5 = tomlrt.document()
+    doc5["tool"] = Table.section({})
+    assert tomlrt.dumps(doc5) == "[tool]\n"
+
+
 def test_install_attached_aot_preserves_comments() -> None:
     # `install` and `__setitem__` should both deep-clone the source CST
     # when given an attached AoT from another document. The previous

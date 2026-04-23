@@ -377,6 +377,12 @@ class TableHeaderNode:
 class SectionNode:
     header: TableHeaderNode | None
     entries: list[KeyValueNode] = field(default_factory=list)
+    synthesised_placeholder: bool = False
+    """True when the header was synthesised by an explicit empty
+    ``Table.section({})`` assignment. Such headers are dropped if a
+    child section later makes them redundant; user-authored empty
+    headers (parsed or installed via ``install``) are preserved.
+    """
 
     def render(self) -> str:
         head = self.header.render() if self.header is not None else ""
