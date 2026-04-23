@@ -2256,13 +2256,9 @@ class _StdTable(Table):
         # ``dest[k] = src[k]`` where ``src[k]`` holds ``[[..]]``
         # entries somewhere in its subtree) blows up inside the
         # inline-table synthesiser instead of doing the obvious thing.
-        if (
-            isinstance(value, _StdTable)
-            and value._attached  # noqa: SLF001
-            and not (
-                value._doc_node is self._doc_node  # noqa: SLF001
-                and value._path == (*self._path, key)  # noqa: SLF001
-            )
+        if isinstance(value, _StdTable) and not (
+            value._doc_node is self._doc_node  # noqa: SLF001
+            and value._path == (*self._path, key)  # noqa: SLF001
         ):
             self._install_attached_table((key,), value)
             return None
@@ -2595,16 +2591,12 @@ class _StdTable(Table):
             # through ``to_dict()`` here would silently strip all of that.
             self._install_attached_aot(parts, value)
             return
-        if (
-            isinstance(value, _StdTable)
-            and value._attached  # noqa: SLF001
-            and not (
-                value._doc_node is self._doc_node  # noqa: SLF001
-                and value._path == (*self._path, *parts)  # noqa: SLF001
-            )
+        if isinstance(value, _StdTable) and not (
+            value._doc_node is self._doc_node  # noqa: SLF001
+            and value._path == (*self._path, *parts)  # noqa: SLF001
         ):
-            # Attached section-backed Table: deep-clone the source CST
-            # so comments and formatting survive, and so any nested AoT
+            # Section-backed Table: deep-clone the source CST so
+            # comments and formatting survive, and so any nested AoT
             # lands as ``[[..]]`` rather than crashing the inline-table
             # synthesiser. Skip when the value is already installed at
             # the target path (e.g. during ``deepcopy`` reconstruction).

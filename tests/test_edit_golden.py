@@ -464,6 +464,26 @@ def test_cross_doc_table_assign_merges_dotted_and_own_section() -> None:
     assert _reparses(out) == {"k": {"pre": 1, "k": {"x": 2}}}
 
 
+def test_self_overlap_assign_replaces_with_child_block() -> None:
+    """``doc[k] = doc[k]["child"]`` lifts the child to a ``[k]`` block.
+
+    Regression: previously ``__setitem__`` cascaded a detach through
+    ``old``'s subtree before ``_set_value`` ran, clearing
+    ``value._attached`` on the in-flight value and dropping it through
+    the inline-table synth path. With a nested AoT in the subtree this
+    crashed; otherwise the section silently flattened to ``a = { ... }``.
+    """
+    doc = tomlrt.parse("[a]\nx = 1\n[a.b]\ny = 2\n[[a.b.list]]\nn = 1\n")
+    doc["a"] = doc["a"]["b"]
+    out = tomlrt.dumps(doc)
+    assert _reparses(out) == {"a": {"y": 2, "list": [{"n": 1}]}}
+    assert "[[a.list]]" in out
+    # And the simple (no-AoT) variant stays a section, not an inline table.
+    doc2 = tomlrt.parse("[a]\nx = 1\n[a.b]\ny = 2\n")
+    doc2["a"] = doc2["a"]["b"]
+    assert tomlrt.dumps(doc2).startswith("[a]\n")
+
+
 def test_install_attached_aot_preserves_comments() -> None:
     # `install` and `__setitem__` should both deep-clone the source CST
     # when given an attached AoT from another document. The previous
