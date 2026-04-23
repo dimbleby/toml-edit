@@ -3542,6 +3542,50 @@ class AoT(list[Table]):
         else:
             self.pop(index)
 
+    @overload
+    def __setitem__(
+        self, index: SupportsIndex, value: Mapping[str, object]
+    ) -> None: ...
+    @overload
+    def __setitem__(
+        self,
+        index: slice,
+        value: Iterable[Mapping[str, object]],
+    ) -> None: ...
+    @override
+    def __setitem__(
+        self,
+        index: SupportsIndex | slice,
+        value: Mapping[str, object] | Iterable[Mapping[str, object]],
+    ) -> None:
+        if isinstance(index, slice):
+            new_values: list[Any] = list(value)
+            for v in new_values:
+                if not isinstance(v, Mapping):
+                    msg = "AoT entry must be a mapping"
+                    raise TypeError(msg)
+            indices = range(*index.indices(len(self)))
+            if index.step not in (None, 1):
+                if len(new_values) != len(indices):
+                    msg = (
+                        f"attempt to assign sequence of size {len(new_values)} "
+                        f"to extended slice of size {len(indices)}"
+                    )
+                    raise ValueError(msg)
+                for i, v in zip(indices, new_values, strict=True):
+                    self[i] = v
+                return
+            del self[index]
+            for offset, v in enumerate(new_values):
+                self.insert(indices.start + offset, v)
+            return
+        if not isinstance(value, Mapping):
+            msg = "AoT entry must be a mapping"
+            raise TypeError(msg)
+        target = self[index]
+        target.clear()
+        target.update(value)
+
 
 def _index_of(sections: list[SectionNode], target: SectionNode) -> int:
     for i, s in enumerate(sections):
