@@ -245,12 +245,19 @@ def _format_comment(text: str) -> str:
     """Format user text as the payload for a :class:`CommentNode`.
 
     Adds a leading ``#`` plus a space (unless the user already supplied
-    one). Raises :class:`TOMLError` if ``text`` contains any line
-    terminator, since comments are single-line by definition.
+    one). Raises :class:`TOMLError` if ``text`` contains any character
+    the TOML parser would reject in a comment: comments are single-line
+    by definition, and the only control character permitted (besides
+    line terminators which end them) is TAB.
     """
-    if "\n" in text or "\r" in text:
-        msg = "comment text must not contain a line terminator"
-        raise TOMLError(msg)
+    for ch in text:
+        cp = ord(ch)
+        if ch in ("\n", "\r"):
+            msg = "comment text must not contain a line terminator"
+            raise TOMLError(msg)
+        if (cp <= 0x1F and ch != "\t") or cp == 0x7F:
+            msg = f"comment text must not contain control character U+{cp:04X}"
+            raise TOMLError(msg)
     if text.startswith("#"):
         return text
     if text == "":

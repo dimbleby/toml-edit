@@ -105,6 +105,25 @@ def test_set_eol_comment_rejects_newline() -> None:
         doc.comments["a"] = "no\nway"
 
 
+@pytest.mark.parametrize("ch", ["\x00", "\x01", "\x1f", "\x0b", "\x0c", "\x7f"])
+def test_set_eol_comment_rejects_other_control_chars(ch: str) -> None:
+    # Comments may only contain TAB among the control characters; any
+    # other control char would be rejected by the parser on round-trip.
+    # The setter must refuse them up front rather than silently produce
+    # output that no longer reparses.
+    doc = tomlrt.parse("a = 1\n")
+    with pytest.raises(tomlrt.TOMLError):
+        doc.comments["a"] = f"bad{ch}stuff"
+
+
+def test_set_eol_comment_allows_tab() -> None:
+    doc = tomlrt.parse("a = 1\n")
+    doc.comments["a"] = "with\ttab"
+    out = tomlrt.dumps(doc)
+    # round-trips cleanly
+    assert tomlrt.loads(out)["a"] == 1
+
+
 def test_set_leading_comments_replaces_block() -> None:
     src = "# old comment\nname = 1\n"
     doc = tomlrt.parse(src)
