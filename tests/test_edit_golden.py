@@ -259,6 +259,25 @@ def test_aot_entry_sub_section_modify_value() -> None:
     }
 
 
+def test_aot_entry_install_subsection_does_not_overwrite_sibling() -> None:
+    """Regression: installing [pkg.dependencies] on a 2nd AoT entry used to
+    silently delete the 1st entry's same-named sub-section."""
+    doc = tomlrt.loads("")
+    doc["package"] = tomlrt.AoT()
+    e1 = doc["package"].add({"name": "foo"})
+    e1["dependencies"] = tomlrt.Table.section({"req-foo": ">=1"})
+    e2 = doc["package"].add({"name": "bar"})
+    e2["dependencies"] = tomlrt.Table.section({"req-bar": ">=1"})
+    out = tomlrt.dumps(doc)
+    assert out == (
+        '[[package]]\nname = "foo"\n\n'
+        '[package.dependencies]\nreq-foo = ">=1"\n\n'
+        '[[package]]\nname = "bar"\n\n'
+        '[package.dependencies]\nreq-bar = ">=1"\n'
+    )
+    assert tomlrt.dumps(tomlrt.loads(out)) == out
+
+
 # ---------------------------------------------------------------------------
 # Inline tables and arrays — round-trip edits
 # ---------------------------------------------------------------------------
