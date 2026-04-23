@@ -943,7 +943,10 @@ def _insert_section_block(
     for i, ns in enumerate(new_secs):
         if (i == 0 and preceding_has_content) or (i > 0 and separate_within):
             assert ns.header is not None
-            ns.header.leading.pieces.insert(0, NewlineNode("\n"))
+            pieces = ns.header.leading.pieces
+            # Already starts with a blank line — don't double it up.
+            if not (pieces and isinstance(pieces[0], NewlineNode)):
+                pieces.insert(0, NewlineNode("\n"))
     if new_secs and new_secs[0].header is not None:
         doc_node.adopt_preamble_into(new_secs[0].header.leading)
     sections[insert_at:insert_at] = new_secs
