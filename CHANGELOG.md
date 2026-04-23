@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   contains an array-of-tables) or silently flattening to an inline table.
 - Sequential cross-document section copies no longer produce doubled blank
   lines between sections.
+- Deleting the first section in a document no longer leaves a stray blank
+  line at the top of the rendered output.
 
 ## [0.4.0] - 2026-04-23
 

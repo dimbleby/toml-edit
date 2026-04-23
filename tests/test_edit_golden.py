@@ -497,6 +497,22 @@ def test_cross_doc_splice_no_doubled_blank_lines() -> None:
     assert tomlrt.dumps(dst) == "[a]\nx = 1\n\n[b]\ny = 2\n"
 
 
+def test_delete_first_section_strips_top_blank() -> None:
+    """``del doc[k]`` (where ``[k]`` was first) doesn't leave a stray blank.
+
+    The successor section's leading blank-line trivia was a separator
+    from the now-removed first section; after removal it must not show
+    up as a top-of-file blank line.
+    """
+    doc = tomlrt.parse("[a]\nx = 1\n\n[b]\ny = 2\n")
+    del doc["a"]
+    assert tomlrt.dumps(doc) == "[b]\ny = 2\n"
+    # Deleting a middle section preserves separation between survivors.
+    doc2 = tomlrt.parse("[a]\nx = 1\n\n[b]\ny = 2\n\n[c]\nz = 3\n")
+    del doc2["b"]
+    assert tomlrt.dumps(doc2) == "[a]\nx = 1\n\n[c]\nz = 3\n"
+
+
 def test_install_attached_aot_preserves_comments() -> None:
     # `install` and `__setitem__` should both deep-clone the source CST
     # when given an attached AoT from another document. The previous

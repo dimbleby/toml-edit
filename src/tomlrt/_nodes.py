@@ -475,6 +475,25 @@ class DocumentNode:
             sec.entries[:] = [
                 kv for kv in sec.entries if kv.key.path[0] != conflict_key
             ]
+        self.normalise_top_blank()
+
+    def normalise_top_blank(self) -> None:
+        """Strip leading blank-line trivia from the very first header section.
+
+        A leading ``NewlineNode`` on a header's trivia means "blank line
+        separating this section from preceding content"; if there is no
+        such content (e.g. the prior section was deleted), the blank is
+        meaningless and would render as a stray top-of-file blank line.
+        """
+        for sec in self.sections:
+            if sec.header is None:
+                if sec.entries:
+                    return
+                continue
+            pieces = sec.header.leading.pieces
+            while pieces and isinstance(pieces[0], NewlineNode):
+                pieces.pop(0)
+            return
 
     def aot_owned_range(self, aot_sec: SectionNode) -> list[SectionNode]:
         """Sections owned by this AoT entry.
