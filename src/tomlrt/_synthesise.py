@@ -71,7 +71,12 @@ def _escape_basic_string(s: str) -> str:
 
 def make_key_part(name: str) -> KeyPart:
     """Build a single :class:`KeyPart`, quoting if the name is not bare-safe."""
-    if not name:
+    if not isinstance(name, str):
+        msg = (  # type: ignore[unreachable]
+            f"TOML keys must be str, not {type(name).__name__}"
+        )
+        raise TypeError(msg)
+    if name == "":
         # empty bare keys are forbidden; emit "" basic string
         return KeyPart(raw='""', value="", kind="basic")
     if _BARE_KEY_RE.match(name):
