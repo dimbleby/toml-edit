@@ -122,6 +122,51 @@ def _materialise_array(node: ArrayNode) -> list[TomlValue]:
     return [_value_for(item.value) for item in node.items]
 
 
+def _walk_newline_nodes(node: object) -> Iterator[NewlineNode]:
+    """Yield every :class:`NewlineNode` reachable from ``node``.
+
+    Used to detect and normalise the document-wide line ending. Walks
+    through dataclass fields and lists; ignores other primitives.
+    """
+    stack: list[object] = [node]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, NewlineNode):
+            yield current
+        elif isinstance(current, list):
+            stack.extend(current)
+        elif hasattr(current, "__dataclass_fields__"):
+            stack.extend(
+                getattr(current, name) for name in current.__dataclass_fields__
+            )
+
+
+def _detect_newline(node: DocumentNode) -> str:
+    """Return the document's line ending if uniform, else ``"\\n"``.
+
+    Returns ``"\\r\\n"`` only when every :class:`NewlineNode` in the
+    CST already uses CRLF; mixed or pure-LF documents return
+    ``"\\n"``. The CRLF case enables ``Document.render`` to convert
+    newly-synthesised ``"\\n"`` newlines to match the source. We
+    deliberately leave mixed-newline documents alone — normalising
+    them either way would break the no-mutation round-trip
+    invariant.
+    """
+    saw_any = False
+    for nl in _walk_newline_nodes(node):
+        saw_any = True
+        if nl.text != "\r\n":
+            return "\n"
+    return "\r\n" if saw_any else "\n"
+
+
+def _normalise_newlines(node: DocumentNode, target: str) -> None:
+    """Set every :class:`NewlineNode` in ``node`` to ``target``."""
+    for nl in _walk_newline_nodes(node):
+        if nl.text != target:
+            nl.text = target
+
+
 def _detect_indent(section: SectionNode) -> str:
     """Return the leading-whitespace indent used by the section's last entry."""
     if not section.entries:
@@ -2453,7 +2498,7 @@ class _StdTable(Table):
 class Document(_StdTable):
     """Top-level TOML document. Subclass of :class:`Table`."""
 
-    __slots__ = ()
+    __slots__ = ("_newline",)
 
     def __init__(self, node: DocumentNode) -> None:
         # Hand the construction walk the full section list and an
@@ -2461,6 +2506,7 @@ class Document(_StdTable):
         # by head as it descends, so each nested ``_StdTable`` only
         # sees its own slice of the document — no per-level rescans.
         super().__init__(node, (), _pool=node.sections, _extras=[])
+        self._newline = _detect_newline(node)
 
     @property
     def cst(self) -> DocumentNode:
@@ -2473,6 +2519,8 @@ class Document(_StdTable):
         return self._doc_node
 
     def render(self) -> str:
+        if self._newline != "\n":
+            _normalise_newlines(self._doc_node, self._newline)
         return self._doc_node.render()
 
     @property
