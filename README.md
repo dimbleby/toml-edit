@@ -24,9 +24,9 @@ print(tomlrt.dumps(doc))   # comments and layout are preserved
 
 ### Structural assignment
 
-A plain `dict` value installs as an inline table; a plain `list`
-installs as an inline array. To pick a different shape, assign a
-flavoured value:
+A plain `dict` value installs as an inline table; a plain `list` installs as an
+inline array.
+To pick a different shape, assign a flavoured value:
 
 ```python
 from tomlrt import AoT, Array, Table
@@ -37,10 +37,10 @@ doc["pkgs"] = AoT([{"a": 1}, {"b": 2}])          # [[pkgs]] … [[pkgs]]
 doc["tags"] = Array(["a", "b"], multiline=True)  # multi-line array
 ```
 
-Use `doc.install(path, value)` for dotted-path placement. Plain
-`doc["a.b"] = …` always treats `"a.b"` as a *single literal key*, so
-`install` is the way to descend through `a` into `b`. Pass a tuple
-when one of the segments itself contains a literal `.`:
+Use `doc.install(path, value)` for dotted-path placement.
+Plain `doc["a.b"] = …` always treats `"a.b"` as a _single literal key_, so
+`install` is the way to descend through `a` into `b`.
+Pass a tuple when one of the segments itself contains a literal `.`:
 
 ```python
 doc.install("tool.poetry.version", "0.1.0")            # [tool.poetry] version = "0.1.0"
