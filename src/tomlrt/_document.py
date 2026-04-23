@@ -951,13 +951,13 @@ class Table(dict[str, Any]):
         path: str | tuple[str, ...],
         value: object,
     ) -> Any:
-        """Install a flavour-bearing ``value`` at ``path``.
+        """Install ``value`` at ``path``, descending dotted segments.
 
         ``path`` accepts a dotted string (split on ``.``) or a tuple
-        of literal segments (use the tuple form to express a single
-        segment containing a literal dot, e.g. ``("foo.bar",)``).
+        of literal segments (use the tuple form to express a segment
+        containing a literal dot, e.g. ``("foo.bar",)``).
 
-        ``value`` should be one of:
+        ``value`` may be any of:
 
         * a spec from :meth:`Table.section` — installs a
           ``[...]`` standard section;
@@ -965,7 +965,11 @@ class Table(dict[str, Any]):
           ``[[...]]`` array-of-tables entries;
         * an :class:`Array` built standalone (``Array([...],
           multiline=...)``) — installs an inline array with the
-          requested layout.
+          requested layout;
+        * any plain Python value (scalar, ``dict``, ``list``) —
+          assigned at the leaf with ordinary ``__setitem__`` semantics
+          (so a leaf ``dict`` becomes an inline table, a leaf ``list``
+          becomes an inline array).
 
         Existing values at ``path`` (including sub-sections) are
         replaced. Implicit intermediate tables are left implicit, so
@@ -973,7 +977,7 @@ class Table(dict[str, Any]):
         single ``[tool.poetry]`` header, not a ``[tool]`` + nested.
 
         Returns the freshly-installed live view (:class:`Table`,
-        :class:`AoT`, or :class:`Array`) for further mutation.
+        :class:`AoT`, :class:`Array`) or the leaf value.
         """
         parts = _parse_key_path(path)
         self._install_flavoured(parts, value)
