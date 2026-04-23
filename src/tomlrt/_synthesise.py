@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Mapping
 from copy import deepcopy
 from datetime import date, datetime, time
 from typing import TYPE_CHECKING
@@ -35,7 +36,7 @@ from tomlrt._nodes import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping
+    from collections.abc import Iterable
 
     from tomlrt._document import TomlValue
     from tomlrt._nodes import DateLikeKind, ValueNode
@@ -181,11 +182,15 @@ def value_to_node(value: object) -> ValueNode:
     """Convert a logical value to a fresh :class:`ValueNode`.
 
     Containers already backed by a CST are deep-cloned so the new node
-    is independent of the source. Plain :class:`list` and :class:`dict`
-    values are accepted in addition to the typed :class:`TomlValue`
-    union.
+    is independent of the source. Any :class:`Mapping` (including
+    :class:`dict` and ``MappingProxyType``) becomes an inline table;
+    a plain :class:`list` becomes an inline array. Tuples and other
+    non-list sequences are deliberately not accepted: ``Sequence``
+    would also match ``str`` / ``bytes`` / ``range`` and so requires
+    case-by-case carve-outs, while ``Mapping`` has no such landmines.
+    Callers who want to assign a tuple should call ``list(...)`` first.
     """
-    # Local imports avoid a circular dependency.
+    # Local import avoids a circular dependency with _document.
     from tomlrt._document import AoT, Array, Table  # noqa: PLC0415
 
     if isinstance(value, Array):
@@ -216,7 +221,7 @@ def value_to_node(value: object) -> ValueNode:
         return _datetime_to_node(value)
     if isinstance(value, list):
         return _list_to_array_node(value)
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         return _mapping_to_inline_table_node(value)
     msg = f"Cannot convert value of type {type(value).__name__} to TOML"
     raise TypeError(msg)
