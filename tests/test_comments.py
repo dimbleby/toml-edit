@@ -238,8 +238,11 @@ def test_inline_promotion_inserts_after_parent_block() -> None:
     parent = doc["parent"]
     assert isinstance(parent, tomlrt.Table)
     parent.promote_inline("pkg")
+    # A blank line separates the parent's direct entries from the
+    # promoted child header, matching ``promote_array`` and other
+    # section-installing operations.
     assert tomlrt.dumps(doc) == (
-        "[parent]\na = 1\n[parent.pkg]\nx = 10\n[other]\nb = 2\n"
+        "[parent]\na = 1\n\n[parent.pkg]\nx = 10\n[other]\nb = 2\n"
     )
 
 
