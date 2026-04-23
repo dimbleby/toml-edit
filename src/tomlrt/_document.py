@@ -2481,18 +2481,12 @@ class _StdTable(Table):
             self._install_section(parts, value)
             return
         if isinstance(value, AoT):
-            if value._attached:  # noqa: SLF001
-                # Deep-clone the source CST so comments and formatting
-                # survive — same code path used by ``__setitem__`` for
-                # an attached AoT. Without this, ``install`` would
-                # silently strip everything by routing through
-                # ``to_dict()``.
-                self._install_attached_aot(parts, value)
-                return
-            # Snapshot entries as plain dicts so the target is fully
-            # independent of the source standalone spec.
-            entries = [t.to_dict() for t in value]
-            self._install_aot(parts, entries)
+            # Both attached and detached AoTs have a backing CST: deep-clone
+            # the source sections so comments, formatting, and per-value
+            # layout (e.g. multiline arrays set on entries before the AoT
+            # was installed) survive the move. Routing detached AoTs
+            # through ``to_dict()`` here would silently strip all of that.
+            self._install_attached_aot(parts, value)
             return
         if isinstance(value, Array) and not value._attached:  # noqa: SLF001
             # Standalone Arrays are specs: re-synthesise at the target

@@ -1070,6 +1070,27 @@ def test_set_array_round_trips() -> None:
     assert tomlrt.dumps(tomlrt.loads(rendered)) == rendered
 
 
+def test_detached_aot_preserves_entry_array_multiline_layout() -> None:
+    """Regression: detached AoT used to lose multiline layout on install."""
+    doc = tomlrt.loads("")
+    aot = tomlrt.AoT()
+    pkg = aot.add({"name": "foo"})
+    pkg["files"] = Array([1, 2, 3], multiline=True)
+    doc["package"] = aot
+    assert tomlrt.dumps(doc) == (
+        '[[package]]\nname = "foo"\nfiles = [\n    1,\n    2,\n    3,\n]\n'
+    )
+
+
+def test_install_detached_aot_preserves_entry_array_multiline_layout() -> None:
+    doc = tomlrt.loads("")
+    aot = tomlrt.AoT()
+    pkg = aot.add({"name": "bar"})
+    pkg["files"] = Array([1, 2], multiline=True, indent="  ")
+    doc.install("pkgs", aot)
+    assert tomlrt.dumps(doc) == ('[[pkgs]]\nname = "bar"\nfiles = [\n  1,\n  2,\n]\n')
+
+
 def test_assign_over_aot_keeps_dict_view_in_sync() -> None:
     """Regression: the dict view used to keep a stale AoT after an assign."""
     src = '[tool]\n\n[[tool.source]]\nname = "foo"\n'
