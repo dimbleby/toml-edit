@@ -11,9 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A wide range of round-trip, comment-preservation, and structural
   mutation bugs across tables, arrays-of-tables, and multi-line
-  arrays. Several internal helpers were unified along the way to
-  remove the parallel-but-divergent code paths the bugs were
-  hiding in.
+  arrays.
 
 ## [0.4.0] - 2026-04-23
 
