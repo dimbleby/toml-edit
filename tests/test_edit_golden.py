@@ -513,6 +513,45 @@ def test_delete_first_section_strips_top_blank() -> None:
     assert tomlrt.dumps(doc2) == "[a]\nx = 1\n\n[c]\nz = 3\n"
 
 
+def test_delete_first_aot_entry_strips_top_blank() -> None:
+    """Removing the first ``[[t]]`` entry must not leave a stray top blank.
+
+    Same shape as :func:`test_delete_first_section_strips_top_blank`,
+    but driven through the AoT mutation API. The successor entry's
+    header carries a blank-line separator from its previous neighbour;
+    once that neighbour is gone the blank renders as a top-of-file
+    artefact unless the removal path normalises it.
+    """
+    src = "[[items]]\nn = 1\n\n[[items]]\nn = 2\n"
+    expected = "[[items]]\nn = 2\n"
+
+    doc = tomlrt.parse(src)
+    del doc.aot("items")[0]
+    assert tomlrt.dumps(doc) == expected
+
+    doc = tomlrt.parse(src)
+    doc.aot("items").pop(0)
+    assert tomlrt.dumps(doc) == expected
+
+    doc = tomlrt.parse(src)
+    aot = doc.aot("items")
+    aot.remove(aot[0])
+    assert tomlrt.dumps(doc) == expected
+
+    doc = tomlrt.parse(src)
+    del doc.aot("items")[:1]
+    assert tomlrt.dumps(doc) == expected
+
+    # Owned sub-sections of the popped entry are removed too, and the
+    # next entry — now first in the document — must still render
+    # flush against the top.
+    doc = tomlrt.parse(
+        "[[items]]\nn = 1\n[items.sub]\nv = 1\n\n[[items]]\nn = 2\n",
+    )
+    doc.aot("items").pop(0)
+    assert tomlrt.dumps(doc) == "[[items]]\nn = 2\n"
+
+
 def test_chained_supertable_assignment_drops_empty_parent() -> None:
     """``doc[t] = Table.section({}); doc[t][c] = ...`` doesn't leave ``[t]``.
 
