@@ -440,6 +440,61 @@ def _replace_eol_comment(
     trivia.pieces = new_prefix + rest
 
 
+def _split_pct_eol(pieces: Sequence[TriviaPiece]) -> int:
+    """Return the index after the EOL-comment prefix of a ``post_comma_trivia``.
+
+    A pct value's EOL portion is ``[WS]? Comment [NL]?`` at index 0 — that
+    is, the previous item's end-of-line comment, on the same source line
+    as the comma. Returns ``0`` if there is no EOL comment.
+
+    Use this to clip ``[WS] Comment NL``-walking helpers (notably
+    :func:`_trailing_comment_block_span`) so they don't backtrack into
+    the EOL line and confuse it with a ``leading_comments[i]`` entry.
+    """
+    ws_end = 1 if pieces and isinstance(pieces[0], WhitespaceNode) else 0
+    if ws_end < len(pieces) and isinstance(pieces[ws_end], CommentNode):
+        end = ws_end + 1
+        if end < len(pieces) and isinstance(pieces[end], NewlineNode):
+            end += 1
+        return end
+    return 0
+
+
+def _extract_pct_leading_block(pct: Trivia) -> tuple[str, ...]:
+    """``leading_comments[i]`` (for ``i > 0``) extracted from ``items[i-1].pct``.
+
+    Skips the EOL-comment prefix that belongs to ``items[i-1]`` itself.
+    """
+    pieces = pct.pieces
+    eol_end = _split_pct_eol(pieces)
+    sub = pieces[eol_end:]
+    start, end = _trailing_comment_block_span(sub)
+    return tuple(
+        _strip_comment_marker(p.text)
+        for p in sub[start:end]
+        if isinstance(p, CommentNode)
+    )
+
+
+def _replace_pct_leading_block(
+    pct: Trivia,
+    lines: Sequence[str],
+    indent: str,
+) -> None:
+    """Replace the post-EOL trailing comment block in ``pct``.
+
+    Preserves the EOL-comment prefix (which belongs to the previous
+    item) and the trivia's anchoring whitespace.
+    """
+    _validate_comment_lines(lines)
+    pieces = pct.pieces
+    eol_end = _split_pct_eol(pieces)
+    sub = list(pieces[eol_end:])
+    sub_trivia = Trivia(sub)
+    _replace_trailing_comment_block(sub_trivia, lines, indent)
+    pct.pieces = list(pieces[:eol_end]) + sub_trivia.pieces
+
+
 def _is_pure_whitespace(t: Trivia) -> bool:
     """True iff trivia contains only whitespace/newline pieces (no comments)."""
     pieces = t.pieces
@@ -536,6 +591,83 @@ def _derive_close_pad(inter: Trivia) -> Trivia:
     if "\n" in inter.render():
         return Trivia([NewlineNode("\n")])
     return Trivia()
+
+
+def _leading0_is_header(leading: Trivia) -> bool:
+    """True iff ``items[0].leading`` is a "header" comment stuck to ``[``.
+
+    A header comment sits on the same source line as the container's
+    opening bracket (no newline before it). It logically belongs to the
+    container header / ``open_pad``, not to ``leading_comments[0]``.
+    Snapshot/restore must leave it alone so that reorder operations
+    don't accidentally re-attach it to a moved item.
+    """
+    pieces = leading.pieces
+    if not any(isinstance(p, CommentNode) for p in pieces):
+        return False
+    return not isinstance(pieces[0], NewlineNode)
+
+
+def _snapshot_item_leadings(items: Sequence[_Separated]) -> list[tuple[str, ...]]:
+    """Capture per-item leading-comment blocks in their *logical* positions.
+
+    The on-disk encoding splits leading-comment blocks across two slots:
+    item 0's block lives in ``items[0].leading``, while item *i*'s block
+    (for ``i > 0``) lives at the tail of ``items[i-1].post_comma_trivia``,
+    AFTER any EOL-comment prefix that belongs to item *i-1* itself.
+    Reordering ``items`` (sort, reverse, insert, pop) detaches each
+    block from its logical owner. Snapshot before reorder, transform the
+    parallel list alongside ``items``, then re-encode with
+    :func:`_write_item_leadings`.
+
+    A comment "stuck" to the container's opening bracket (no newline
+    before it) is treated as part of the container header / ``open_pad``
+    rather than as ``leadings[0]``: snapshot returns ``()`` for it and
+    write leaves it alone, so it stays anchored to ``[`` across reorder.
+    """
+    if not items:
+        return []
+    leading0_block = (
+        ()
+        if _leading0_is_header(items[0].leading)
+        else _extract_trailing_comment_block(items[0].leading)
+    )
+    out = [leading0_block]
+    out.extend(
+        _extract_pct_leading_block(items[i - 1].post_comma_trivia)
+        for i in range(1, len(items))
+    )
+    return out
+
+
+def _write_item_leadings(
+    items: Sequence[_Separated],
+    leadings: Sequence[Sequence[str]],
+) -> None:
+    """Re-encode per-item leading-comment blocks into their canonical slots.
+
+    Inverse of :func:`_snapshot_item_leadings`: writes ``leadings[i]`` to
+    ``items[0].leading`` for ``i == 0``, or to the post-EOL tail of
+    ``items[i-1].post_comma_trivia`` for ``i > 0`` (preserving any
+    EOL-comment prefix and indent anchor). Also clears any stale
+    leading-of-next residue from the *last* item's pct, since there is
+    no logical owner for it once the item sits at the end.
+
+    A header comment stuck to ``[`` is left alone (open_pad already
+    carries it).
+    """
+    if not items:
+        return
+    if not _leading0_is_header(items[0].leading):
+        indent0 = _indent_after_last_newline(items[0].leading)
+        _replace_trailing_comment_block(items[0].leading, leadings[0], indent0)
+    for i in range(1, len(items)):
+        slot = items[i - 1].post_comma_trivia
+        ind = _indent_after_last_newline(slot)
+        _replace_pct_leading_block(slot, leadings[i], ind)
+    last_slot = items[-1].post_comma_trivia
+    last_ind = _indent_after_last_newline(last_slot)
+    _replace_pct_leading_block(last_slot, (), last_ind)
 
 
 def _sample_separator_style(
@@ -700,17 +832,13 @@ def _apply_separator_style(
         return
     items[0].leading = _clone_trivia(style.open_pad)
     for it in items[1:]:
-        # items[i>0].leading should be empty: inter-item content,
-        # including comments, lives in items[i-1].post_comma_trivia.
-        # Anything here is a stale residue from the item's previous
-        # position under mutation -- pure-whitespace from a former
-        # indent, or a leading-comment block that duplicates a header
-        # captured by open_pad. Either way, clear it.
-        if (
-            _is_pure_whitespace(it.leading)
-            or _scan_leading_comment_run(it.leading.pieces)[0]
-        ):
-            it.leading = Trivia()
+        # items[i>0].leading must be empty: inter-item content (comments
+        # included) is encoded at the tail of items[i-1].post_comma_trivia.
+        # Anything found here is stale residue from a previous position
+        # under reorder/insert/pop. Reorder operations snapshot the
+        # logical leadings via _snapshot_item_leadings beforehand and
+        # restore them via _write_item_leadings afterwards.
+        it.leading = Trivia()
     container.final_trivia = Trivia()
     inter_render = style.inter_separator.render()
     inter_indent = _indent_after_last_newline(style.inter_separator)
@@ -3332,16 +3460,43 @@ class _ArrayLeadingCommentsView(MutableMapping[int, "tuple[str, ...]"]):
     def _check_index(self, key: object) -> int:
         return _array_index_or_raise(self._array, key, "leading_comments")
 
-    def _trivia_for(self, i: int) -> Trivia:
+    def _read(self, i: int) -> tuple[str, ...]:
         items = self._array._node.items  # noqa: SLF001
         if i == 0:
-            return items[0].leading
-        return items[i - 1].post_comma_trivia
+            return _extract_trailing_comment_block(items[0].leading)
+        return _extract_pct_leading_block(items[i - 1].post_comma_trivia)
+
+    def _write(self, i: int, value: Sequence[str]) -> None:
+        items = self._array._node.items  # noqa: SLF001
+        indent = _array_indent(self._array._node)  # noqa: SLF001
+        if i == 0:
+            trivia = items[0].leading
+            if value and not any(isinstance(p, NewlineNode) for p in trivia.pieces):
+                while trivia.pieces and isinstance(
+                    trivia.pieces[-1],
+                    WhitespaceNode,
+                ):
+                    trivia.pieces.pop()
+                trivia.pieces.append(NewlineNode("\n"))
+                if indent:
+                    trivia.pieces.append(WhitespaceNode(indent))
+            _replace_trailing_comment_block(trivia, value, indent)
+            return
+        slot = items[i - 1].post_comma_trivia
+        # Ensure the slot ends with a newline+indent anchor so the
+        # block lands on its own line(s) before the next value.
+        if value and not any(isinstance(p, NewlineNode) for p in slot.pieces):
+            while slot.pieces and isinstance(slot.pieces[-1], WhitespaceNode):
+                slot.pieces.pop()
+            slot.pieces.append(NewlineNode("\n"))
+            if indent:
+                slot.pieces.append(WhitespaceNode(indent))
+        _replace_pct_leading_block(slot, value, indent)
 
     @override
     def __getitem__(self, key: int) -> tuple[str, ...]:
         i = self._check_index(key)
-        block = _extract_trailing_comment_block(self._trivia_for(i))
+        block = self._read(i)
         if not block:
             raise KeyError(key)
         return block
@@ -3349,32 +3504,19 @@ class _ArrayLeadingCommentsView(MutableMapping[int, "tuple[str, ...]"]):
     @override
     def __setitem__(self, key: int, value: Sequence[str]) -> None:
         i = self._check_index(key)
-        trivia = self._trivia_for(i)
-        indent = _array_indent(self._array._node)  # noqa: SLF001
-        # Ensure the trivia ends with a newline+indent anchor so the
-        # comment block lands on its own line(s) before the next value.
-        if value and not any(isinstance(p, NewlineNode) for p in trivia.pieces):
-            while trivia.pieces and isinstance(
-                trivia.pieces[-1],
-                WhitespaceNode,
-            ):
-                trivia.pieces.pop()
-            trivia.pieces.append(NewlineNode("\n"))
-            if indent:
-                trivia.pieces.append(WhitespaceNode(indent))
-        _replace_trailing_comment_block(trivia, value, indent)
+        self._write(i, value)
 
     @override
     def __delitem__(self, key: int) -> None:
         i = self._check_index(key)
-        if not _extract_trailing_comment_block(self._trivia_for(i)):
+        if not self._read(i):
             raise KeyError(key)
-        self[key] = ()
+        self._write(i, ())
 
     @override
     def __iter__(self) -> Iterator[int]:
         for i in range(len(self._array._node.items)):  # noqa: SLF001
-            if _extract_trailing_comment_block(self._trivia_for(i)):
+            if self._read(i):
                 yield i
 
     @override
@@ -3388,7 +3530,7 @@ class _ArrayLeadingCommentsView(MutableMapping[int, "tuple[str, ...]"]):
         n = len(self._array._node.items)  # noqa: SLF001
         if not 0 <= key < n:
             return False
-        return bool(_extract_trailing_comment_block(self._trivia_for(key)))
+        return bool(self._read(key))
 
     @override
     def __repr__(self) -> str:
@@ -3476,6 +3618,21 @@ class Array(list[Any]):
 
     def _rebuild_separators(self) -> None:
         _apply_separator_style(self._node, self._style)
+
+    def _rebuild_with_leadings(
+        self,
+        leadings: Sequence[Sequence[str]],
+    ) -> None:
+        """Apply separator style and restore an explicitly-given leadings list.
+
+        Used by reorder operations that mutate ``items`` and need to keep
+        the per-item leading-comment blocks aligned with their (possibly
+        moved) items rather than with the on-disk storage slots. The
+        ``leadings`` list must be snapshotted **before** the items list
+        is reordered, then transformed in parallel.
+        """
+        _apply_separator_style(self._node, self._style)
+        _write_item_leadings(self._node.items, leadings)
 
     @staticmethod
     def _make_item(value: object, *, with_comma: bool) -> ArrayItem:
@@ -3566,9 +3723,11 @@ class Array(list[Any]):
     @override
     def insert(self, index: SupportsIndex, value: object) -> None:
         idx = operator.index(index)
+        leadings = _snapshot_item_leadings(self._node.items)
         new_item = self._make_item(value, with_comma=False)
         self._node.items.insert(idx, new_item)
-        self._rebuild_separators()
+        leadings.insert(idx, ())
+        self._rebuild_with_leadings(leadings)
         list.insert(self, idx, _value_for(new_item.value))
 
     @overload
@@ -3585,27 +3744,37 @@ class Array(list[Any]):
             if not isinstance(value, Iterable):
                 msg = "must assign iterable to extended slice"
                 raise TypeError(msg)
+            leadings = _snapshot_item_leadings(self._node.items)
             new_items = [self._make_item(v, with_comma=False) for v in list(value)]
             self._node.items[index] = new_items
+            leadings[index] = [() for _ in new_items]
+            self._rebuild_with_leadings(leadings)
         else:
             i = operator.index(index)
             self._node.items[i].value = value_to_node(value)
-        self._rebuild_separators()
+            self._rebuild_separators()
         self._resync()
 
     @override
     def __delitem__(self, index: SupportsIndex | slice) -> None:
+        leadings = _snapshot_item_leadings(self._node.items)
         if isinstance(index, slice):
             del self._node.items[index]
+            del leadings[index]
         else:
-            del self._node.items[operator.index(index)]
-        self._rebuild_separators()
+            i = operator.index(index)
+            del self._node.items[i]
+            del leadings[i]
+        self._rebuild_with_leadings(leadings)
         self._resync()
 
     @override
     def pop(self, index: SupportsIndex = -1) -> Any:
-        item = self._node.items.pop(operator.index(index))
-        self._rebuild_separators()
+        leadings = _snapshot_item_leadings(self._node.items)
+        i = operator.index(index)
+        item = self._node.items.pop(i)
+        del leadings[i]
+        self._rebuild_with_leadings(leadings)
         self._resync()
         popped = _value_for(item.value)
         # The wrapper was constructed from an item that is no longer
@@ -3629,8 +3798,10 @@ class Array(list[Any]):
 
     @override
     def reverse(self) -> None:
+        leadings = _snapshot_item_leadings(self._node.items)
         self._node.items.reverse()
-        self._rebuild_separators()
+        leadings.reverse()
+        self._rebuild_with_leadings(leadings)
         self._resync()
 
     @override
@@ -3640,13 +3811,19 @@ class Array(list[Any]):
         key: Callable[[Any], object] | None = None,
         reverse: bool = False,
     ) -> None:
-        pairs = list(zip(_materialise_array(self._node), self._node.items, strict=True))
+        leadings = _snapshot_item_leadings(self._node.items)
+        triples = list(
+            zip(
+                _materialise_array(self._node), self._node.items, leadings, strict=True
+            ),
+        )
         if key is None:
-            pairs.sort(key=lambda p: p[0], reverse=reverse)  # type: ignore[arg-type, return-value]
+            triples.sort(key=lambda p: p[0], reverse=reverse)  # type: ignore[arg-type, return-value]
         else:
-            pairs.sort(key=lambda p: key(p[0]), reverse=reverse)  # type: ignore[arg-type, return-value]
-        self._node.items[:] = [item for _, item in pairs]
-        self._rebuild_separators()
+            triples.sort(key=lambda p: key(p[0]), reverse=reverse)  # type: ignore[arg-type, return-value]
+        self._node.items[:] = [item for _, item, _ in triples]
+        new_leadings = [lead for _, _, lead in triples]
+        self._rebuild_with_leadings(new_leadings)
         self._resync()
 
     @override
@@ -3661,9 +3838,11 @@ class Array(list[Any]):
             self.clear()
         else:
             base = list(self._node.items)
+            base_leadings = _snapshot_item_leadings(base)
             for _ in range(n - 1):
                 self._node.items.extend(deepcopy(item) for item in base)
-            self._rebuild_separators()
+            leadings = list(base_leadings) * n
+            self._rebuild_with_leadings(leadings)
             self._resync()
         return self
 
