@@ -36,6 +36,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Assigning an AoT to a key whose only existing presence is an
+  implicit super-table over an ``[[a.b]]`` block no longer corrupts
+  the document. ``_classify`` returned ``"absent"`` for ``"a"`` when
+  the document contained only ``[[a.b]]`` (the parallel case for
+  ``[a.b]`` correctly returned ``"table"``), so
+  ``_prepare_section_slot`` skipped the purge and the source
+  ``[[a.b]]`` sections survived the assignment, then got silently
+  re-attributed as a child of the freshly-cloned last entry. The
+  classifier now treats any deeper ``[a.b…]`` *or* ``[[a.b…]]``
+  section as evidence that ``"a"`` is an implicit super-table — i.e.
+  a table — restoring symmetry between the standard-table and AoT
+  cases. The same fix applies inside an AoT entry's scope.
+
 - `dst[k] = src.aot(k)` (and the same-document equivalent
   `doc[k2] = doc.aot(k1)`) silently dropped every sub-section owned
   by the AoT entries — both their headers and their data. The
