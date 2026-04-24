@@ -1070,6 +1070,8 @@ def _new_host_section(path: tuple[str, ...]) -> SectionNode:
 def _clone_table_sections(
     value: _StdTable,
     full_path: tuple[str, ...],
+    *,
+    head_kind: HeaderKind = "table",
 ) -> list[SectionNode]:
     """Deep-clone every CST section that contributes to ``value``, rebased.
 
@@ -1084,6 +1086,13 @@ def _clone_table_sections(
     (``value._path == ()``) the implicit pre-header section's entries are
     treated as ancestor extras, since :meth:`_compute_extras` returns
     ``None`` in that case.
+
+    The leading section's header kind is forced to ``head_kind``: pass
+    ``"table"`` (the default) to install as a ``[full_path]`` standard
+    section, or ``"array"`` to install as a ``[[full_path]]`` AoT entry.
+    Without this normalisation an AoT-entry source cloned into a
+    standard-table slot would keep its ``[[..]]`` header (and vice
+    versa).
     """
     src_path = value._path  # noqa: SLF001
     splen = len(src_path)
@@ -1094,7 +1103,7 @@ def _clone_table_sections(
     src_sections = src_scope if src_scope is not None else doc.sections
 
     new_secs: list[SectionNode] = []
-    host: SectionNode | None = None  # the cloned section whose header == full_path
+    head: SectionNode | None = None  # cloned section whose header path == full_path
     for sec in src_sections:
         hdr = sec.header
         if hdr is None or len(hdr.key.path) < splen or hdr.key.path[:splen] != src_path:
@@ -1103,8 +1112,8 @@ def _clone_table_sections(
         assert cloned.header is not None
         new_path = (*full_path, *hdr.key.path[splen:])
         cloned.header.key = _make_dotted_key(new_path)
-        if cloned.header.kind == "table" and len(new_path) == fplen:
-            host = cloned
+        if head is None and len(new_path) == fplen:
+            head = cloned
         new_secs.append(cloned)
 
     if splen == 0:
@@ -1118,13 +1127,16 @@ def _clone_table_sections(
         extras = value._compute_extras() or []  # noqa: SLF001
 
     if extras:
-        if host is None:
-            host = _new_host_section(full_path)
-            new_secs.insert(0, host)
+        if head is None:
+            head = _new_host_section(full_path)
+            new_secs.insert(0, head)
         for rel_path, kv in extras:
             cloned_kv = deepcopy(kv)
             cloned_kv.key = _make_dotted_key(rel_path)
-            host.entries.append(cloned_kv)
+            head.entries.append(cloned_kv)
+
+    if head is not None and head.header is not None:
+        head.header.kind = head_kind
 
     return new_secs
 
@@ -4153,19 +4165,14 @@ class AoT(list[Table]):
         """Build the section block for a new AoT entry.
 
         For a :class:`_StdTable` source, deep-clone its contributing
-        sections via :func:`_clone_table_sections` so that per-KV
-        trivia, sub-section headers, and any nested AoTs are preserved
-        verbatim under the new entry's path. The leading section's
-        header kind is forced to ``"array"`` so it renders as
-        ``[[path]]``. For plain mappings, fall back to data-only
-        synthesis through :meth:`_populate_section`.
+        sections via :func:`_clone_table_sections` so per-KV trivia,
+        sub-section headers, and any nested AoTs are preserved
+        verbatim under the new entry's path. For plain mappings, fall
+        back to data-only synthesis through :meth:`_populate_section`.
         """
         if isinstance(value, _StdTable):
-            cloned = _clone_table_sections(value, self._path)
+            cloned = _clone_table_sections(value, self._path, head_kind="array")
             if cloned:
-                head = cloned[0]
-                assert head.header is not None
-                head.header.kind = "array"
                 return cloned
         new_sec = self._make_header_section()
         self._populate_section(new_sec, value)
