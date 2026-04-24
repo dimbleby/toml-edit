@@ -3391,9 +3391,11 @@ class _ArrayItemViewBase(_PresenceFilteredView[int, _VV]):
             msg = f"Array.{self._view_name} index must be int, got {type(key).__name__}"
             raise TypeError(msg)
         n = len(self._array._node.items)  # noqa: SLF001
-        if not 0 <= key < n:
-            raise KeyError(key)
-        return key
+        if -n <= key < 0:
+            return key + n
+        if 0 <= key < n:
+            return key
+        raise KeyError(key)
 
     @override
     def _keys(self) -> Iterator[int]:

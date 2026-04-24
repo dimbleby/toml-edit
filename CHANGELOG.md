@@ -36,6 +36,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `Array.comments` and `Array.leading_comments` now accept negative
+  indices, mirroring `Array.__getitem__` / `Array.__setitem__` and
+  Python list semantics. Previously ``arr[-1]`` worked but
+  ``arr.comments[-1]`` raised ``KeyError``.
+
 - The comment-view setters (`comments[k] = …`, `header_comment = …`,
   `Array.comments[i] = …`) used to treat ``""`` as a delete shortcut,
   but the matching readers return ``""`` for a parsed bare ``#``. So

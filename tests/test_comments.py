@@ -901,6 +901,22 @@ def test_array_comments_keyerror_on_out_of_range() -> None:
     arr = doc.array("xs")
     with pytest.raises(KeyError):
         _ = arr.comments[5]
+    with pytest.raises(KeyError):
+        _ = arr.comments[-3]
+
+
+def test_array_comments_negative_index_mirrors_array_indexing() -> None:
+    doc = tomlrt.parse("xs = [1, 2, 3]\n")
+    arr = doc.array("xs")
+    arr.comments[-1] = "last"
+    assert arr.comments[-1] == "last"
+    assert arr.comments[2] == "last"
+    assert -1 in arr.comments
+    arr.leading_comments[-2] = ("middle",)
+    assert arr.leading_comments[-2] == ("middle",)
+    assert arr.leading_comments[1] == ("middle",)
+    del arr.comments[-1]
+    assert 2 not in arr.comments
 
 
 def test_array_comments_delitem_missing_raises_keyerror() -> None:
