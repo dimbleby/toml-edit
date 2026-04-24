@@ -36,6 +36,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `dst[k] = src.aot(k)` (and the same-document equivalent
+  `doc[k2] = doc.aot(k1)`) silently dropped every sub-section owned
+  by the AoT entries — both their headers and their data. The
+  cross-doc clone path (`_clone_aot_sections`) only iterated each
+  entry's ``[[path]]`` header and rewrote its key, but never visited
+  the entry's owned ``[path.sub]`` / ``[[path.nested]]`` range. The
+  helper now walks each entry's full block (header + owned range),
+  rebasing every sub-section's path prefix in lockstep — matching
+  the behaviour the table-side cloner has had all along.
+
 - `doc[k] = other.aot("a")[i]` previously produced a ``[[k]]`` AoT
   header instead of the expected ``[k]`` standard-table header,
   because ``_clone_table_sections`` carried the source section's
