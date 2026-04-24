@@ -577,6 +577,50 @@ def test_subsection_under_non_last_aot_entry_lands_in_owned_range() -> None:
     assert "source" not in parsed["package"][2]
 
 
+def test_ior_on_subscripted_table_preserves_position() -> None:
+    """``doc[k] |= other`` keeps ``[k]``'s position in the document.
+
+    Python compiles augmented assignment to a subscripted target as
+    ``tmp = doc[k]; tmp.__ior__(other); doc[k] = tmp`` — the third
+    step rebinds even though ``tmp`` is the same object already at
+    ``doc[k]``. The default ``Table.__setitem__`` would detach the
+    "old" value (which is also the "new" value, so it moves the CST
+    sections into an orphan doc) and then re-clone them back via
+    ``_install_attached_table``, losing the original position and
+    surrounding blank-line trivia. The early-return for ``old is
+    value`` short-circuits that round-trip.
+    """
+    doc = tomlrt.loads(
+        "[tool.black]\nline-length = 88\n\n[other]\nx = 1\n",
+    )
+    addition = tomlrt.loads('[tool.poetry]\nname = "foo"\n')
+    doc["tool"] |= addition["tool"]
+
+    assert tomlrt.dumps(doc) == (
+        "[tool.black]\nline-length = 88\n\n"
+        '[tool.poetry]\nname = "foo"\n\n'
+        "[other]\nx = 1\n"
+    )
+
+
+def test_self_assignment_is_a_noop() -> None:
+    """``doc[k] = doc[k]`` does not mutate the document or detach the view.
+
+    Plain Python dict semantics: re-binding a key to its own current
+    value is a no-op. tomlrt previously tore down the value's CST
+    backing (via ``old._detach()``) and rebuilt it, which both lost
+    formatting and silently invalidated any held reference.
+    """
+    doc = tomlrt.parse("[t]\na = 1\n[u]\nb = 2\n")
+    t = doc["t"]
+    before = tomlrt.dumps(doc)
+    doc["t"] = doc["t"]
+    assert tomlrt.dumps(doc) == before
+    # Held reference still tracks live state.
+    t["c"] = 3
+    assert "c" in doc["t"]
+
+
 def test_section_subkey_across_aot_entries_keeps_values_separate() -> None:
     """Setting the *same* sub-section key on multiple AoT entries does not
     leak values across entries.

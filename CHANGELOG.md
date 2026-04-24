@@ -42,6 +42,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   byte-identical to a sibling's no longer splices the new block into
   the wrong entry's range. The insert-index lookup now uses identity
   rather than equality.
+- `doc[k] |= other` (and any other `doc[k] = doc[k]` self-assignment)
+  no longer detaches and re-clones the existing block, which had the
+  side effect of moving `[k]` to the end of its siblings and dropping
+  surrounding blank-line trivia.
 
 ## [0.4.0] - 2026-04-23
 
