@@ -24,6 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The `Document.preamble` setter was the one leading-comment setter
+  that didn't route through `_replace_trailing_comment_block`, so it
+  also lacked the str-as-Sequence guard added in the prior commit.
+  Refactored the bare-str check into a shared `_validate_comment_lines`
+  helper and call it from both. `doc.preamble = "# top"` now raises
+  `TypeError` instead of producing a stack of single-character `# x`
+  comment lines.
+
 - Setting a leading-comment block on a key (or array item) via the
   `leading_comments` setter now refuses bare ``str`` arguments instead
   of silently iterating them character-by-character. ``str`` is
