@@ -468,10 +468,6 @@ def _scan_leading_comment_run(pieces: list[TriviaPiece]) -> tuple[int, list[str]
     return i, comments
 
 
-def _trivia_render_eq(a: Trivia, b: Trivia) -> bool:
-    return a.render() == b.render()
-
-
 def _clone_trivia(t: Trivia) -> Trivia:
     # Trivia pieces (WhitespaceNode/NewlineNode/CommentNode) are
     # never mutated in place — only replaced wholesale — so we can
