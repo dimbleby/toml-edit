@@ -2649,9 +2649,28 @@ class _StdTable(Table):
         for ``full_path`` should be spliced in. Drops any redundant
         empty placeholder header at ``self._path`` first so it doesn't
         survive as visual noise once the new child section is in place.
+
+        If a section (or descendant of one) already sits at
+        ``full_path``, remember its position before purging and reuse
+        that slot, so replacing a section in place preserves its
+        position among siblings instead of being appended at the end.
         """
         self._drop_redundant_anchor()
         full_path = (*self._path, *parts)
+        plen = len(full_path)
+        scope = self._scope()
+        scope_ids = None if scope is None else {id(s) for s in scope}
+        prior_index: int | None = None
+        for i, sec in enumerate(self._doc_node.sections):
+            hdr = sec.header
+            if (
+                hdr is not None
+                and (scope_ids is None or id(sec) in scope_ids)
+                and len(hdr.key.path) >= plen
+                and hdr.key.path[:plen] == full_path
+            ):
+                prior_index = i
+                break
         if len(parts) == 1:
             kind, _ = self._classify(parts[0])
             if kind != "absent":
@@ -2659,15 +2678,18 @@ class _StdTable(Table):
         else:
             self._doc_node.purge_path(full_path)
         sections = self._doc_node.sections
+        if prior_index is not None:
+            # Only matching sections (within scope) get purged, so the
+            # first match's index is preserved as a valid splice point.
+            assert prior_index <= len(sections)
+            return full_path, prior_index
         owner = self._owner_anchor
         if owner is None:
-            insert_at = _section_insert_index(sections, full_path)
-        else:
-            # AoT-entry sub-table: pin the new section to the end of
-            # this entry's owned range so it doesn't get re-attributed
-            # to a later entry on round-trip.
-            insert_at = _index_of(sections, owner) + len(self._scope() or ())
-        return full_path, insert_at
+            return full_path, _section_insert_index(sections, full_path)
+        # AoT-entry sub-table with no prior section at this path:
+        # pin the new section to the end of this entry's owned range
+        # so it doesn't get re-attributed to a later entry on round-trip.
+        return full_path, _index_of(sections, owner) + len(self._scope() or ())
 
     def _install_attached_aot(
         self,
