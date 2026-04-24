@@ -1056,3 +1056,70 @@ def test_epilogue_setter_rejects_str() -> None:
     doc = tomlrt.loads("x = 1\n")
     with pytest.raises(TypeError, match="iterable of comment strings"):
         doc.epilogue = "# bottom"
+
+
+# ---------------------------------------------------------------------------
+# AoT mutations preserve source-table trivia
+# ---------------------------------------------------------------------------
+
+
+def test_aot_append_preserves_source_table_comments() -> None:
+    """``aot.append(other_aot[i])`` must carry over per-KV trivia and any
+    sub-section structure from the source entry; it previously rebuilt
+    the entry from raw data and silently dropped comments."""
+    src = tomlrt.loads(
+        "[[a]]\n# inner-leading\nx = 1  # inner-eol\ny = 2\n"
+        "\n[a.sub]\n# sub-leading\nz = 3\n",
+    )
+    dst = tomlrt.loads("[[a]]\nfirst = 0\n")
+    dst.aot("a").append(src.aot("a")[0])
+    out = tomlrt.dumps(dst)
+    assert "# inner-leading" in out
+    assert "# inner-eol" in out
+    assert "# sub-leading" in out
+    assert "[a.sub]" in out
+
+
+def test_aot_insert_preserves_source_table_comments() -> None:
+    src = tomlrt.loads("[[b]]\n# top\nq = 1  # eol\n")
+    dst = tomlrt.loads("[[b]]\nx = 0\n")
+    dst.aot("b").insert(0, src.aot("b")[0])
+    out = tomlrt.dumps(dst)
+    assert "# top" in out
+    assert "# eol" in out
+    # Original entry survived too
+    assert "x = 0" in out
+
+
+def test_aot_setitem_preserves_source_table_and_slot_leading() -> None:
+    """``aot[i] = other_aot[j]`` must preserve the source's per-KV trivia
+    and the destination slot's header leading (the comments above the
+    original ``[[path]]`` line)."""
+    src = tomlrt.loads("[[a]]\n# inner\nx = 1  # eol\n")
+    dst = tomlrt.loads("# slot-leading\n[[a]]\nold = 1\n")
+    dst.aot("a")[0] = src.aot("a")[0]
+    out = tomlrt.dumps(dst)
+    assert "# slot-leading" in out
+    assert "# inner" in out
+    assert "# eol" in out
+    assert "old" not in out
+
+
+def test_aot_append_same_doc_duplicates_with_comments() -> None:
+    """Same-document duplication via ``append`` must clone (not alias)
+    and preserve comments on both copies."""
+    doc = tomlrt.loads("[[a]]\n# c1\nx = 1  # c2\n")
+    doc.aot("a").append(doc.aot("a")[0])
+    out = tomlrt.dumps(doc)
+    assert out.count("# c1") == 2
+    assert out.count("# c2") == 2
+
+
+def test_aot_append_std_section_table_preserves_comments() -> None:
+    """The source can be any ``Table`` view, not just an AoT entry."""
+    src = tomlrt.loads("[s]\n# leading\nk = 1  # eol\n")
+    dst = tomlrt.loads("[[a]]\nx = 0\n")
+    dst.aot("a").append(src["s"])
+    out = tomlrt.dumps(dst)
+    assert "# leading" in out
+    assert "# eol" in out
