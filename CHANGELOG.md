@@ -24,6 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reordering items in a multi-line array (e.g. `arr.sort()`, `arr.reverse()`)
+  no longer indents the closing bracket when the new last item carries an
+  end-of-line comment. The "indent for next item" trivia (`\n  `) used to
+  leak past the comment and become the indent before `]`; the shared
+  trivia rewriter now strips that tail whenever the trailing slot is not
+  pure whitespace.
+
 - Replacing a section in place via `doc[k] = Table.section({...})` (or the
   equivalent `Table.aot([...])` / `AoT(...)` assignment) no longer drops
   the leading comment block that sat above the original `[k]` header.

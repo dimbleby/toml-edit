@@ -1793,3 +1793,38 @@ def test_replace_section_with_aot_preserves_leading_comments() -> None:
     doc = tomlrt.loads(src)
     doc["a"] = tomlrt.AoT([{"n": 1}])
     assert tomlrt.dumps(doc) == "# block\n[[a]]\nn = 1\n[b]\ny=2\n"
+
+
+def test_array_reverse_with_eol_comments_keeps_close_bracket_unindented() -> None:
+    """Reordering items in a multi-line array used to leak the
+    "indent-for-next-item" trivia onto the new last item, indenting the
+    closing bracket. The shared trivia rewriter now strips that tail
+    whenever the trailing slot carries a comment."""
+    src = "a = [\n  1, # one\n  2, # two\n  3, # three\n]\n"
+    doc = tomlrt.loads(src)
+    doc["a"].reverse()
+    assert tomlrt.dumps(doc) == "a = [\n  3, # three\n  2, # two\n  1, # one\n]\n"
+    doc = tomlrt.loads(src)
+    doc["a"].sort()
+    assert tomlrt.dumps(doc) == src
+
+
+def test_aot_clear_renders_empty_but_keeps_key() -> None:
+    """Clearing an AoT empties it like a regular Python list value:
+    the key stays on the host (so ``in`` / ``len`` / ``keys`` keep
+    behaving like a dict), but render skips it because empty AoTs
+    have no syntax in TOML. A subsequent re-parse will not see the
+    key — that's an acceptable mutation-time cost; held references
+    keep working as plain (now-empty) lists."""
+    doc = tomlrt.loads("[[a]]\nn=1\n[[a]]\nn=2\n")
+    doc["a"].clear()
+    assert "a" in doc
+    assert len(doc["a"]) == 0
+    assert tomlrt.dumps(doc) == ""
+
+
+def test_aot_pop_last_renders_empty_but_keeps_key() -> None:
+    doc = tomlrt.loads("x=0\n[[a]]\nn=1\n")
+    doc["a"].pop()
+    assert "a" in doc
+    assert tomlrt.dumps(doc) == "x=0\n"
