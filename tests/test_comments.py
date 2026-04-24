@@ -930,3 +930,13 @@ def test_array_comments_on_last_no_comma_forces_bracket_to_new_line() -> None:
     out = tomlrt.dumps(doc)
     # ] must drop to its own line so the EOL comment doesn't swallow it.
     assert "# tail\n]" in out
+
+
+def test_leading_comments_setter_rejects_str() -> None:
+    """A bare ``str`` is technically a ``Sequence[str]`` of single chars
+    in Python; passing one to a leading-comments setter would silently
+    iterate it character-by-character and produce a stack of
+    one-character ``# x`` lines. Refuse it instead."""
+    doc = tomlrt.loads("[a]\nx = 1\n")
+    with pytest.raises(TypeError, match="iterable of comment strings"):
+        doc["a"].leading_comments["x"] = "# above"

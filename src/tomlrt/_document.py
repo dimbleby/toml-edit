@@ -365,6 +365,16 @@ def _replace_trailing_comment_block(
     Earlier trivia (older blank-separated comments, leading whitespace)
     and the trailing whitespace anchor are preserved.
     """
+    if isinstance(lines, str):
+        # ``str`` is technically a ``Sequence[str]`` of single chars, so
+        # accidentally passing a single comment as a string would silently
+        # iterate it character-by-character and produce a stack of
+        # one-character ``# x`` lines. Refuse instead.
+        msg = (
+            "expected an iterable of comment strings, got a str; "
+            "wrap a single comment in a tuple, e.g. ('# my comment',)"
+        )
+        raise TypeError(msg)
     pieces = trivia.pieces
     start, end = _trailing_comment_block_span(pieces)
     new_pieces: list[TriviaPiece] = []
