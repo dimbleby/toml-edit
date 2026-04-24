@@ -621,6 +621,49 @@ def test_self_assignment_is_a_noop() -> None:
     assert "c" in doc["t"]
 
 
+def test_section_replace_preserves_position() -> None:
+    """``doc[k] = Table.section({...})`` keeps ``[k]`` where it was.
+
+    Replacing an existing section used to purge the old block then
+    splice the new one after the last sibling sharing the parent
+    prefix, which moved the section to the end of the document.
+    The slot lookup now remembers the position of the first matching
+    section before purge and reuses that index.
+    """
+    doc = tomlrt.loads("[a]\nx = 1\n\n[b]\ny = 2\n\n[c]\nz = 3\n")
+    doc["b"] = Table.section({"q": 9})
+    assert tomlrt.dumps(doc) == "[a]\nx = 1\n\n[b]\nq = 9\n\n[c]\nz = 3\n"
+
+
+def test_section_replace_preserves_position_for_implicit_parent() -> None:
+    """Replacing an implicit super-table key preserves the subtree's slot.
+
+    ``[b.c]`` exists with no explicit ``[b]`` header. Assigning a
+    ``Table.section`` to ``b`` purges the implicit subtree and lands a
+    fresh ``[b]`` block where ``[b.c]`` used to live.
+    """
+    doc = tomlrt.loads("[a]\nx = 1\n\n[b.c]\ny = 2\n\n[d]\nz = 3\n")
+    doc["b"] = Table.section({"q": 9})
+    assert tomlrt.dumps(doc) == "[a]\nx = 1\n\n[b]\nq = 9\n\n[d]\nz = 3\n"
+
+
+def test_aot_entry_subsection_replace_preserves_position() -> None:
+    """``aot[i][k] = Table.section({...})`` keeps the sub-section in place.
+
+    Inside an AoT entry the slot lookup must be scoped to that entry
+    so a sibling entry's same-named sub-section is not mistaken for a
+    prior — and the new block must land where the *entry's own* prior
+    sub-section sat, not at the end of the entry's owned range.
+    """
+    doc = tomlrt.loads(
+        "[[pkg]]\nn = 1\n\n[pkg.a]\nx = 1\n\n[pkg.b]\ny = 2\n\n[pkg.c]\nz = 3\n",
+    )
+    doc["pkg"][0]["b"] = Table.section({"q": 9})
+    assert tomlrt.dumps(doc) == (
+        "[[pkg]]\nn = 1\n\n[pkg.a]\nx = 1\n\n[pkg.b]\nq = 9\n\n[pkg.c]\nz = 3\n"
+    )
+
+
 def test_section_subkey_across_aot_entries_keeps_values_separate() -> None:
     """Setting the *same* sub-section key on multiple AoT entries does not
     leak values across entries.

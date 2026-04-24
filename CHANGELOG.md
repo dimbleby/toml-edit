@@ -46,6 +46,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no longer detaches and re-clones the existing block, which had the
   side effect of moving `[k]` to the end of its siblings and dropping
   surrounding blank-line trivia.
+- Replacing a section with `Table.section({...})` (or any other
+  flavoured-section install at a key that already names one) now
+  reuses the existing section's slot among its siblings, instead of
+  appending the new block at the end of the parent's range. Applies
+  inside AoT entries too.
 
 ## [0.4.0] - 2026-04-23
 
