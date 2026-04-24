@@ -157,3 +157,57 @@ _EDGE_CASES = [
 @settings(max_examples=len(_EDGE_CASES), database=None)
 def test_edge_cases_roundtrip(src: str) -> None:
     assert tomlrt.dumps(tomlrt.parse(src)) == src
+
+
+# ---------------------------------------------------------------------------
+# Comment-view round-trip: writing back what we read must be a no-op, and
+# the rendered comment must read back as the value we wrote. These caught
+# the "user already supplied #" branch, the empty-string-as-delete shortcut,
+# and the rstrip in the marker-stripper.
+# ---------------------------------------------------------------------------
+
+_COMMENT_TEXT = st.text(
+    alphabet=st.characters(
+        blacklist_categories=["Cs"],
+        blacklist_characters="\n\r"
+        + "".join(chr(c) for c in range(0x20) if c != 0x09)
+        + "\x7f",
+    ),
+    max_size=30,
+)
+
+
+@given(text=_COMMENT_TEXT)
+@settings(max_examples=200, database=None)
+def test_eol_comment_roundtrip(text: str) -> None:
+    doc = tomlrt.parse("a = 1\n")
+    doc.comments["a"] = text
+    out = tomlrt.dumps(doc)
+    assert tomlrt.parse(out).comments["a"] == text
+
+
+@given(lines=st.lists(_COMMENT_TEXT, min_size=1, max_size=4))
+@settings(max_examples=200, database=None)
+def test_leading_comment_roundtrip(lines: list[str]) -> None:
+    doc = tomlrt.parse("a = 1\n")
+    doc.leading_comments["a"] = tuple(lines)
+    out = tomlrt.dumps(doc)
+    assert tomlrt.parse(out).leading_comments["a"] == tuple(lines)
+
+
+@given(text=_COMMENT_TEXT)
+@settings(max_examples=200, database=None)
+def test_array_eol_comment_roundtrip(text: str) -> None:
+    doc = tomlrt.parse("a = [1, 2]\n")
+    doc.array("a").comments[0] = text
+    out = tomlrt.dumps(doc)
+    assert tomlrt.parse(out).array("a").comments[0] == text
+
+
+@given(text=_COMMENT_TEXT)
+@settings(max_examples=200, database=None)
+def test_header_comment_roundtrip(text: str) -> None:
+    doc = tomlrt.parse("[s]\nx = 1\n")
+    doc.table("s").header_comment = text
+    out = tomlrt.dumps(doc)
+    assert tomlrt.parse(out).table("s").header_comment == text
