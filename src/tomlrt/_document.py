@@ -1184,9 +1184,15 @@ class Table(dict[str, Any]):
             self._install_flavoured((key,), value)
             return
         # If we're replacing an existing container, detach the old one
-        # so any held references stop reflecting later edits.
+        # so any held references stop reflecting later edits. ``old is
+        # value`` is the augmented-assignment / self-assignment case
+        # (``d[k] |= ...`` rebinds with the same object): there's
+        # nothing to detach and nothing to re-install — the cache and
+        # CST are already in the desired state.
         if super().__contains__(key):
             old = super().__getitem__(key)
+            if old is value:
+                return
             if isinstance(old, (Table, AoT, Array)):
                 old._detach()  # noqa: SLF001
         new_v = self._set_value(key, value)
