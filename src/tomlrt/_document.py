@@ -355,6 +355,22 @@ def _extract_trailing_comment_block(trivia: Trivia) -> tuple[str, ...]:
     )
 
 
+def _validate_comment_lines(lines: Sequence[str]) -> None:
+    """Reject a bare ``str`` masquerading as a sequence of comment lines.
+
+    ``str`` is technically a ``Sequence[str]`` of one-character strings,
+    so accidentally passing a single comment as a string would silently
+    iterate it character-by-character and produce a stack of
+    one-character ``# x`` lines. Refuse instead.
+    """
+    if isinstance(lines, str):
+        msg = (
+            "expected an iterable of comment strings, got a str; "
+            "wrap a single comment in a tuple, e.g. ('# my comment',)"
+        )
+        raise TypeError(msg)
+
+
 def _replace_trailing_comment_block(
     trivia: Trivia,
     lines: Sequence[str],
@@ -365,16 +381,7 @@ def _replace_trailing_comment_block(
     Earlier trivia (older blank-separated comments, leading whitespace)
     and the trailing whitespace anchor are preserved.
     """
-    if isinstance(lines, str):
-        # ``str`` is technically a ``Sequence[str]`` of single chars, so
-        # accidentally passing a single comment as a string would silently
-        # iterate it character-by-character and produce a stack of
-        # one-character ``# x`` lines. Refuse instead.
-        msg = (
-            "expected an iterable of comment strings, got a str; "
-            "wrap a single comment in a tuple, e.g. ('# my comment',)"
-        )
-        raise TypeError(msg)
+    _validate_comment_lines(lines)
     pieces = trivia.pieces
     start, end = _trailing_comment_block_span(pieces)
     new_pieces: list[TriviaPiece] = []
@@ -2996,6 +3003,7 @@ class Document(_StdTable):
 
     @preamble.setter
     def preamble(self, value: Sequence[str]) -> None:
+        _validate_comment_lines(value)
         target = self._doc_node.preamble_target()
         pieces = target.pieces
         has_content = self._doc_node.has_content()

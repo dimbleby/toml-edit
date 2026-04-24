@@ -940,3 +940,22 @@ def test_leading_comments_setter_rejects_str() -> None:
     doc = tomlrt.loads("[a]\nx = 1\n")
     with pytest.raises(TypeError, match="iterable of comment strings"):
         doc["a"].leading_comments["x"] = "# above"
+
+
+def test_preamble_setter_rejects_str() -> None:
+    """Same str-as-Sequence footgun applies to the document preamble."""
+    doc = tomlrt.loads("x = 1\n")
+    with pytest.raises(TypeError, match="iterable of comment strings"):
+        doc.preamble = "# top"
+
+
+def test_header_leading_comments_setter_rejects_str() -> None:
+    doc = tomlrt.loads("[a]\nx = 1\n")
+    with pytest.raises(TypeError, match="iterable of comment strings"):
+        doc["a"].header_leading_comments = "# above"
+
+
+def test_epilogue_setter_rejects_str() -> None:
+    doc = tomlrt.loads("x = 1\n")
+    with pytest.raises(TypeError, match="iterable of comment strings"):
+        doc.epilogue = "# bottom"
