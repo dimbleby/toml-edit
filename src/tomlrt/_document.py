@@ -3035,9 +3035,15 @@ class _StdTable(Table):
         ``install`` (possibly dotted path). Cloned sections retain
         their original inter-header trivia, so we let
         ``_insert_section_block`` handle only the leading separation.
+
+        We snapshot the source CST *before* purging the destination slot
+        so same-document calls where ``parts`` overlaps ``value._path``
+        (e.g. ``doc.install("a", doc.aot("a.inner"))``) still work.
+        Mirrors the ordering of :meth:`_install_attached_table`.
         """
-        full_path, insert_at, prior_leading = self._prepare_section_slot(parts)
+        full_path = (*self._path, *parts)
         new_secs = _clone_aot_sections(value, full_path)
+        _full_path, insert_at, prior_leading = self._prepare_section_slot(parts)
         _apply_prior_leading(new_secs, prior_leading)
         _insert_section_block(
             self._doc_node,

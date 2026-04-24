@@ -768,6 +768,24 @@ def test_aot_assign_purges_implicit_supertable_aot_subtree() -> None:
     assert dst.to_dict() == {"a": [{"z": 99}, {"z": 100}]}
 
 
+def test_install_aot_same_doc_overlap_preserves_source() -> None:
+    """``doc.install(k, doc.aot(k.sub))`` must not silently lose data.
+
+    ``__setitem__`` snapshots an in-cache ``old`` value via ``_detach``
+    before any structural mutation, which incidentally protected the
+    same-document overlap case. ``install`` skips that path and called
+    ``_install_attached_aot``, which used to clone from the source
+    *after* purging the destination slot — so the source sections were
+    already gone by the time we tried to copy them, leaving an empty
+    result. Aligning the AoT install ordering with the table install
+    (clone-before-purge) closes the gap.
+    """
+    src = tomlrt.loads("[[a.inner]]\nx = 1\n[[a.inner]]\nx = 2\n")
+    src.install("a", src.aot("a.inner"))
+    assert tomlrt.dumps(src) == "[[a]]\nx = 1\n[[a]]\nx = 2\n"
+    assert src.to_dict() == {"a": [{"x": 1}, {"x": 2}]}
+
+
 def test_aot_entry_subsection_replace_preserves_position() -> None:
     """``aot[i][k] = Table.section({...})`` keeps the sub-section in place.
 
