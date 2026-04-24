@@ -3906,11 +3906,8 @@ class Array(list[Any]):
 
     @override
     def reverse(self) -> None:
-        leadings = _snapshot_item_leadings(self._node.items)
-        self._node.items.reverse()
-        leadings.reverse()
-        self._rebuild_with_leadings(leadings)
-        self._resync()
+        n = len(self._node.items)
+        self._reorder_items(range(n - 1, -1, -1))
 
     @override
     def sort(
@@ -3919,19 +3916,24 @@ class Array(list[Any]):
         key: Callable[[Any], object] | None = None,
         reverse: bool = False,
     ) -> None:
-        leadings = _snapshot_item_leadings(self._node.items)
-        triples = list(
-            zip(
-                _materialise_array(self._node), self._node.items, leadings, strict=True
-            ),
+        values = _materialise_array(self._node)
+        sort_key: Callable[[int], Any] = (
+            (lambda i: values[i]) if key is None else (lambda i: key(values[i]))
         )
-        if key is None:
-            triples.sort(key=lambda p: p[0], reverse=reverse)  # type: ignore[arg-type, return-value]
-        else:
-            triples.sort(key=lambda p: key(p[0]), reverse=reverse)  # type: ignore[arg-type, return-value]
-        self._node.items[:] = [item for _, item, _ in triples]
-        new_leadings = [lead for _, _, lead in triples]
-        self._rebuild_with_leadings(new_leadings)
+        self._reorder_items(sorted(range(len(values)), key=sort_key, reverse=reverse))
+
+    def _reorder_items(self, perm: Iterable[int]) -> None:
+        """Apply an index permutation to ``items`` and their leadings.
+
+        Each item's leading carries that item's preceding comment/blank
+        layout, so it must travel with the item. Inter-item separators
+        get rebuilt afterwards for the new order.
+        """
+        order = list(perm)
+        items = self._node.items
+        leadings = _snapshot_item_leadings(items)
+        items[:] = [items[i] for i in order]
+        self._rebuild_with_leadings([leadings[i] for i in order])
         self._resync()
 
     @override
@@ -4485,21 +4487,7 @@ class AoT(list[Table]):
         start, blocks = self._own_blocks()
         if not blocks:
             return
-        end = start + sum(len(b) for b in blocks)
-        leadings = [self._block_leading(b) for b in blocks]
-        # Comments belong to their entry, separators belong to the slot.
-        # Snapshot per-entry comment payload before the leading-swap and
-        # replay it after, so reordering blocks moves comments with them
-        # while leaving the inter-entry separator pattern in place.
-        entry_comments = [_extract_trailing_comment_block(L) for L in leadings]
-        blocks.reverse()
-        entry_comments.reverse()
-        for block, leading in zip(blocks, leadings, strict=True):
-            self._set_block_leading(block, leading)
-        for block, comment in zip(blocks, entry_comments, strict=True):
-            _replace_trailing_comment_block(self._block_leading(block), comment, "")
-        self._doc_node.sections[start:end] = [s for block in blocks for s in block]
-        self._resync()
+        self._reorder_blocks(start, blocks, range(len(blocks) - 1, -1, -1))
 
     @override
     def sort(
@@ -4511,16 +4499,34 @@ class AoT(list[Table]):
         start, blocks = self._own_blocks()
         if not blocks:
             return
+        entries = list(self)
+        sort_key: Callable[[int], Any] = (
+            (lambda i: entries[i]) if key is None else (lambda i: key(entries[i]))
+        )
+        self._reorder_blocks(
+            start,
+            blocks,
+            sorted(range(len(blocks)), key=sort_key, reverse=reverse),
+        )
+
+    def _reorder_blocks(
+        self,
+        start: int,
+        blocks: list[list[SectionNode]],
+        perm: Iterable[int],
+    ) -> None:
+        """Apply an index permutation to this AoT's section blocks.
+
+        A block's trailing-comment chunk belongs to its entry and
+        travels with the block; the inter-entry separator pattern
+        belongs to the slot and stays in place.
+        """
+        order = list(perm)
         end = start + sum(len(b) for b in blocks)
         leadings = [self._block_leading(b) for b in blocks]
         entry_comments = [_extract_trailing_comment_block(L) for L in leadings]
-        triples = list(zip(list(self), blocks, entry_comments, strict=True))
-        if key is None:
-            triples.sort(key=lambda p: p[0], reverse=reverse)  # type: ignore[arg-type,return-value]
-        else:
-            triples.sort(key=lambda p: key(p[0]), reverse=reverse)  # type: ignore[arg-type,return-value]
-        new_blocks = [block for _, block, _ in triples]
-        new_comments = [comment for _, _, comment in triples]
+        new_blocks = [blocks[i] for i in order]
+        new_comments = [entry_comments[i] for i in order]
         for block, leading in zip(new_blocks, leadings, strict=True):
             self._set_block_leading(block, leading)
         for block, comment in zip(new_blocks, new_comments, strict=True):
