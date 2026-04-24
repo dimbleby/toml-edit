@@ -1828,3 +1828,22 @@ def test_aot_pop_last_renders_empty_but_keeps_key() -> None:
     doc["a"].pop()
     assert "a" in doc
     assert tomlrt.dumps(doc) == "x=0\n"
+
+
+def test_replace_section_preserves_blank_before_next_section() -> None:
+    """Replacing a section in place must not strip the leading blank
+    line from the *next* section. The purge step normalised the doc's
+    top-blank before the replacement was spliced in, which silently ate
+    the inter-section separator carried on the next section's header."""
+    src = "[a]\nx=1\n\n# next section\n[b]\ny=2\n"
+    doc = tomlrt.loads(src)
+    doc["a"] = tomlrt.Table.section({"new": 1})
+    assert tomlrt.dumps(doc) == "[a]\nnew = 1\n\n# next section\n[b]\ny=2\n"
+
+
+def test_replace_section_with_aot_preserves_blank_before_next_section() -> None:
+    """Same shape for the section -> AoT replacement path."""
+    src = "[a]\nx=1\n\n[b]\ny=2\n"
+    doc = tomlrt.loads(src)
+    doc["a"] = tomlrt.AoT([{"n": 99}])
+    assert tomlrt.dumps(doc) == "[[a]]\nn = 99\n\n[b]\ny=2\n"
