@@ -1442,6 +1442,17 @@ class Table(dict[str, Any]):
         if not self._attached:
             dict.__setitem__(self, key, value)
             return
+        # Detach any container currently at ``key`` before we overwrite
+        # it, so user-held references stop reflecting later document
+        # edits. ``old is value`` is the augmented-assignment / self-
+        # assignment case (``d[k] |= ...`` rebinds with the same
+        # object): there's nothing to detach and nothing to re-install.
+        if super().__contains__(key):
+            old = super().__getitem__(key)
+            if old is value:
+                return
+            if isinstance(old, (Table, AoT, Array)):
+                old._detach()  # noqa: SLF001
         # Flavour-bearing values drive structural installation rather
         # than a raw value write. Attached Arrays/AoTs from another
         # document fall through to the deepcopy path so their full CST
@@ -1452,18 +1463,6 @@ class Table(dict[str, Any]):
         ):
             self._install_flavoured((key,), value)
             return
-        # If we're replacing an existing container, detach the old one
-        # so any held references stop reflecting later edits. ``old is
-        # value`` is the augmented-assignment / self-assignment case
-        # (``d[k] |= ...`` rebinds with the same object): there's
-        # nothing to detach and nothing to re-install — the cache and
-        # CST are already in the desired state.
-        if super().__contains__(key):
-            old = super().__getitem__(key)
-            if old is value:
-                return
-            if isinstance(old, (Table, AoT, Array)):
-                old._detach()  # noqa: SLF001
         new_v = self._set_value(key, value)
         if new_v is None:
             self._refresh_key(key)
@@ -1512,8 +1511,10 @@ class Table(dict[str, Any]):
         # non-table intermediates (scalars, inline tables) are caught
         # by their own dedicated error paths downstream.
         cur: Any = self
+        walked = True
         for i, part in enumerate(parts[:-1]):
             if part not in cur:
+                walked = False
                 break
             nxt = cur[part]
             if isinstance(nxt, AoT):
@@ -1525,8 +1526,17 @@ class Table(dict[str, Any]):
                 )
                 raise TOMLError(msg)
             if not isinstance(nxt, Table):
+                walked = False
                 break
             cur = nxt
+        # Detach any container view currently at the leaf so user-held
+        # references stop tracking the document after replacement.
+        # ``__setitem__`` does this for single-key overwrites; do the
+        # same here once we've located the leaf's parent.
+        if walked and isinstance(cur, Table) and dict.__contains__(cur, parts[-1]):
+            existing = dict.__getitem__(cur, parts[-1])
+            if isinstance(existing, (Table, AoT, Array)) and existing is not value:
+                existing._detach()  # noqa: SLF001
         self._install_flavoured(parts, value)
         leaf: Any = self
         for part in parts:

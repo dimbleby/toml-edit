@@ -786,6 +786,39 @@ def test_install_aot_same_doc_overlap_preserves_source() -> None:
     assert src.to_dict() == {"a": [{"x": 1}, {"x": 2}]}
 
 
+def test_replacing_value_detaches_old_view_for_all_setters() -> None:
+    """User-held references to a replaced view must be cleanly detached
+    so writes through them stop reaching the document.
+
+    ``__setitem__`` only detached the old value on the *non-flavoured*
+    path. Assigning a ``Table.section(...)`` (or a standalone ``AoT`` /
+    ``Array``) skipped the detach, so the old view kept writing into
+    the document under its old path. ``Document.install`` skipped the
+    detach entirely. Both now detach before installing.
+    """
+    # __setitem__ with a SectionSpec
+    doc = tomlrt.loads("[a]\nx = 1\n")
+    old = doc["a"]
+    doc["a"] = Table.section({"z": 99})
+    old["w"] = 777
+    assert tomlrt.dumps(doc) == "[a]\nz = 99\n"
+    assert old["w"] == 777
+
+    # Document.install at top level
+    doc = tomlrt.loads("[a]\nx = 1\n")
+    old = doc["a"]
+    doc.install("a", Table.section({"z": 99}))
+    old["w"] = 777
+    assert tomlrt.dumps(doc) == "[a]\nz = 99\n"
+
+    # Document.install at a dotted path
+    doc = tomlrt.loads("[a.b]\nx = 1\n")
+    old = doc["a"]["b"]
+    doc.install(("a", "b"), Table.section({"q": 9}))
+    old["w"] = 555
+    assert tomlrt.dumps(doc) == "[a.b]\nq = 9\n"
+
+
 def test_aot_entry_subsection_replace_preserves_position() -> None:
     """``aot[i][k] = Table.section({...})`` keeps the sub-section in place.
 
