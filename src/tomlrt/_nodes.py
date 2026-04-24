@@ -470,6 +470,12 @@ class DocumentNode:
         Drops sections whose header is at or under ``full_path``
         (purging children too), and drops KV entries in ancestor
         sections whose head key would steer descent into ``full_path``.
+
+        Pure structural removal — does not touch top-blank trivia.
+        Callers run :meth:`normalise_top_blank` themselves once the
+        larger operation is done, so a purge-then-splice sequence
+        doesn't strip a soon-to-be-meaningful blank in the
+        intermediate state.
         """
         plen = len(full_path)
         sections = self.sections
@@ -492,7 +498,6 @@ class DocumentNode:
             sec.entries[:] = [
                 kv for kv in sec.entries if kv.key.path[0] != conflict_key
             ]
-        self.normalise_top_blank()
 
     def normalise_top_blank(self) -> None:
         """Strip leading blank-line trivia from the document's first content.

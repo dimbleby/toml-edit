@@ -2283,6 +2283,12 @@ class _StdTable(Table):
         Constrained to ``self._scope()`` so an AoT entry can't reach
         across its boundary and delete a sibling entry's same-path
         sub-section.
+
+        Pure structural removal — does not touch top-blank trivia.
+        Callers run :meth:`DocumentNode.normalise_top_blank` themselves
+        once the larger operation is done, so a purge-then-splice
+        sequence doesn't strip a soon-to-be-meaningful blank in the
+        intermediate state.
         """
         for sec in self._direct_sections():
             sec.entries[:] = [kv for kv in sec.entries if kv.key.path[0] != key]
@@ -2321,7 +2327,6 @@ class _StdTable(Table):
                     and (*host_path, *kv.key.path)[:plen] == prefix
                 )
             ]
-        self._doc_node.normalise_top_blank()
 
     @override
     def _set_value(self, key: str, value: object) -> TomlValue | None:
@@ -2352,6 +2357,7 @@ class _StdTable(Table):
             return _value_for(payload.value)
         if kind in ("dotted", "table", "aot", "extras-prefix"):
             self._purge_conflicting(key)
+            self._doc_node.normalise_top_blank()
         sections = self._direct_sections()
         if not sections:
             sections = [self._ensure_section()]
@@ -2404,6 +2410,7 @@ class _StdTable(Table):
                     return
             return  # pragma: no cover - defensive: kv must be reachable
         self._purge_conflicting(key)
+        self._doc_node.normalise_top_blank()
 
     def _ensure_section(self) -> SectionNode:
         """Materialise a section that holds direct entries for ``self._path``."""
@@ -2757,6 +2764,12 @@ class _StdTable(Table):
         if len(parts) == 1:
             kind, _ = self._classify(parts[0])
             if kind != "absent":
+                # Skip the top-blank normalisation here: we are about
+                # to splice a replacement section into the slot we just
+                # vacated, so a leading blank on whatever section sat
+                # *behind* the purged one will still be a meaningful
+                # inter-section separator once the new block is in
+                # place. Normalising now strips it prematurely.
                 self._purge_conflicting(parts[0])
         else:
             self._doc_node.purge_path(full_path)

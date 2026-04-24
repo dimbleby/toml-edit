@@ -24,6 +24,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Replacing a section in place via `doc[k] = Table.section({...})` (or the
+  equivalent `Table.aot([...])` / `AoT(...)` assignment) no longer strips
+  the leading blank line from the *next* section. The slot-prep step
+  invoked top-of-file blank-line normalisation between purging the old
+  block and splicing the replacement; while the doc was momentarily
+  decapitated the leading blank on whatever section sat behind the
+  purged one was re-classified as a stray top-blank and removed, gluing
+  the new block to its successor on render. `_purge_conflicting` and
+  `DocumentNode.purge_path` are now pure structural removals; the two
+  call sites that need a top-blank cleanup afterwards (the value-overwrite
+  and full-key-delete paths) run `normalise_top_blank` explicitly, and
+  the slot-prep path doesn't run it at all because the splice that
+  follows reinstates the slot.
+
 - Reordering items in a multi-line array (e.g. `arr.sort()`, `arr.reverse()`)
   no longer indents the closing bracket when the new last item carries an
   end-of-line comment. The "indent for next item" trivia (`\n  `) used to
