@@ -485,22 +485,44 @@ class DocumentNode:
         self.normalise_top_blank()
 
     def normalise_top_blank(self) -> None:
-        """Strip leading blank-line trivia from the very first header section.
+        """Strip leading blank-line trivia from the document's first content.
 
-        A leading ``NewlineNode`` on a header's trivia means "blank line
-        separating this section from preceding content"; if there is no
-        such content (e.g. the prior section was deleted), the blank is
-        meaningless and would render as a stray top-of-file blank line.
+        A leading ``NewlineNode`` on the first structural node's trivia
+        means "blank line separating this content from preceding
+        content"; if there is no such content (e.g. the prior section
+        or KV was deleted), the blank is meaningless and would render
+        as a stray top-of-file blank line.
+
+        Looks at the first content site — the first section's header
+        leading, or, for a header-less pre-section, the first entry's
+        leading.
         """
         for sec in self.sections:
             if sec.header is None:
-                if sec.entries:
-                    return
-                continue
-            pieces = sec.header.leading.pieces
+                if not sec.entries:
+                    continue
+                pieces = sec.entries[0].leading.pieces
+            else:
+                pieces = sec.header.leading.pieces
             while pieces and isinstance(pieces[0], NewlineNode):
                 pieces.pop(0)
             return
+
+    def remove_entry_by_id(self, sec: SectionNode, victim_id: int) -> None:
+        """Drop the entry with ``id() == victim_id`` from ``sec``, then normalise.
+
+        Identity-keyed counterpart to :meth:`remove_sections_by_id` for
+        ``KeyValueNode``s, used by mutators that delete a single KV.
+        Runs :meth:`normalise_top_blank` afterwards so callers don't
+        have to remember to clean up a stray top-of-file blank when
+        the removed entry was the document's first piece of content.
+        """
+        entries = sec.entries
+        for i, kv in enumerate(entries):
+            if id(kv) == victim_id:
+                del entries[i]
+                self.normalise_top_blank()
+                return
 
     def remove_sections_by_id(self, victims: Container[int]) -> None:
         """Drop every section whose ``id()`` is in ``victims``, then normalise.

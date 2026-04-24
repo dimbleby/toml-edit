@@ -1235,11 +1235,34 @@ class Table(dict[str, Any]):
         :class:`AoT`, :class:`Array`) or the leaf value.
         """
         parts = _parse_key_path(path)
-        self._install_flavoured(parts, value)
+        # Reject install paths that would have to thread through an
+        # array-of-tables before any CST mutation runs, so a rejected
+        # call leaves the document untouched. AoT entries don't have
+        # a single addressable child container; the user must address
+        # a specific entry (``aot[i].install(...)``) instead. Other
+        # non-table intermediates (scalars, inline tables) are caught
+        # by their own dedicated error paths downstream.
         cur: Any = self
+        for i, part in enumerate(parts[:-1]):
+            if part not in cur:
+                break
+            nxt = cur[part]
+            if isinstance(nxt, AoT):
+                shown = ".".join(parts[: i + 1])
+                msg = (
+                    f"cannot install at {'.'.join(parts)!r}: {shown!r} is "
+                    "an array-of-tables; address a specific entry instead "
+                    f"(e.g. aot[i].install({parts[i + 1 :]!r}, ...))"
+                )
+                raise TOMLError(msg)
+            if not isinstance(nxt, Table):
+                break
+            cur = nxt
+        self._install_flavoured(parts, value)
+        leaf: Any = self
         for part in parts:
-            cur = cur[part]
-        return cur
+            leaf = leaf[part]
+        return leaf
 
     def _install_flavoured(
         self,
@@ -2326,13 +2349,13 @@ class _StdTable(Table):
             # Avoids the O(N) section walks and full-list rebuilds in
             # ``_purge_conflicting`` when there's nothing else to remove.
             target = payload
+            target_id = id(target)
             scope = self._scope()
             sections = scope if scope is not None else self._doc_node.sections
             for sec in sections:
-                entries = sec.entries
-                for idx, kv in enumerate(entries):
+                for kv in sec.entries:
                     if kv is target:
-                        del entries[idx]
+                        self._doc_node.remove_entry_by_id(sec, target_id)
                         return
             return  # pragma: no cover - defensive: kv must be reachable
         self._purge_conflicting(key)
@@ -2469,7 +2492,7 @@ class _StdTable(Table):
         child_path = (*self._path, key)
         self._refuse_existing_promoted_section(key, child_path, kind="table")
         new_sec = _build_promoted_section(child_path, inline, kv)
-        sec.entries.remove(kv)
+        self._doc_node.remove_entry_by_id(sec, id(kv))
         self._splice_promoted_sections([new_sec])
         view = _StdTable(self._doc_node, child_path)
         dict.__setitem__(self, key, view)
@@ -2510,7 +2533,7 @@ class _StdTable(Table):
             if last_entries:
                 last_entries[-1].trailing = kv.trailing
                 last_entries[-1].trailing_comment = kv.trailing_comment
-        sec.entries.remove(kv)
+        self._doc_node.remove_entry_by_id(sec, id(kv))
         self._splice_promoted_sections(new_secs)
         aot = AoT._attached_to(self._doc_node, child_path, [])  # noqa: SLF001
         aot._resync()  # noqa: SLF001
@@ -4018,14 +4041,19 @@ class AoT(list[Table]):
         base: list[SectionNode] = [s for block in blocks for s in block]
         # Use the second entry's leading (the natural inter-entry separator)
         # at the boundary between repetitions, so doubling a doc with blank-line
-        # separators stays visually consistent.
-        inter_leading = self._block_leading(blocks[1]) if len(blocks) >= 2 else Trivia()
+        # separators stays visually consistent. With only one block to sample
+        # we have no local style to copy; fall back to a blank-line separator
+        # (canonical TOML style) rather than gluing copies header-to-header.
+        if len(blocks) >= 2:
+            inter_leading = self._block_leading(blocks[1])
+        else:
+            inter_leading = Trivia(pieces=[NewlineNode("\n")])
         repeated = list(base)
         for _ in range(n - 1):
             copy_blocks: list[list[SectionNode]] = [
                 [deepcopy(s) for s in block] for block in blocks
             ]
-            self._set_block_leading(copy_blocks[0], inter_leading)
+            self._set_block_leading(copy_blocks[0], deepcopy(inter_leading))
             repeated.extend(s for block in copy_blocks for s in block)
         self._doc_node.sections[start : start + len(base)] = repeated
         self._resync()

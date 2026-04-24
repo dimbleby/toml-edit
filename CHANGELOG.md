@@ -30,6 +30,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `DocumentNode`, so identity-keyed removal and top-of-file normalisation
   are wired together at a single chokepoint instead of being open-coded
   per call site.
+- Deleting the first top-level key (`del doc[k]` / `doc.pop(k)`) no longer
+  leaves a stray blank line at the top of the rendered output. Same shape
+  as the AoT-deletion bug; the entry-removal path now goes through a
+  matching `DocumentNode.remove_entry_by_id` chokepoint that runs the
+  top-of-file normalisation afterwards.
+- `aot *= n` on a single-entry AoT no longer glues the duplicated
+  ``[[t]]`` headers together: with no second entry to sample as an
+  inter-entry separator, the repeat path now falls back to a
+  blank-line separator (canonical TOML style) rather than empty trivia.
+  The shared separator trivia is also deep-copied per repetition so
+  later mutations on one duplicate don't bleed into the others.
+- `Document.install(path, ...)` now rejects up-front, with a clear
+  `TOMLError`, when ``path`` would have to thread through an
+  array-of-tables. Previously this raised a bare `AssertionError`
+  *after* partially mutating the document, leaving it inconsistent.
 - Assigning `Table.section({})` and then a child section (e.g.
   `doc[k] = Table.section({}); doc[k][c] = ...`) no longer leaves an
   empty `[k]` header above the child.
