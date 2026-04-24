@@ -583,6 +583,16 @@ class DocumentNode:
                 break
         return owned
 
+    def aot_entry_block(self, aot_sec: SectionNode) -> list[SectionNode]:
+        """The full block of sections constituting one AoT entry.
+
+        That is the ``[[..]]`` anchor followed by its owned sub-section
+        run (see :meth:`aot_owned_range`). This is the unit callers
+        almost always want when copying, deleting, detaching, or
+        relocating an AoT entry.
+        """
+        return [aot_sec, *self.aot_owned_range(aot_sec)]
+
 
 __all__ = [
     "ArrayItem",
