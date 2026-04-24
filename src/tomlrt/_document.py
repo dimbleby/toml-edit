@@ -3664,7 +3664,22 @@ class Array(list[Any]):
         ``indent`` controls the per-item indentation when ``multiline``
         is true and is ignored otherwise. Returns ``self`` so calls may
         be chained.
+
+        Switching to single-line layout when any item carries an EOL
+        or leading comment is rejected with :class:`TOMLError`: a ``#``
+        comment runs to end of line, so collapsing such an array would
+        produce invalid TOML. Clear the offending comments first via
+        :attr:`comments` / :attr:`leading_comments` if you really want
+        a single-line layout.
         """
+        if not multiline and (self.comments or self.leading_comments):
+            msg = (
+                "cannot collapse a multi-line array to single-line: "
+                "items carry EOL or leading comments which would "
+                "produce invalid TOML; clear them first via .comments "
+                "and .leading_comments"
+            )
+            raise TOMLError(msg)
         if multiline:
             inter = Trivia([NewlineNode("\n"), WhitespaceNode(indent)])
             self._style = _SeparatorStyle(

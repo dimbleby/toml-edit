@@ -1125,6 +1125,30 @@ def test_array_set_multiline_false_collapses() -> None:
     assert not arr.multiline
 
 
+def test_array_set_multiline_false_with_eol_comment_raises() -> None:
+    doc = tomlrt.loads("a = [\n    1,  # one\n    2,\n]\n")
+    arr = doc.array("a")
+    with pytest.raises(tomlrt.TOMLError, match="comments"):
+        arr.set_multiline(multiline=False)
+    assert tomlrt.dumps(doc) == "a = [\n    1,  # one\n    2,\n]\n"
+
+
+def test_array_set_multiline_false_with_leading_comment_raises() -> None:
+    doc = tomlrt.loads("a = [\n    # leading\n    1,\n    2,\n]\n")
+    arr = doc.array("a")
+    with pytest.raises(tomlrt.TOMLError, match="comments"):
+        arr.set_multiline(multiline=False)
+    assert tomlrt.dumps(doc) == "a = [\n    # leading\n    1,\n    2,\n]\n"
+
+
+def test_array_set_multiline_false_after_clearing_comments_works() -> None:
+    doc = tomlrt.loads("a = [\n    1,  # one\n    2,\n]\n")
+    arr = doc.array("a")
+    del arr.comments[0]
+    arr.set_multiline(multiline=False)
+    assert tomlrt.dumps(doc) == "a = [1, 2]\n"
+
+
 def test_array_set_multiline_custom_indent() -> None:
     doc = tomlrt.loads("a = [1, 2]\n")
     doc.array("a").set_multiline(multiline=True, indent="  ")
