@@ -16,6 +16,7 @@ from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
     Any,
+    ClassVar,
     Protocol,
     SupportsIndex,
     TypeAlias,
@@ -3183,7 +3184,123 @@ class Document(_StdTable):
 # ---------------------------------------------------------------------------
 
 
-class _TableCommentsView(MutableMapping[str, str]):
+_VK = TypeVar("_VK")
+_VV = TypeVar("_VV")
+
+
+class _PresenceFilteredView(MutableMapping[_VK, _VV]):
+    """Common scaffolding for the comment-views.
+
+    A "presence-filtered" view exposes only those keys whose payload is
+    currently *present* (a non-empty comment block, an EOL comment that
+    actually exists, etc.). Subclasses provide:
+
+    * :meth:`_check_key` — coerce / range-check a raw key, raising
+      :class:`TypeError` for the wrong kind and :class:`KeyError` for
+      an out-of-range value. Returns the canonicalised key.
+    * :meth:`_keys` — yields every valid key (regardless of whether
+      its payload is present).
+    * :meth:`_read` — returns the payload, or ``None`` when absent.
+    * :meth:`_write_absent` — the deletion primitive used by
+      ``__delitem__``.
+    * :meth:`_format_value` — used by ``__repr__``; defaults to
+      ``repr``.
+
+    ``__setitem__`` is left to subclasses because each view has its own
+    slot-selection / anchor logic.
+    """
+
+    def _check_key(self, key: object) -> _VK:
+        raise NotImplementedError
+
+    def _keys(self) -> Iterator[_VK]:
+        raise NotImplementedError
+
+    def _read(self, key: _VK) -> _VV | None:
+        raise NotImplementedError
+
+    def _write_absent(self, key: _VK) -> None:
+        raise NotImplementedError
+
+    def _format_value(self, value: _VV) -> str:
+        return repr(value)
+
+    @override
+    def __getitem__(self, key: _VK) -> _VV:
+        k = self._check_key(key)
+        v = self._read(k)
+        if v is None:
+            raise KeyError(key)
+        return v
+
+    @override
+    def __delitem__(self, key: _VK) -> None:
+        k = self._check_key(key)
+        if self._read(k) is None:
+            raise KeyError(key)
+        self._write_absent(k)
+
+    @override
+    def __iter__(self) -> Iterator[_VK]:
+        return (k for k in self._keys() if self._read(k) is not None)
+
+    @override
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
+
+    @override
+    def __contains__(self, key: object) -> bool:
+        try:
+            k = self._check_key(key)
+        except (TypeError, KeyError):
+            return False
+        return self._read(k) is not None
+
+    @override
+    def __repr__(self) -> str:
+        body = ", ".join(f"{k!r}: {self._format_value(v)}" for k, v in self.items())
+        return f"{type(self).__name__}({{{body}}})"
+
+
+class _TableKVViewBase(_PresenceFilteredView[str, _VV]):
+    """Common scaffolding for :class:`_StdTable`-backed presence-filtered views.
+
+    The table's single-segment ``KeyValueNode`` entries form the key
+    universe. Subclasses provide the value-shaped methods (``_read``,
+    ``_write_absent``, ``__setitem__``, optional ``_format_value``) and
+    set ``_view_name`` for error messages.
+    """
+
+    __slots__ = ("_table",)
+
+    _view_name: ClassVar[str]
+
+    def __init__(self, table: _StdTable) -> None:
+        self._table = table
+
+    def _find_kv(self, key: str) -> KeyValueNode | None:
+        try:
+            _, kv = self._table._find_direct_kv(key)  # noqa: SLF001
+        except KeyError:
+            return None
+        return kv
+
+    @override
+    def _check_key(self, key: object) -> str:
+        if not isinstance(key, str):
+            msg = f"Table.{self._view_name} key must be str, got {type(key).__name__}"
+            raise TypeError(msg)
+        return key
+
+    @override
+    def _keys(self) -> Iterator[str]:
+        for sec in self._table._direct_sections():  # noqa: SLF001
+            for kv in sec.entries:
+                if len(kv.key.path) == 1:
+                    yield kv.key.path[0]
+
+
+class _TableCommentsView(_TableKVViewBase[str]):
     """Live mapping from key name to end-of-line comment text.
 
     Backed by a :class:`_StdTable`; a key is "present" iff its
@@ -3191,52 +3308,28 @@ class _TableCommentsView(MutableMapping[str, str]):
     an empty string removes the comment, mirroring ``del``.
     """
 
-    __slots__ = ("_table",)
-
-    def __init__(self, table: _StdTable) -> None:
-        self._table = table
-
-    def _commented_kvs(self) -> Iterator[tuple[str, KeyValueNode]]:
-        for sec in self._table._direct_sections():  # noqa: SLF001
-            for kv in sec.entries:
-                if kv.trailing_comment is not None and len(kv.key.path) == 1:
-                    yield kv.key.path[0], kv
+    _view_name = "comments"
 
     @override
-    def __getitem__(self, key: str) -> str:
-        _, kv = self._table._find_direct_kv(key)  # noqa: SLF001
-        if kv.trailing_comment is None:
-            raise KeyError(key)
+    def _read(self, key: str) -> str | None:
+        kv = self._find_kv(key)
+        if kv is None or kv.trailing_comment is None:
+            return None
         return _strip_comment_marker(kv.trailing_comment.text)
+
+    @override
+    def _write_absent(self, key: str) -> None:
+        kv = self._find_kv(key)
+        assert kv is not None  # presence checked by caller
+        _set_eol_comment(kv, None)
 
     @override
     def __setitem__(self, key: str, value: str) -> None:
         _, kv = self._table._find_direct_kv(key)  # noqa: SLF001
         _set_eol_comment(kv, value if value != "" else None)
 
-    @override
-    def __delitem__(self, key: str) -> None:
-        _, kv = self._table._find_direct_kv(key)  # noqa: SLF001
-        if kv.trailing_comment is None:
-            raise KeyError(key)
-        _set_eol_comment(kv, None)
 
-    @override
-    def __iter__(self) -> Iterator[str]:
-        for k, _ in self._commented_kvs():
-            yield k
-
-    @override
-    def __len__(self) -> int:
-        return sum(1 for _ in self._commented_kvs())
-
-    @override
-    def __repr__(self) -> str:
-        body = ", ".join(f"{k!r}: {v!r}" for k, v in self.items())
-        return f"{type(self).__name__}({{{body}}})"
-
-
-class _TableLeadingCommentsView(MutableMapping[str, "tuple[str, ...]"]):
+class _TableLeadingCommentsView(_TableKVViewBase["tuple[str, ...]"]):
     """Live mapping from key name to its leading comment block.
 
     The block is the contiguous run of ``# ...`` lines immediately
@@ -3245,18 +3338,18 @@ class _TableLeadingCommentsView(MutableMapping[str, "tuple[str, ...]"]):
     non-empty.
     """
 
-    __slots__ = ("_table",)
-
-    def __init__(self, table: _StdTable) -> None:
-        self._table = table
+    _view_name = "leading_comments"
 
     @override
-    def __getitem__(self, key: str) -> tuple[str, ...]:
-        _, kv = self._table._find_direct_kv(key)  # noqa: SLF001
-        block = _extract_trailing_comment_block(kv.leading)
-        if not block:
-            raise KeyError(key)
-        return block
+    def _read(self, key: str) -> tuple[str, ...] | None:
+        kv = self._find_kv(key)
+        if kv is None:
+            return None
+        return _extract_trailing_comment_block(kv.leading) or None
+
+    @override
+    def _write_absent(self, key: str) -> None:
+        self[key] = ()
 
     @override
     def __setitem__(self, key: str, value: Sequence[str]) -> None:
@@ -3268,49 +3361,39 @@ class _TableLeadingCommentsView(MutableMapping[str, "tuple[str, ...]"]):
         )
 
     @override
-    def __delitem__(self, key: str) -> None:
-        _, kv = self._table._find_direct_kv(key)  # noqa: SLF001
-        if not _extract_trailing_comment_block(kv.leading):
+    def _format_value(self, value: tuple[str, ...]) -> str:
+        return repr(list(value))
+
+
+class _ArrayItemViewBase(_PresenceFilteredView[int, _VV]):
+    """Common scaffolding for :class:`Array`-item-backed views."""
+
+    __slots__ = ("_array",)
+
+    _view_name: ClassVar[str]
+
+    def __init__(self, array: Array) -> None:
+        self._array = array
+
+    @override
+    def _check_key(self, key: object) -> int:
+        if not isinstance(key, int):
+            msg = (
+                f"Array.{self._view_name} index must be int, "
+                f"got {type(key).__name__}"
+            )
+            raise TypeError(msg)
+        n = len(self._array._node.items)  # noqa: SLF001
+        if not 0 <= key < n:
             raise KeyError(key)
-        self[key] = ()
+        return key
 
     @override
-    def __iter__(self) -> Iterator[str]:
-        for sec in self._table._direct_sections():  # noqa: SLF001
-            for kv in sec.entries:
-                if len(kv.key.path) == 1 and _extract_trailing_comment_block(
-                    kv.leading
-                ):
-                    yield kv.key.path[0]
-
-    @override
-    def __len__(self) -> int:
-        return sum(1 for _ in self)
-
-    @override
-    def __repr__(self) -> str:
-        body = ", ".join(f"{k!r}: {list(v)!r}" for k, v in self.items())
-        return f"{type(self).__name__}({{{body}}})"
+    def _keys(self) -> Iterator[int]:
+        return iter(range(len(self._array._node.items)))  # noqa: SLF001
 
 
-def _array_index_or_raise(array: Array, key: object, view_name: str) -> int:
-    """Validate ``key`` as an in-bounds int index for ``array``.
-
-    Raises :class:`TypeError` for non-int keys (with a message naming
-    the offending view) and :class:`KeyError` for out-of-range ones.
-    Centralised so the array-backed comment views share one
-    implementation.
-    """
-    if not isinstance(key, int):
-        msg = f"Array.{view_name} index must be int, got {type(key).__name__}"
-        raise TypeError(msg)
-    n = len(array._node.items)  # noqa: SLF001
-    if not 0 <= key < n:
-        raise KeyError(key)
-    return key
-
-
-class _ArrayCommentsView(MutableMapping[int, str]):
+class _ArrayCommentsView(_ArrayItemViewBase[str]):
     """Live mapping from array index to that item's end-of-line comment.
 
     Backed by an :class:`Array`. An index is "present" iff the
@@ -3319,16 +3402,11 @@ class _ArrayCommentsView(MutableMapping[int, str]):
     its ``trailing`` trivia (last item, no trailing comma).
     """
 
-    __slots__ = ("_array",)
+    _view_name = "comments"
 
-    def __init__(self, array: Array) -> None:
-        self._array = array
-
-    def _check_index(self, key: object) -> int:
-        return _array_index_or_raise(self._array, key, "comments")
-
-    def _read_eol(self, i: int) -> str | None:
-        item = self._array._node.items[i]  # noqa: SLF001
+    @override
+    def _read(self, key: int) -> str | None:
+        item = self._array._node.items[key]  # noqa: SLF001
         if item.has_comma:
             c = _extract_eol_comment(item.post_comma_trivia)
             if c is not None:
@@ -3336,16 +3414,16 @@ class _ArrayCommentsView(MutableMapping[int, str]):
         return _extract_eol_comment(item.trailing)
 
     @override
-    def __getitem__(self, key: int) -> str:
-        i = self._check_index(key)
-        c = self._read_eol(i)
-        if c is None:
-            raise KeyError(key)
-        return c
+    def _write_absent(self, key: int) -> None:
+        item = self._array._node.items[key]  # noqa: SLF001
+        if _extract_eol_comment(item.post_comma_trivia) is not None:
+            _replace_eol_comment(item.post_comma_trivia, None, force_newline=False)
+        if _extract_eol_comment(item.trailing) is not None:
+            _replace_eol_comment(item.trailing, None, force_newline=False)
 
     @override
     def __setitem__(self, key: int, value: str) -> None:
-        i = self._check_index(key)
+        i = self._check_key(key)
         items = self._array._node.items  # noqa: SLF001
         item = items[i]
         is_last = i == len(items) - 1
@@ -3401,46 +3479,8 @@ class _ArrayCommentsView(MutableMapping[int, str]):
             pieces.pop(0)
         ft.pieces = [NewlineNode("\n"), *pieces]
 
-    @override
-    def __delitem__(self, key: int) -> None:
-        i = self._check_index(key)
-        item = self._array._node.items[i]  # noqa: SLF001
-        had = False
-        if _extract_eol_comment(item.post_comma_trivia) is not None:
-            _replace_eol_comment(item.post_comma_trivia, None, force_newline=False)
-            had = True
-        if _extract_eol_comment(item.trailing) is not None:
-            _replace_eol_comment(item.trailing, None, force_newline=False)
-            had = True
-        if not had:
-            raise KeyError(key)
 
-    @override
-    def __iter__(self) -> Iterator[int]:
-        for i in range(len(self._array._node.items)):  # noqa: SLF001
-            if self._read_eol(i) is not None:
-                yield i
-
-    @override
-    def __len__(self) -> int:
-        return sum(1 for _ in self)
-
-    @override
-    def __contains__(self, key: object) -> bool:
-        if not isinstance(key, int):
-            return False
-        n = len(self._array._node.items)  # noqa: SLF001
-        if not 0 <= key < n:
-            return False
-        return self._read_eol(key) is not None
-
-    @override
-    def __repr__(self) -> str:
-        body = ", ".join(f"{k}: {v!r}" for k, v in self.items())
-        return f"{type(self).__name__}({{{body}}})"
-
-
-class _ArrayLeadingCommentsView(MutableMapping[int, "tuple[str, ...]"]):
+class _ArrayLeadingCommentsView(_ArrayItemViewBase["tuple[str, ...]"]):
     """Live mapping from array index to its leading comment block.
 
     For item 0, the block is extracted from ``items[0].leading`` (the
@@ -3450,20 +3490,21 @@ class _ArrayLeadingCommentsView(MutableMapping[int, "tuple[str, ...]"]):
     that belongs to item i-1).
     """
 
-    __slots__ = ("_array",)
+    _view_name = "leading_comments"
 
-    def __init__(self, array: Array) -> None:
-        self._array = array
-
-    def _check_index(self, key: object) -> int:
-        return _array_index_or_raise(self._array, key, "leading_comments")
-
-    def _read(self, i: int) -> tuple[str, ...]:
+    @override
+    def _read(self, key: int) -> tuple[str, ...] | None:
         items = self._array._node.items  # noqa: SLF001
-        trivia, min_start = _logical_leading_slot(items, i)
-        return _extract_trailing_comment_block(trivia, min_start=min_start)
+        trivia, min_start = _logical_leading_slot(items, key)
+        return _extract_trailing_comment_block(trivia, min_start=min_start) or None
 
-    def _write(self, i: int, value: Sequence[str]) -> None:
+    @override
+    def _write_absent(self, key: int) -> None:
+        self[key] = ()
+
+    @override
+    def __setitem__(self, key: int, value: Sequence[str]) -> None:
+        i = self._check_key(key)
         items = self._array._node.items  # noqa: SLF001
         indent = _array_indent(self._array._node)  # noqa: SLF001
         trivia, min_start = _logical_leading_slot(items, i)
@@ -3478,48 +3519,8 @@ class _ArrayLeadingCommentsView(MutableMapping[int, "tuple[str, ...]"]):
         _replace_trailing_comment_block(trivia, value, indent, min_start=min_start)
 
     @override
-    def __getitem__(self, key: int) -> tuple[str, ...]:
-        i = self._check_index(key)
-        block = self._read(i)
-        if not block:
-            raise KeyError(key)
-        return block
-
-    @override
-    def __setitem__(self, key: int, value: Sequence[str]) -> None:
-        i = self._check_index(key)
-        self._write(i, value)
-
-    @override
-    def __delitem__(self, key: int) -> None:
-        i = self._check_index(key)
-        if not self._read(i):
-            raise KeyError(key)
-        self._write(i, ())
-
-    @override
-    def __iter__(self) -> Iterator[int]:
-        for i in range(len(self._array._node.items)):  # noqa: SLF001
-            if self._read(i):
-                yield i
-
-    @override
-    def __len__(self) -> int:
-        return sum(1 for _ in self)
-
-    @override
-    def __contains__(self, key: object) -> bool:
-        if not isinstance(key, int):
-            return False
-        n = len(self._array._node.items)  # noqa: SLF001
-        if not 0 <= key < n:
-            return False
-        return bool(self._read(key))
-
-    @override
-    def __repr__(self) -> str:
-        body = ", ".join(f"{k}: {list(v)!r}" for k, v in self.items())
-        return f"{type(self).__name__}({{{body}}})"
+    def _format_value(self, value: tuple[str, ...]) -> str:
+        return repr(list(value))
 
 
 # ---------------------------------------------------------------------------
