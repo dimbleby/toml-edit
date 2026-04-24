@@ -1757,3 +1757,39 @@ def test_aot_insert_at_zero_separates_from_following_entry() -> None:
     doc = tomlrt.loads("[[a]]\nx = 1\n[[a]]\nx = 2\n")
     doc["a"].insert(0, {"x": 0})
     assert tomlrt.dumps(doc) == "[[a]]\nx = 0\n[[a]]\nx = 1\n[[a]]\nx = 2\n"
+
+
+def test_replace_section_preserves_leading_comments() -> None:
+    """Replacing a section in place via ``doc[k] = Table.section({...})``
+    used to silently drop the comment block that sat above the original
+    ``[k]`` header. The slot was reused (since 5527097) but the leading
+    trivia was not. Now the prior header's leading is transplanted onto
+    the replacement so the surrounding visual context survives.
+    """
+    src = "# leader\n[a]\nx=1\n[b]\ny=2\n"
+    doc = tomlrt.loads(src)
+    doc["a"] = tomlrt.Table.section({"new": 99})
+    assert tomlrt.dumps(doc) == "# leader\n[a]\nnew = 99\n[b]\ny=2\n"
+
+    # Mid-document, multi-line comment block: also preserved.
+    src = "[a]\nx=1\n\n# big\n# block\n[b]\ny=2\n"
+    doc = tomlrt.loads(src)
+    doc["b"] = tomlrt.Table.section({"new": 99})
+    assert tomlrt.dumps(doc) == "[a]\nx=1\n\n# big\n# block\n[b]\nnew = 99\n"
+
+
+def test_replace_aot_preserves_leading_comments() -> None:
+    """Same shape for ``doc[k] = AoT([...])`` over an existing AoT."""
+    src = "# top\n# block\n[[a]]\nn=1\n[[a]]\nn=2\n[b]\nx=1\n"
+    doc = tomlrt.loads(src)
+    doc["a"] = tomlrt.AoT([{"n": 9}])
+    assert tomlrt.dumps(doc) == "# top\n# block\n[[a]]\nn = 9\n[b]\nx=1\n"
+
+
+def test_replace_section_with_aot_preserves_leading_comments() -> None:
+    """Cross-flavour replacement still preserves the prior header's
+    leading: the slot is the same, only the body changes shape."""
+    src = "# block\n[a]\nx=1\n[b]\ny=2\n"
+    doc = tomlrt.loads(src)
+    doc["a"] = tomlrt.AoT([{"n": 1}])
+    assert tomlrt.dumps(doc) == "# block\n[[a]]\nn = 1\n[b]\ny=2\n"

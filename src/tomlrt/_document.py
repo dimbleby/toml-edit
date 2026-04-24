@@ -920,6 +920,31 @@ def _clone_table_sections(
     return new_secs
 
 
+def _apply_prior_leading(
+    new_secs: Sequence[SectionNode],
+    prior_leading: Trivia | None,
+) -> None:
+    """Transplant a prior section's header trivia onto a replacement block.
+
+    ``_prepare_section_slot`` snapshots the leading trivia of the
+    section being replaced (the comments / blank lines that sat above
+    its ``[name]`` / ``[[name]]`` line) before purging. When a new
+    block of sections is about to be spliced into the same slot, we
+    move that trivia onto the first new section's header so the
+    replacement preserves the visual context of the original.
+
+    A no-op when there was no prior section, when the new block is
+    empty, or when the new block starts with an entries-only section
+    (no header to attach the trivia to).
+    """
+    if prior_leading is None or not new_secs:
+        return
+    first = new_secs[0]
+    if first.header is None:
+        return
+    first.header.leading = prior_leading
+
+
 def _insert_section_block(
     doc_node: DocumentNode,
     insert_at: int,
@@ -2661,15 +2686,23 @@ class _StdTable(Table):
     def _prepare_section_slot(
         self,
         parts: tuple[str, ...],
-    ) -> tuple[tuple[str, ...], int]:
+    ) -> tuple[tuple[str, ...], int, Trivia | None]:
         """Purge any conflicting value at ``parts`` and pick an insert index.
 
-        Returns ``(full_path, insert_at)`` where ``full_path`` is the
-        absolute CST path (``self._path + parts``) and ``insert_at`` is
-        the position in ``self._doc_node.sections`` where a new block
-        for ``full_path`` should be spliced in. Drops any redundant
-        empty placeholder header at ``self._path`` first so it doesn't
-        survive as visual noise once the new child section is in place.
+        Returns ``(full_path, insert_at, prior_leading)`` where:
+
+        * ``full_path`` is the absolute CST path (``self._path + parts``).
+        * ``insert_at`` is the position in ``self._doc_node.sections`` where
+          a new block for ``full_path`` should be spliced in.
+        * ``prior_leading`` is the leading trivia of the first matching
+          section's header captured *before* purging, or ``None`` if no
+          such section existed. Callers should transplant it onto the
+          first new section's header so an in-place replacement preserves
+          the comments / blank lines that sat above the original.
+
+        Drops any redundant empty placeholder header at ``self._path``
+        first so it doesn't survive as visual noise once the new child
+        section is in place.
 
         If a section (or descendant of one) already sits at
         ``full_path``, remember its position before purging and reuse
@@ -2682,6 +2715,7 @@ class _StdTable(Table):
         scope = self._scope()
         scope_ids = None if scope is None else {id(s) for s in scope}
         prior_index: int | None = None
+        prior_leading: Trivia | None = None
         for i, sec in enumerate(self._doc_node.sections):
             hdr = sec.header
             if (
@@ -2691,6 +2725,12 @@ class _StdTable(Table):
                 and hdr.key.path[:plen] == full_path
             ):
                 prior_index = i
+                # Capture only when the matched section's header is exactly
+                # at full_path: a deeper match (e.g. ``[a.b.c]`` while we
+                # replace ``[a.b]``) is a sub-section, not the slot itself,
+                # and its leading belongs to it rather than to the parent.
+                if len(hdr.key.path) == plen:
+                    prior_leading = _clone_trivia(hdr.leading)
                 break
         if len(parts) == 1:
             kind, _ = self._classify(parts[0])
@@ -2703,14 +2743,18 @@ class _StdTable(Table):
             # Only matching sections (within scope) get purged, so the
             # first match's index is preserved as a valid splice point.
             assert prior_index <= len(sections)
-            return full_path, prior_index
+            return full_path, prior_index, prior_leading
         owner = self._owner_anchor
         if owner is None:
-            return full_path, _section_insert_index(sections, full_path)
+            return full_path, _section_insert_index(sections, full_path), None
         # AoT-entry sub-table with no prior section at this path:
         # pin the new section to the end of this entry's owned range
         # so it doesn't get re-attributed to a later entry on round-trip.
-        return full_path, sections.index(owner) + len(self._scope() or ())
+        return (
+            full_path,
+            sections.index(owner) + len(self._scope() or ()),
+            None,
+        )
 
     def _install_attached_aot(
         self,
@@ -2724,8 +2768,9 @@ class _StdTable(Table):
         their original inter-header trivia, so we let
         ``_insert_section_block`` handle only the leading separation.
         """
-        full_path, insert_at = self._prepare_section_slot(parts)
+        full_path, insert_at, prior_leading = self._prepare_section_slot(parts)
         new_secs = list(_clone_aot_sections(value, full_path))
+        _apply_prior_leading(new_secs, prior_leading)
         _insert_section_block(
             self._doc_node,
             insert_at,
@@ -2742,13 +2787,14 @@ class _StdTable(Table):
         parts: tuple[str, ...],
         entries: Iterable[Mapping[str, object]],
     ) -> AoT:
-        full_path, insert_at = self._prepare_section_slot(parts)
+        full_path, insert_at, prior_leading = self._prepare_section_slot(parts)
         aot = AoT._attached_to(self._doc_node, full_path, [])  # noqa: SLF001
         new_secs: list[SectionNode] = []
         for entry in entries:
             sec = aot._make_header_section()  # noqa: SLF001
             aot._populate_section(sec, entry)  # noqa: SLF001
             new_secs.append(sec)
+        _apply_prior_leading(new_secs, prior_leading)
         _insert_section_block(self._doc_node, insert_at, new_secs)
         aot._resync()  # noqa: SLF001
         # Make sure the AoT is reachable through dict storage even when it is
@@ -2763,9 +2809,10 @@ class _StdTable(Table):
         parts: tuple[str, ...],
         value: Mapping[str, object] = MappingProxyType({}),
     ) -> Table:
-        full_path, insert_at = self._prepare_section_slot(parts)
+        full_path, insert_at, prior_leading = self._prepare_section_slot(parts)
         new_sec = _new_section(full_path)
         new_sec.synthesised_placeholder = True
+        _apply_prior_leading([new_sec], prior_leading)
         _insert_section_block(self._doc_node, insert_at, [new_sec])
         # Inherit ``owner_anchor`` from the parent so a sub-section
         # installed inside an AoT entry stays scoped to that entry —
@@ -2827,8 +2874,9 @@ class _StdTable(Table):
         """
         full_path = (*self._path, *parts)
         new_secs = _clone_table_sections(value, full_path)
-        _full_path, insert_at = self._prepare_section_slot(parts)
+        _full_path, insert_at, prior_leading = self._prepare_section_slot(parts)
         if new_secs:
+            _apply_prior_leading(new_secs, prior_leading)
             _insert_section_block(
                 self._doc_node,
                 insert_at,
