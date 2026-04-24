@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The four comment views (`Table.comments`, `Table.leading_comments`,
+  `Array.comments`, `Array.leading_comments`) now share a common
+  `_PresenceFilteredView` base plus a kind-specific intermediate
+  (`_TableKVViewBase`, `_ArrayItemViewBase`). Each subclass now
+  defines only the value-shaped parts (`_read`, `_write_absent`,
+  `__setitem__`); the `MutableMapping` boilerplate
+  (`__getitem__`/`__delitem__`/`__iter__`/`__len__`/`__contains__`/
+  `__repr__`) lives in one place. As a side effect the array-view
+  `__contains__` semantics now also apply to both table views: a
+  non-`str` key returns `False` instead of raising `TypeError`,
+  matching `dict` semantics. No other user-visible behaviour change.
+
 - CST node dataclasses now declare `eq=False`, so `==` / `in` / `list.index`
   / `list.remove` / set membership all fall back to identity comparison.
   This is what every internal call site already wanted; the previous
