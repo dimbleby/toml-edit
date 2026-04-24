@@ -2660,7 +2660,7 @@ class _StdTable(Table):
             # AoT-entry sub-table: pin the new section to the end of
             # this entry's owned range so it doesn't get re-attributed
             # to a later entry on round-trip.
-            insert_at = sections.index(owner) + len(self._scope() or ())
+            insert_at = _index_of(sections, owner) + len(self._scope() or ())
         return full_path, insert_at
 
     def _install_attached_aot(

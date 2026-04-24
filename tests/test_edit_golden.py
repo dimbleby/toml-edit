@@ -617,6 +617,42 @@ def test_section_subkey_across_aot_entries_keeps_values_separate() -> None:
         assert dict(parsed["package"][i]["source"]) == want
 
 
+def test_section_subkey_across_identical_aot_entries() -> None:
+    """Adjacent AoT entries with identical content keep their sub-sections
+    distinct.
+
+    ``_prepare_section_slot`` used ``list.index`` (``==``) to locate the
+    owning ``[[..]]`` anchor inside ``self._doc_node.sections``. When
+    two siblings had identical entries, that returned the first
+    matching position for both, so installing a sub-section under the
+    later sibling spliced an empty placeholder into the *earlier*
+    sibling's range and put the new content next to its existing
+    ``[..source]`` — corrupting both on round-trip.
+    """
+    doc = tomlrt.document()
+    doc["package"] = AoT([{"n": "a"}, {"n": "b"}, {"n": "b"}])
+    doc["package"][0]["source"] = Table.section({"x": "prev"})
+    doc["package"][1]["source"] = Table.section({"x": "c"})
+    doc["package"][2]["source"] = Table.section({"x": "d"})
+
+    expected = (
+        '[[package]]\nn = "a"\n\n'
+        '[package.source]\nx = "prev"\n\n'
+        '[[package]]\nn = "b"\n\n'
+        '[package.source]\nx = "c"\n\n'
+        '[[package]]\nn = "b"\n\n'
+        '[package.source]\nx = "d"\n'
+    )
+    assert tomlrt.dumps(doc) == expected
+
+    parsed = tomlrt.parse(tomlrt.dumps(doc))
+    assert [dict(p["source"]) for p in parsed["package"]] == [
+        {"x": "prev"},
+        {"x": "c"},
+        {"x": "d"},
+    ]
+
+
 def test_del_after_emptying_descendant_succeeds() -> None:
     """A cached implicit-table view stays deletable after its only descendant
     is removed.
