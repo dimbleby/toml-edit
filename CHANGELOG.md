@@ -38,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (e.g. `aot[i]["source"] = Table.section({...})` in a loop) now keeps
   each entry's values separate instead of leaking writes into the first
   matching `[aot.k]` section and corrupting earlier entries.
+- Installing a sub-section under an AoT entry whose `[[..]]` header is
+  byte-identical to a sibling's no longer splices the new block into
+  the wrong entry's range. The insert-index lookup now uses identity
+  rather than equality.
 
 ## [0.4.0] - 2026-04-23
 
