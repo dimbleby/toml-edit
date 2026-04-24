@@ -1033,21 +1033,25 @@ def _clone_aot_sections(
     value: AoT,
     full_path: tuple[str, ...],
 ) -> Iterator[SectionNode]:
-    """Deep-clone ``value``'s own sections, rewriting each header to ``full_path``.
+    """Deep-clone every CST section that contributes to ``value``, rebased.
 
-    Used to copy an attached AoT into a (possibly different) document
-    while preserving every byte of its formatting and comments. Each
-    yielded section has ``header is not None`` and a fresh :class:`Key`
-    matching ``full_path``; surrounding placement (insert index,
+    Each AoT entry contributes its ``[[path]]`` header *and* any
+    sub-sections in its owned range (e.g. ``[path.sub]`` /
+    ``[[path.nested]]``). All of them are deep-cloned and have their
+    header paths rewritten so the ``len(value._path)``-prefix is
+    replaced by ``full_path``. Surrounding placement (insert index,
     blank-line policy, dict-storage sync) is the caller's job.
     """
-    new_parts = [make_key_part(p) for p in full_path]
-    new_seps = ["."] * (len(new_parts) - 1)
-    for src_sec in value._own_sections():  # noqa: SLF001
-        cloned = deepcopy(src_sec)
-        assert cloned.header is not None
-        cloned.header.key = Key(parts=list(new_parts), separators=list(new_seps))
-        yield cloned
+    src_path = value._path  # noqa: SLF001
+    splen = len(src_path)
+    for header in value._own_sections():  # noqa: SLF001
+        block = [header, *value._doc_node.aot_owned_range(header)]  # noqa: SLF001
+        for src_sec in block:
+            cloned = deepcopy(src_sec)
+            assert cloned.header is not None
+            new_path = (*full_path, *cloned.header.key.path[splen:])
+            cloned.header.key = _make_dotted_key(new_path)
+            yield cloned
 
 
 def _new_host_section(path: tuple[str, ...]) -> SectionNode:

@@ -1140,3 +1140,33 @@ def test_aot_entry_assigned_as_std_table_renders_as_table_header() -> None:
     assert "[[t]]" not in out
     assert "# c" in out
     assert "# eol" in out
+
+
+def test_cross_doc_aot_assignment_preserves_subsections() -> None:
+    """``dst[k] = src.aot(k)`` must carry over each entry's owned
+    sub-sections (``[k.sub]`` etc.) and their data, not just the
+    ``[[k]]`` headers. Previously the cross-doc AoT clone path silently
+    dropped sub-sections, losing both data and comments."""
+    src = tomlrt.loads(
+        "[[a]]\n# leading\nx = 1\n[a.sub]\n# nested\ny = 2\n[[a]]\nz = 3\n",
+    )
+    dst = tomlrt.loads("")
+    dst["a"] = src.aot("a")
+    out = tomlrt.dumps(dst)
+    assert "# leading" in out
+    assert "[a.sub]" in out
+    assert "# nested" in out
+    assert "y = 2" in out
+    assert "z = 3" in out
+
+
+def test_same_doc_aot_assigned_under_new_key_preserves_subsections() -> None:
+    """Same-document copy under a new key must rebase sub-section paths
+    too: ``[a.sub]`` becomes ``[b.sub]`` when the AoT is copied to ``b``."""
+    doc = tomlrt.loads("[[a]]\nx = 1\n[a.sub]\ny = 2\n")
+    doc["b"] = doc.aot("a")
+    out = tomlrt.dumps(doc)
+    assert "[b.sub]" in out
+    assert "y = 2" in out
+    # Source is unchanged.
+    assert "[a.sub]" in out
