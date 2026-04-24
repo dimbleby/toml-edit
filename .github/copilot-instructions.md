@@ -28,7 +28,7 @@ If a change you are about to make could break that, stop and rethink.
 
 ```bash
 uv sync                          # install dev deps
-uv run pytest -q                 # run the test suite (~1s)
+uv run pytest -q                 # run the test suite (~10s)
 uv run pytest --cov              # tests + branch coverage
 uv run mypy                      # strict type-check src/ and tests/
 uv run ruff check .              # lint
@@ -73,6 +73,18 @@ The codebase is small and deliberately layered. Read in this order:
 - **`_synthesise.py`** — converts plain Python values (`str`, `int`,
   `bool`, `datetime`, `list`, `dict`, …) into newly synthesised CST
   nodes when the user assigns into the document.
+- **`_trivia.py`** — pure helpers over `Trivia` and `TriviaPiece`
+  sequences: comment formatting, EOL-comment handling, scanning and
+  rewriting leading/trailing-comment blocks, line-ending detection.
+  Depends only on `_nodes` and `_errors`.
+- **`_separator.py`** — comma-separator style sampling and
+  re-application for inline arrays and inline tables
+  (`_SeparatorStyle`, snapshot/restore of per-item leading comments).
+  Depends on `_trivia` only.
+- **`_section_build.py`** — section construction, deep-clone-with-
+  rebase, and splice helpers used when assigning whole tables / AoTs
+  into a document. Reaches into `_document` privates by design (it is
+  the inverse of "give me the CST that backs this view").
 - **`_document.py`** — the **logical view layer**: `Document`, `Table`,
   `Array`, `AoT` wrappers that present a dict/list-shaped API while
   delegating all mutation to the CST. The Comment API and typed
@@ -97,6 +109,9 @@ usually right; a change that has to touch all of them is usually wrong.
 - `tests/test_compliance.py` — the official **`toml-test`** suite
   (vendored under `vendor/`). Do not edit fixtures there to make
   failures pass.
+- `tests/test_dict_semantics.py` — pins the user-visible behaviours
+  that come from `Table` actually being a `dict` subclass
+  (`isinstance`, ``**t`` unpacking, identity stability of lookups).
 - `tests/test_toml11.py` — TOML 1.1-specific coverage.
 - `tests/test_hypothesis.py` — property-based round-trip tests. If you
   break round-tripping, this will usually catch it; add new strategies
