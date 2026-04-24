@@ -36,6 +36,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `doc[k] = other.aot("a")[i]` previously produced a ``[[k]]`` AoT
+  header instead of the expected ``[k]`` standard-table header,
+  because ``_clone_table_sections`` carried the source section's
+  ``kind`` over verbatim. The same accident in mirror image was also
+  the reason the AoT-side commit needed to flip ``kind`` manually in
+  ``_build_entry_block``. Both are now handled by a single
+  ``head_kind`` parameter on ``_clone_table_sections``: standard-table
+  installs pass ``"table"`` (the default), AoT installs pass
+  ``"array"``, and the helper takes care of normalising the cloned
+  head section's kind.
+
 - `AoT.append`, `AoT.insert`, `AoT.extend`, `AoT.add` and
   `AoT.__setitem__` now preserve per-KV trivia, sub-section headers,
   and any nested AoTs when the value is a `Table` view (whether from

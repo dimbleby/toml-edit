@@ -1123,3 +1123,20 @@ def test_aot_append_std_section_table_preserves_comments() -> None:
     out = tomlrt.dumps(dst)
     assert "# leading" in out
     assert "# eol" in out
+
+
+def test_aot_entry_assigned_as_std_table_renders_as_table_header() -> None:
+    """``doc[k] = aot[i]`` must produce a ``[k]`` header, not ``[[k]]``.
+
+    Symmetric to the AoT-side fix: ``_clone_table_sections`` previously
+    preserved the source section's header kind, so an AoT entry copied
+    through the standard-table install path kept its ``[[..]]`` header
+    even though the slot's semantic type is ``table``."""
+    src = tomlrt.loads("[[a]]\n# c\nx = 1  # eol\n")
+    dst = tomlrt.loads("")
+    dst["t"] = src.aot("a")[0]
+    out = tomlrt.dumps(dst)
+    assert "[t]" in out
+    assert "[[t]]" not in out
+    assert "# c" in out
+    assert "# eol" in out
