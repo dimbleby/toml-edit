@@ -36,6 +36,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `AoT.__imul__` (in-place repetition, e.g. `aot *= 2`) now keeps each
+  duplicated entry's leading-comment block attached to that entry,
+  instead of overwriting the duplicated first entry's comment with the
+  second entry's comment. Previously the inter-repetition separator was
+  sampled wholesale from the second block's leading (separator + comment
+  together), so doubling `# A\n[[t]]\n…\n# B\n[[t]]\n…` rendered the
+  duplicated copies as `…\n# B\n[[t]]\n…\n# B\n[[t]]\n…`. Now only the
+  separator portion of that leading is reused; each duplicated block
+  retains its own deep-copied comment.
+
 - `AoT.reverse()` and `AoT.sort()` now move each entry's leading
   comment block with the entry, instead of leaving the comments
   stranded at their original storage slots. Previously the leadings
