@@ -2647,7 +2647,16 @@ class _StdTable(Table):
                 self._purge_conflicting(parts[0])
         else:
             self._doc_node.purge_path(full_path)
-        return full_path, _section_insert_index(self._doc_node.sections, full_path)
+        sections = self._doc_node.sections
+        owner = self._owner_anchor
+        if owner is None:
+            insert_at = _section_insert_index(sections, full_path)
+        else:
+            # AoT-entry sub-table: pin the new section to the end of
+            # this entry's owned range so it doesn't get re-attributed
+            # to a later entry on round-trip.
+            insert_at = sections.index(owner) + len(self._scope() or ())
+        return full_path, insert_at
 
     def _install_attached_aot(
         self,

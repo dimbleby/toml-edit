@@ -549,6 +549,34 @@ def test_chained_supertable_assignment_drops_empty_parent() -> None:
     assert tomlrt.dumps(doc5) == "[tool]\n"
 
 
+def test_subsection_under_non_last_aot_entry_lands_in_owned_range() -> None:
+    """``aot[i][k] = Table.section(...)`` lands inside entry ``i``'s range.
+
+    Previously the new ``[aot.k]`` section was appended after the last
+    sibling sharing the parent prefix, which for a non-last AoT entry
+    meant it landed past every later entry — silently re-attributing
+    on round-trip and producing duplicate header data corruption when
+    multiple entries had the same sub-table key set.
+    """
+    doc = tomlrt.document()
+    doc["package"] = AoT([{"n": "a"}, {"n": "b"}, {"n": "c"}])
+    doc["package"][0]["source"] = Table.section({"x": 1})
+    doc["package"][1]["source"] = Table.section({"y": 2})
+    expected = (
+        '[[package]]\nn = "a"\n\n'
+        "[package.source]\nx = 1\n\n"
+        '[[package]]\nn = "b"\n\n'
+        "[package.source]\ny = 2\n\n"
+        '[[package]]\nn = "c"\n'
+    )
+    assert tomlrt.dumps(doc) == expected
+    # Round-trip preserves the per-entry attribution.
+    parsed = tomlrt.parse(tomlrt.dumps(doc))
+    assert parsed["package"][0]["source"]["x"] == 1
+    assert parsed["package"][1]["source"]["y"] == 2
+    assert "source" not in parsed["package"][2]
+
+
 def test_install_attached_aot_preserves_comments() -> None:
     # `install` and `__setitem__` should both deep-clone the source CST
     # when given an attached AoT from another document. The previous

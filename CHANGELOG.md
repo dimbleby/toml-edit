@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Assigning `Table.section({})` and then a child section (e.g.
   `doc[k] = Table.section({}); doc[k][c] = ...`) no longer leaves an
   empty `[k]` header above the child.
+- Assigning a sub-section into a non-last AoT entry (e.g.
+  `aot[0]["x"] = Table.section({...})`) now lands inside that entry's
+  range instead of being appended after every later entry, which
+  previously caused silent re-attribution on round-trip.
 
 ## [0.4.0] - 2026-04-23
 
