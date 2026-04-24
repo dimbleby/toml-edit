@@ -31,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `aot[0]["x"] = Table.section({...})`) now lands inside that entry's
   range instead of being appended after every later entry, which
   previously caused silent re-attribution on round-trip.
+- Deleting a key whose value is an in-cache table view that has no
+  remaining CST footprint (e.g. after emptying its only descendant)
+  no longer spuriously raises `KeyError`.
 
 ## [0.4.0] - 2026-04-23
 

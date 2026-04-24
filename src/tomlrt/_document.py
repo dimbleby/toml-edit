@@ -1760,8 +1760,9 @@ class _InlineTable(Table):
 
     @override
     def _delete_value(self, key: str) -> None:
-        if not self.del_prefix((key,)):
-            raise KeyError(key)
+        # Best-effort CST cleanup; presence is enforced by the caller
+        # (``Table.__delitem__``) at the cache level.
+        self.del_prefix((key,))
 
 
 def _path_has_prefix(path: tuple[str, ...], prefix: tuple[str, ...]) -> bool:
@@ -2309,7 +2310,11 @@ class _StdTable(Table):
     def _delete_value(self, key: str) -> None:
         kind, payload = self._classify(key)
         if kind == "absent":
-            raise KeyError(key)
+            # Nothing to remove from the CST. Either the caller already
+            # validated presence at the cache level (``Table.__delitem__``
+            # does), or the key is genuinely absent and the cache will
+            # raise on its own. Either way, the CST has no work to do.
+            return
         if kind in ("direct", "extras") and isinstance(payload, KeyValueNode):
             # Targeted removal: drop just the matching KV from its section.
             # Avoids the O(N) section walks and full-list rebuilds in
