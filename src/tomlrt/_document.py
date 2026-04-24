@@ -1476,11 +1476,14 @@ class _StdTable(Table):
         # first content being added to a previously-empty doc) ahead of
         # the new KV. No-op once the doc has structural content.
         self._doc_node.adopt_preamble_into(new_kv.leading)
+        target_was_empty = not target.entries
         target.entries.append(new_kv)
-        # Top-level only: if this assignment is into the implicit
-        # pre-header section and a ``[table]`` follows, ensure a blank
-        # line separates the new key from that header.
-        if self._path == () and target.header is None:
+        # Top-level only: if this is the *first* key being added to the
+        # implicit pre-header section and a ``[table]`` follows, separate
+        # the new key from that header with a blank line. When the
+        # pre-header section already had user-authored entries we leave
+        # the layout below alone — the user chose it deliberately.
+        if self._path == () and target.header is None and target_was_empty:
             doc_node = self._doc_node
             idx = doc_node.sections.index(target)
             if idx + 1 < len(doc_node.sections):
