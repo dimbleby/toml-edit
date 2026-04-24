@@ -45,11 +45,7 @@ if TYPE_CHECKING:
 
     from tomlrt._nodes import HeaderKind, IntStyle, ValueNode
 
-_BARE_KEY_CHARS: Final[frozenset[str]] = frozenset(
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-",
-)
 _HEX_DIGITS: Final[frozenset[str]] = frozenset("0123456789abcdefABCDEF")
-_DEC_DIGITS: Final[frozenset[str]] = frozenset("0123456789")
 _OCT_DIGITS: Final[frozenset[str]] = frozenset("01234567")
 _BIN_DIGITS: Final[frozenset[str]] = frozenset("01")
 
@@ -57,7 +53,6 @@ _BIN_DIGITS: Final[frozenset[str]] = frozenset("01")
 # anchored at the cursor (we use ``match`` with an explicit ``pos``);
 # the resulting ``end()`` tells us how many characters to consume in a
 # single C-level call instead of a Python-level loop.
-_RE_INLINE_WS = re.compile(r"[ \t]+")
 _RE_BARE_KEY = re.compile(r"[A-Za-z0-9_\-]+")
 # Body of a basic string: any run of chars that are NOT a quote,
 # backslash, newline, or control char (control = U+0000-U+001F or
