@@ -24,6 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Overwriting a dotted-key sub-table with a scalar (e.g. `doc["a"]["b"] = 99`
+  when the doc was `[a.b]\nx=1`) no longer leaves a stray blank line above
+  the materialised parent header. `_ensure_nested_section` was prepending
+  a separator newline whenever the doc still had any sections, but a
+  leftover empty preamble — common after purging the only real section
+  out of the document — doesn't count as preceding content.
+
 - Replacing a section in place via `doc[k] = Table.section({...})` (or the
   equivalent `Table.aot([...])` / `AoT(...)` assignment) no longer strips
   the leading blank line from the *next* section. The slot-prep step

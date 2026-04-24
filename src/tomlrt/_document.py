@@ -2454,7 +2454,7 @@ class _StdTable(Table):
                 doc_node.adopt_preamble_into(header.leading)
                 doc_node.sections.insert(i, new_sec)
                 return new_sec
-        if doc_node.sections:
+        if any(s.header is not None or s.entries for s in doc_node.sections):
             header.leading.pieces.append(NewlineNode("\n"))
         doc_node.adopt_preamble_into(header.leading)
         doc_node.sections.append(new_sec)
@@ -2814,27 +2814,6 @@ class _StdTable(Table):
         )
         aot = AoT._attached_to(self._doc_node, full_path, [])  # noqa: SLF001
         aot._resync()  # noqa: SLF001
-        self._install_at_path(parts, aot)
-        return aot
-
-    def _install_aot(
-        self,
-        parts: tuple[str, ...],
-        entries: Iterable[Mapping[str, object]],
-    ) -> AoT:
-        full_path, insert_at, prior_leading = self._prepare_section_slot(parts)
-        aot = AoT._attached_to(self._doc_node, full_path, [])  # noqa: SLF001
-        new_secs: list[SectionNode] = []
-        for entry in entries:
-            sec = aot._make_header_section()  # noqa: SLF001
-            aot._populate_section(sec, entry)  # noqa: SLF001
-            new_secs.append(sec)
-        _apply_prior_leading(new_secs, prior_leading)
-        _insert_section_block(self._doc_node, insert_at, new_secs)
-        aot._resync()  # noqa: SLF001
-        # Make sure the AoT is reachable through dict storage even when it is
-        # empty (no [[..]] sections in the CST yet) and to give it stable
-        # identity across re-reads.
         self._install_at_path(parts, aot)
         return aot
 

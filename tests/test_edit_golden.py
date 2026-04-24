@@ -1847,3 +1847,14 @@ def test_replace_section_with_aot_preserves_blank_before_next_section() -> None:
     doc = tomlrt.loads(src)
     doc["a"] = tomlrt.AoT([{"n": 99}])
     assert tomlrt.dumps(doc) == "[[a]]\nn = 99\n\n[b]\ny=2\n"
+
+
+def test_replace_dotted_subtable_with_value_no_stray_top_blank() -> None:
+    """Overwriting a dotted-key sub-table with a scalar must not leave
+    a stray blank above the materialised parent header. The new ``[a]``
+    header was unconditionally prefixed with a ``\\n`` whenever the doc
+    still had any sections, but an empty preamble doesn't count as
+    preceding content."""
+    doc = tomlrt.loads("[a.b]\nx=1\n")
+    doc["a"]["b"] = 99
+    assert tomlrt.dumps(doc) == "[a]\nb = 99\n"
