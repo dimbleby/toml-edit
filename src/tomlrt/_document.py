@@ -2561,23 +2561,12 @@ class _StdTable(Table):
 
     @override
     def _set_value(self, key: str, value: object) -> TomlValue | None:
-        # Special case: assigning an AoT (or list of dicts targeted as AoT)
-        # is a *structural* edit, not a value assignment.
-        if isinstance(value, AoT):
-            self._install_attached_aot((key,), value)
-            return None
-        # Same for an attached section-backed Table: route to
-        # ``_install_section`` so the contents land as a ``[section]``
-        # block rather than getting flattened into an inline table.
-        # Without this, copying a section that contains an AoT (e.g.
-        # ``dest[k] = src[k]`` where ``src[k]`` holds ``[[..]]``
-        # entries somewhere in its subtree) blows up inside the
-        # inline-table synthesiser instead of doing the obvious thing.
-        if isinstance(value, _StdTable) and not (
-            value._doc_node is self._doc_node  # noqa: SLF001
-            and value._path == (*self._path, key)  # noqa: SLF001
-        ):
-            self._install_attached_table((key,), value)
+        # Flavour-bearing values drive a structural install rather than a
+        # raw value write. ``__setitem__`` catches the standalone-spec
+        # cases (``SectionSpec``, detached ``AoT`` / ``Array``) at the
+        # top; the remaining live-CST cases (attached ``AoT``, foreign
+        # ``_StdTable``) land here when assigned via plain ``d[k] = ...``.
+        if self._dispatch_structural((key,), value):
             return None
 
         kind, payload = self._classify(key)
@@ -2913,9 +2902,32 @@ class _StdTable(Table):
 
     @override
     def _install_flavoured(self, parts: tuple[str, ...], value: object) -> None:
+        if self._dispatch_structural(parts, value):
+            return
+        # Non-flavoured value: descend (creating implicit parents as
+        # needed) and assign at the leaf with normal __setitem__
+        # semantics.
+        target: Table = self if len(parts) == 1 else self.ensure_table(parts[:-1])
+        target[parts[-1]] = value
+
+    def _dispatch_structural(
+        self,
+        parts: tuple[str, ...],
+        value: object,
+    ) -> bool:
+        """Try to install ``value`` at ``parts`` as a structural edit.
+
+        Returns ``True`` when the value carried enough flavour to drive
+        a section / AoT / array install (so the caller should stop);
+        ``False`` for plain values that need the ordinary value-write
+        path. Centralising the dispatch keeps ``__setitem__`` /
+        :meth:`_set_value` (single-segment writes) and
+        :meth:`Document.install` (multi-segment writes) on the same
+        decision tree.
+        """
         if isinstance(value, SectionSpec):
             self._install_section(parts, value)
-            return
+            return True
         if isinstance(value, AoT):
             # Both attached and detached AoTs have a backing CST: deep-clone
             # the source sections so comments, formatting, and per-value
@@ -2923,7 +2935,7 @@ class _StdTable(Table):
             # was installed) survive the move. Routing detached AoTs
             # through ``to_dict()`` here would silently strip all of that.
             self._install_attached_aot(parts, value)
-            return
+            return True
         if isinstance(value, _StdTable) and not (
             value._doc_node is self._doc_node  # noqa: SLF001
             and value._path == (*self._path, *parts)  # noqa: SLF001
@@ -2934,26 +2946,19 @@ class _StdTable(Table):
             # synthesiser. Skip when the value is already installed at
             # the target path (e.g. during ``deepcopy`` reconstruction).
             self._install_attached_table(parts, value)
-            return
+            return True
         if isinstance(value, Array) and not value._attached:  # noqa: SLF001
             # Standalone Arrays are specs: re-synthesise at the target
             # with the requested layout. Attached Arrays take the
             # deepcopy path below so comments/formatting survive.
-            multiline = value.multiline
-            indent = value._indent  # noqa: SLF001
-            items = list(value)
             self._install_array(
                 parts,
-                items,
-                multiline=multiline,
-                indent=indent,
+                list(value),
+                multiline=value.multiline,
+                indent=value._indent,  # noqa: SLF001
             )
-            return
-        # Non-flavoured value: descend (creating implicit parents as
-        # needed) and assign at the leaf with normal __setitem__
-        # semantics.
-        target: Table = self if len(parts) == 1 else self.ensure_table(parts[:-1])
-        target[parts[-1]] = value
+            return True
+        return False
 
     def _prepare_section_slot(
         self,
