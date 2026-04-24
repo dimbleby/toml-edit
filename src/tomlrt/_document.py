@@ -530,7 +530,7 @@ def _is_pure_whitespace(t: Trivia) -> bool:
         return True
     # ``CommentNode`` is the only non-whitespace TriviaPiece; checking
     # for its absence dodges per-piece tuple-isinstance.
-    return not any(isinstance(p, CommentNode) for p in pieces)
+    return not _trivia_has_comment(t)
 
 
 def _scan_leading_comment_run(pieces: list[TriviaPiece]) -> tuple[int, list[str]]:
@@ -650,10 +650,9 @@ def _leading0_is_header(leading: Trivia) -> bool:
     Snapshot/restore must leave it alone so that reorder operations
     don't accidentally re-attach it to a moved item.
     """
-    pieces = leading.pieces
-    if not any(isinstance(p, CommentNode) for p in pieces):
+    if not _trivia_has_comment(leading):
         return False
-    return not isinstance(pieces[0], NewlineNode)
+    return not isinstance(leading.pieces[0], NewlineNode)
 
 
 def _snapshot_item_leadings(items: Sequence[_Separated]) -> list[tuple[str, ...]]:
@@ -3058,7 +3057,7 @@ class _StdTable(Table):
                 or hdr.key.path != self._path
                 or sec.entries
                 or hdr.trailing_comment is not None
-                or any(isinstance(p, CommentNode) for p in hdr.leading.pieces)
+                or _trivia_has_comment(hdr.leading)
             ):
                 continue
             self._doc_node.remove_sections({sec})
