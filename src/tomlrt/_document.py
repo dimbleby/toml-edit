@@ -4311,20 +4311,31 @@ class AoT(list[Table]):
             msg = "pop index out of range"
             raise IndexError(msg)
         target = own[i]
-        to_remove: set[SectionNode] = set(self._doc_node.aot_entry_block(target))
+        block = self._doc_node.aot_entry_block(target)
         # Use the live entry as the popped object to preserve identity.
         popped = self[i]
-        self._doc_node.remove_sections(to_remove)
+        # Orphan the popped view onto its own ``DocumentNode`` *before*
+        # removing the block from the live doc: ``_resync``'s default
+        # detach path runs after ``remove_sections``, by which point
+        # ``aot_owned_range`` searches an empty list and silently
+        # drops the popped entry's ``[a.sub]``-style sub-sections.
+        popped._detach(DocumentNode(sections=list(block)))  # noqa: SLF001
+        self._doc_node.remove_sections(set(block))
         self._resync()
-        popped._detach()  # noqa: SLF001
         return popped
 
     @override
     def clear(self) -> None:
         own = self._own_sections()
         to_remove: set[SectionNode] = set()
-        for s in own:
-            to_remove.update(self._doc_node.aot_entry_block(s))
+        # Pre-detach every entry into its own orphan doc, for the same
+        # reason as ``pop``: once ``remove_sections`` runs, ``_resync``'s
+        # detach pass cannot rebuild owned-range capture and would lose
+        # any nested sub-sections from the cached entry views.
+        for entry, sec in zip(list(self), own, strict=True):
+            block = self._doc_node.aot_entry_block(sec)
+            entry._detach(DocumentNode(sections=list(block)))  # noqa: SLF001
+            to_remove.update(block)
         self._doc_node.remove_sections(to_remove)
         self._resync()
 
