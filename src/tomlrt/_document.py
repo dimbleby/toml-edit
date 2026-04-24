@@ -250,11 +250,16 @@ def _strip_comment_marker(text: str) -> str:
 def _format_comment(text: str) -> str:
     """Format user text as the payload for a :class:`CommentNode`.
 
-    Adds a leading ``#`` plus a space (unless the user already supplied
-    one). Raises :class:`TOMLError` if ``text`` contains any character
-    the TOML parser would reject in a comment: comments are single-line
-    by definition, and the only control character permitted (besides
-    line terminators which end them) is TAB.
+    Always emits ``"# " + text`` (or ``"#"`` for empty text). The ``#``
+    marker is the renderer's responsibility, not the caller's: this
+    keeps round-trip symmetric with the reader, which strips a single
+    leading ``"# "`` (or ``"#"``). Comment text that itself starts
+    with ``#`` is treated as literal content -- e.g. ``"#hashtag"``
+    renders as ``"# #hashtag"`` and reads back as ``"#hashtag"``.
+    Raises :class:`TOMLError` if ``text`` contains any character the
+    TOML parser would reject in a comment: comments are single-line by
+    definition, and the only control character permitted (besides line
+    terminators which end them) is TAB.
     """
     for ch in text:
         cp = ord(ch)
@@ -264,8 +269,6 @@ def _format_comment(text: str) -> str:
         if (cp <= 0x1F and ch != "\t") or cp == 0x7F:
             msg = f"comment text must not contain control character U+{cp:04X}"
             raise TOMLError(msg)
-    if text.startswith("#"):
-        return text
     if text == "":
         return "#"
     return "# " + text

@@ -36,6 +36,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The comment-write API (`comments[k] = …`, `leading_comments[k] = …`,
+  `header_comment = …`, `header_leading_comments = …`) now treats the
+  user's text as pure *content*, never as a pre-formatted comment.
+  Previously the writer had a "did the user supply a leading ``#``?"
+  branch that emitted such input verbatim, breaking two important
+  properties: (1) idempotency -- ``c[k] = c[k]`` was not a no-op for
+  any comment whose content starts with ``#``; (2) faithful preservation
+  -- a user wanting ``#hashtag`` as the literal comment content silently
+  got just ``hashtag`` back on read. The marker is now always the
+  renderer's responsibility, so reads and writes are exact inverses.
+
+  This is a behaviour change: ``comments[k] = "# foo"`` now renders as
+  ``# # foo`` (and reads back as ``"# foo"``). Callers that were
+  manually adding the marker should drop it.
+
 - `Array.set_multiline(multiline=False)` (and the equivalent
   `array.multiline = False` setter) now raises :class:`TOMLError`
   when any item carries an EOL or leading comment, instead of
