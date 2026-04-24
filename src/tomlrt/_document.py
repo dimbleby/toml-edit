@@ -2429,13 +2429,11 @@ class _StdTable(Table):
                 if hdr is None:
                     continue
                 hpath = hdr.key.path
-                if hdr.kind == "array" and hpath == child:
-                    return ("aot", None)
-                if (
-                    hdr.kind == "table"
-                    and len(hpath) >= len(child)
-                    and hpath[: len(child)] == child
-                ):
+                if hpath == child:
+                    return ("aot" if hdr.kind == "array" else "table", None)
+                if len(hpath) > len(child) and hpath[: len(child)] == child:
+                    # Deeper [a.b.c] or [[a.b.c]] makes ``key`` an
+                    # implicit super-table — i.e. a table.
                     return ("table", None)
             return self._classify_extras(key)
 
@@ -2469,8 +2467,9 @@ class _StdTable(Table):
             if hlen >= child_len and hpath[:plen] == path and hpath[plen] == key:
                 if hdr.kind == "array" and hlen == child_len:
                     return ("aot", None)
-                if hdr.kind == "table":
-                    child_kind = "table"
+                # A deeper section ([a.b.c] *or* [[a.b.c]]) below ``key``
+                # makes ``key`` an implicit super-table — i.e. a table.
+                child_kind = "table"
         if child_kind is not None:
             return (child_kind, None)
         return self._classify_extras(key)

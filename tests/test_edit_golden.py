@@ -747,6 +747,27 @@ def test_section_replace_preserves_position_for_implicit_parent() -> None:
     assert tomlrt.dumps(doc) == "[a]\nx = 1\n\n[b]\nq = 9\n\n[d]\nz = 3\n"
 
 
+def test_aot_assign_purges_implicit_supertable_aot_subtree() -> None:
+    """Assigning an AoT to a key that names an implicit super-table
+    over an existing ``[[a.b]]`` block must purge the old subtree.
+
+    Previously ``_classify`` returned ``"absent"`` for the implicit
+    parent above an AoT, so ``_prepare_section_slot`` skipped the purge
+    and the source ``[[a.b]]`` sections leaked into the result, where
+    they were silently re-attributed as a child of the new last entry.
+    """
+    src = tomlrt.loads("[[a.b]]\nx = 1\n[[a.b]]\nx = 2\n")
+    src["a"] = src.aot("a.b")
+    assert tomlrt.dumps(src) == "[[a]]\nx = 1\n[[a]]\nx = 2\n"
+    assert src.to_dict() == {"a": [{"x": 1}, {"x": 2}]}
+
+    dst = tomlrt.loads("[[a.b]]\nx = 1\n")
+    other = tomlrt.loads("[[t]]\nz = 99\n[[t]]\nz = 100\n")
+    dst["a"] = other.aot("t")
+    assert tomlrt.dumps(dst) == "[[a]]\nz = 99\n[[a]]\nz = 100\n"
+    assert dst.to_dict() == {"a": [{"z": 99}, {"z": 100}]}
+
+
 def test_aot_entry_subsection_replace_preserves_position() -> None:
     """``aot[i][k] = Table.section({...})`` keeps the sub-section in place.
 
