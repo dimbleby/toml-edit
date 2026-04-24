@@ -1434,20 +1434,21 @@ class Table(dict[str, Any]):
 
     # --- mutators ----------------------------------------------------------
 
-    def _is_own_section_slot(self, key: str, value: object) -> bool:
-        """Whether ``value`` is the section-Table view already at ``self[key]``.
+    def _commit_value(self, key: str, value: object) -> None:
+        """Plain-value write at ``key`` + dict-storage reconcile.
 
-        The cached-view identity case (``self[k] is value``) is caught
-        earlier by ``__setitem__``'s ``old is value`` short-circuit;
-        this guard exists for the pathological case of a freshly-
-        constructed section-Table view aimed at the same slot, which
-        would otherwise infinite-loop through the structural-install
-        fallback. Only meaningful for section-backed Tables; other
-        flavours don't have the addressable ``(_doc_node, _path)``
-        identity that defines "same slot".
+        Used by ``_install_flavoured`` to commit values that didn't
+        match any structural-install flavour. Lifted out of
+        ``__setitem__`` so single-segment installs can finish without
+        recursing back through it (which would loop, since
+        ``__setitem__`` now unconditionally delegates to
+        ``_install_flavoured``).
         """
-        del key, value
-        return False
+        new_v = self._set_value(key, value)
+        if new_v is None:
+            self._refresh_key(key)
+        else:
+            dict.__setitem__(self, key, new_v)
 
     @override
     def __setitem__(self, key: str, value: object) -> None:
@@ -1465,30 +1466,11 @@ class Table(dict[str, Any]):
                 return
             if isinstance(old, (Table, AoT, Array)):
                 old._detach()  # noqa: SLF001
-        # Flavour-bearing values drive structural installation rather
-        # than a raw value write. The four "section-flavoured" types
-        # (SectionSpec, any AoT, foreign-attached section-Table,
-        # standalone Array) all encode the same intent — "install a
-        # structural block here" — and route through
-        # ``_install_flavoured`` so each Table flavour can apply its
-        # own per-host policy uniformly (``_StdTable`` performs the
-        # structural splice; ``_InlineTable`` refuses, since an
-        # inline host cannot contain section blocks).
-        if (
-            isinstance(value, (SectionSpec, AoT))
-            or (isinstance(value, Array) and not value._attached)  # noqa: SLF001
-            or (
-                isinstance(value, _StdTable)
-                and not self._is_own_section_slot(key, value)
-            )
-        ):
-            self._install_flavoured((key,), value)
-            return
-        new_v = self._set_value(key, value)
-        if new_v is None:
-            self._refresh_key(key)
-        else:
-            dict.__setitem__(self, key, new_v)
+        # All assignment flows -- structural and plain -- funnel through
+        # ``_install_flavoured`` so each Table flavour can apply one
+        # consistent dispatch policy. Plain values land in the
+        # subclass's ``_commit_value`` fallback.
+        self._install_flavoured((key,), value)
 
     def install(
         self,
@@ -1604,9 +1586,9 @@ class Table(dict[str, Any]):
             )
             raise TOMLError(msg)
         if isinstance(value, Array) and not value._attached:  # noqa: SLF001
-            self[parts[0]] = list(value)
+            self._commit_value(parts[0], list(value))
             return
-        self[parts[0]] = value
+        self._commit_value(parts[0], value)
 
     @override
     def __delitem__(self, key: str) -> None:
@@ -2436,14 +2418,6 @@ class _StdTable(Table):
                 out.append(sec)
         return out
 
-    @override
-    def _is_own_section_slot(self, key: str, value: object) -> bool:
-        return (
-            isinstance(value, _StdTable)
-            and value._doc_node is self._doc_node  # noqa: SLF001
-            and value._path == (*self._path, key)  # noqa: SLF001
-        )
-
     def _classify(self, key: str) -> tuple[str, object]:
         """Classify a key for mutation purposes.
 
@@ -2599,14 +2573,6 @@ class _StdTable(Table):
 
     @override
     def _set_value(self, key: str, value: object) -> TomlValue | None:
-        # Flavour-bearing values drive a structural install rather than a
-        # raw value write. ``__setitem__`` catches the standalone-spec
-        # cases (``SectionSpec``, detached ``AoT`` / ``Array``) at the
-        # top; the remaining live-CST cases (attached ``AoT``, foreign
-        # ``_StdTable``) land here when assigned via plain ``d[k] = ...``.
-        if self._dispatch_structural((key,), value):
-            return None
-
         kind, payload = self._classify(key)
         if kind in ("direct", "extras"):
             # In-place value swap: reuse the existing KV node.
@@ -2942,10 +2908,18 @@ class _StdTable(Table):
     def _install_flavoured(self, parts: tuple[str, ...], value: object) -> None:
         if self._dispatch_structural(parts, value):
             return
-        # Non-flavoured value: descend (creating implicit parents as
-        # needed) and assign at the leaf with normal __setitem__
-        # semantics.
-        target: Table = self if len(parts) == 1 else self.ensure_table(parts[:-1])
+        # Plain value (or same-slot identity case skipped by
+        # ``_dispatch_structural``). For a single-segment install
+        # commit at ``self`` directly via ``_commit_value`` -- going
+        # through ``self[parts[0]] = value`` would re-enter
+        # ``__setitem__``, which loops back through us. For a
+        # multi-segment install, descend (creating implicit parents
+        # as needed) and assign at the leaf with normal
+        # ``__setitem__`` semantics.
+        if len(parts) == 1:
+            self._commit_value(parts[0], value)
+            return
+        target = self.ensure_table(parts[:-1])
         target[parts[-1]] = value
 
     def _dispatch_structural(
