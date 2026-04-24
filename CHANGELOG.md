@@ -36,6 +36,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `AoT.append`, `AoT.insert`, `AoT.extend`, `AoT.add` and
+  `AoT.__setitem__` now preserve per-KV trivia, sub-section headers,
+  and any nested AoTs when the value is a `Table` view (whether from
+  another document or the same one). Previously the entry was
+  rebuilt from raw `value.items()` data, silently dropping every
+  comment, EOL annotation and blank-line. The fix mirrors the
+  existing table-into-table assignment path
+  (`_install_attached_table`), reusing `_clone_table_sections` and
+  `_apply_prior_leading`. Plain `dict` sources still go through the
+  data-only synthesis path. As part of the same change,
+  `AoT.__setitem__` now uses a uniform delete-then-insert
+  implementation for both source kinds; the previous
+  `target.clear(); target.update(value)` path silently dropped the
+  source's structure.
+
 - `Array.set_multiline(multiline=False)` now also refuses to collapse
   when the array contains a multi-line inline table with inner
   comments. The previous check only saw comments attached at the

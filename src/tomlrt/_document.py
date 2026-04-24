@@ -4146,6 +4146,31 @@ class AoT(list[Table]):
                 raise TOMLError(msg)
             sec.entries.append(make_keyvalue_node(k, v))
 
+    def _build_entry_block(
+        self,
+        value: Table | Mapping[str, object],
+    ) -> list[SectionNode]:
+        """Build the section block for a new AoT entry.
+
+        For a :class:`_StdTable` source, deep-clone its contributing
+        sections via :func:`_clone_table_sections` so that per-KV
+        trivia, sub-section headers, and any nested AoTs are preserved
+        verbatim under the new entry's path. The leading section's
+        header kind is forced to ``"array"`` so it renders as
+        ``[[path]]``. For plain mappings, fall back to data-only
+        synthesis through :meth:`_populate_section`.
+        """
+        if isinstance(value, _StdTable):
+            cloned = _clone_table_sections(value, self._path)
+            if cloned:
+                head = cloned[0]
+                assert head.header is not None
+                head.header.kind = "array"
+                return cloned
+        new_sec = self._make_header_section()
+        self._populate_section(new_sec, value)
+        return [new_sec]
+
     # ------------------------------------------------------------------
     # Mutators
     # ------------------------------------------------------------------
@@ -4200,8 +4225,8 @@ class AoT(list[Table]):
         if py_index < 0:
             py_index += n
         py_index = max(0, min(py_index, n))
-        new_sec = self._make_header_section()
-        self._populate_section(new_sec, value)
+        new_block = self._build_entry_block(value)
+        new_sec = new_block[0]
         sections = self._doc_node.sections
         # Pick an insertion point first; blank-line decision depends on it.
         if py_index == n:
@@ -4240,7 +4265,7 @@ class AoT(list[Table]):
             if next_hdr is not None:
                 _prepend_blank_line(next_hdr.leading)
         self._doc_node.adopt_preamble_into(new_sec.header.leading)
-        sections.insert(insert_idx, new_sec)
+        sections[insert_idx:insert_idx] = new_block
         self._resync()
 
     @override
@@ -4325,9 +4350,26 @@ class AoT(list[Table]):
                 self.insert(indices.start + offset, v)
             return
         self._validate_entry(value)
-        target = self[index]
-        target.clear()
-        target.update(value)
+        assert isinstance(value, Mapping)
+        # Replacement is always del + insert: the splice path used by
+        # ``insert`` already handles cloned-Table sources (preserving
+        # per-KV trivia, sub-sections, and nested AoTs) as well as
+        # plain mappings. Snapshot the existing slot's header leading
+        # so the visual context (comments / blank lines above the
+        # ``[[path]]`` header) survives the swap regardless of source.
+        i = operator.index(index)
+        n = len(self)
+        if i < 0:
+            i += n
+        if i < 0 or i >= n:
+            msg = f"AoT assignment index out of range: {index}"
+            raise IndexError(msg)
+        own = self._own_sections()
+        hdr = own[i].header
+        prior_leading = hdr.leading if hdr is not None else None
+        del self[i]
+        self.insert(i, value)
+        _apply_prior_leading([self._own_sections()[i]], prior_leading)
 
     @override
     def __iadd__(self, values: Iterable[Mapping[str, object]]) -> Self:  # type: ignore[override]
