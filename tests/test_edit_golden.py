@@ -2064,3 +2064,29 @@ def test_aot_clear_preserves_owned_sub_sections_in_cached_views() -> None:
     new_doc = tomlrt.loads("")
     new_doc["a"] = e0
     assert tomlrt.dumps(new_doc) == "[a]\nx = 1\n\n[a.sub]\ny = 2\n"
+
+
+def test_inline_table_rejects_section_table_value() -> None:
+    """Foreign section-Table into an inline-table key raises like SectionSpec/AoT.
+
+    The three flavour-bearing "give me a [section] here" requests
+    (``Table.section({})``, ``AoT(...)``, an attached section-backed
+    Table) all encode the same intent. The first two were already
+    rejected by an inline host; the third silently flattened into an
+    inline-table-of-inline-tables, dropping the [section] semantics.
+    Reject all three uniformly so the inline / standard split stays
+    on the producing side, never hidden in a quiet flatten.
+    """
+    src = tomlrt.loads("[b]\nx = 1\n[b.sub]\ny = 2\n")
+    nd = tomlrt.loads("")
+    nd["a"] = {}
+    with pytest.raises(tomlrt.TOMLError, match="inline-style table"):
+        nd["a"]["b"] = src["b"]
+
+    # Inline-Table into inline still flattens (legitimate: both sides
+    # are inline-style).
+    inner_src = tomlrt.loads("inner = { x = 1 }")
+    nd2 = tomlrt.loads("")
+    nd2["a"] = {}
+    nd2["a"]["b"] = inner_src["inner"]
+    assert tomlrt.dumps(nd2) == "a = {b = { x = 1 }}\n"
