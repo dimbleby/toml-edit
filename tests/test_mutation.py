@@ -574,6 +574,16 @@ def test_aot_imul_preserves_inter_entry_separator() -> None:
     )
 
 
+def test_aot_imul_preserves_per_entry_leading_comments() -> None:
+    src = "# A\n[[t]]\nx = 1\n\n# B\n[[t]]\nx = 2\n"
+    doc = tomlrt.parse(src)
+    doc.aot("t").__imul__(2)
+    assert tomlrt.dumps(doc) == (
+        "# A\n[[t]]\nx = 1\n\n# B\n[[t]]\nx = 2\n\n"
+        "# A\n[[t]]\nx = 1\n\n# B\n[[t]]\nx = 2\n"
+    )
+
+
 def test_aot_sort_preserves_formatting_byte_exact() -> None:
     src = "[[t]]\nx = 3  # third\n\n[[t]]\nx = 1  # first\n\n[[t]]\nx = 2  # second\n"
     doc = tomlrt.parse(src)

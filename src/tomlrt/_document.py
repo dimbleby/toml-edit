@@ -3378,10 +3378,7 @@ class _ArrayItemViewBase(_PresenceFilteredView[int, _VV]):
     @override
     def _check_key(self, key: object) -> int:
         if not isinstance(key, int):
-            msg = (
-                f"Array.{self._view_name} index must be int, "
-                f"got {type(key).__name__}"
-            )
+            msg = f"Array.{self._view_name} index must be int, got {type(key).__name__}"
             raise TypeError(msg)
         n = len(self._array._node.items)  # noqa: SLF001
         if not 0 <= key < n:
@@ -4287,21 +4284,31 @@ class AoT(list[Table]):
             return self
         start, blocks = self._own_blocks()
         base: list[SectionNode] = [s for block in blocks for s in block]
-        # Use the second entry's leading (the natural inter-entry separator)
-        # at the boundary between repetitions, so doubling a doc with blank-line
-        # separators stays visually consistent. With only one block to sample
-        # we have no local style to copy; fall back to a blank-line separator
-        # (canonical TOML style) rather than gluing copies header-to-header.
+        # The duplicated first block needs (a) the inter-repetition
+        # separator -- so doubling a blank-line-separated doc stays
+        # visually consistent -- and (b) its own deep-copied leading
+        # comment (the comment logically describes the entry, not the
+        # slot, so it must travel with the duplicated block).
+        # Sample (a) from blocks[1].leading with the comment stripped;
+        # fall back to a blank line when there's no second block to
+        # sample, to avoid gluing copies header-to-header.
         if len(blocks) >= 2:
-            inter_leading = self._block_leading(blocks[1])
+            inter_separator = Trivia(
+                pieces=list(self._block_leading(blocks[1]).pieces),
+            )
+            _replace_trailing_comment_block(inter_separator, (), "")
         else:
-            inter_leading = Trivia(pieces=[NewlineNode("\n")])
+            inter_separator = Trivia(pieces=[NewlineNode("\n")])
         repeated = list(base)
         for _ in range(n - 1):
             copy_blocks: list[list[SectionNode]] = [
                 [deepcopy(s) for s in block] for block in blocks
             ]
-            self._set_block_leading(copy_blocks[0], deepcopy(inter_leading))
+            first_leading = self._block_leading(copy_blocks[0])
+            first_leading.pieces = [
+                *deepcopy(inter_separator).pieces,
+                *first_leading.pieces,
+            ]
             repeated.extend(s for block in copy_blocks for s in block)
         self._doc_node.sections[start : start + len(base)] = repeated
         self._resync()
