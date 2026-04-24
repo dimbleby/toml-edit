@@ -631,6 +631,20 @@ def _sample_separator_style(
     )
 
 
+def _strip_trailing_indent(trivia: Trivia) -> None:
+    """Drop any pure-whitespace pieces sitting after ``trivia``'s last newline.
+
+    Used on the *last* item's post-comma / trailing trivia after a
+    reorder: a piece like ``"\\n  "`` was the indent for whichever
+    value used to follow, but if the item is now last there is no
+    next value, only the closing bracket / brace. Leaving the indent
+    in place renders ``"  ]"`` instead of ``"]"``.
+    """
+    pieces = trivia.pieces
+    while pieces and isinstance(pieces[-1], WhitespaceNode):
+        pieces.pop()
+
+
 def _ensure_trailing_indent(trivia: Trivia, indent: str) -> None:
     """Ensure ``trivia`` ending in a newline carries ``indent`` after it.
 
@@ -708,17 +722,25 @@ def _apply_separator_style(
             item.has_comma = True
             if _is_pure_whitespace(item.post_comma_trivia):
                 item.post_comma_trivia = _clone_trivia(style.close_pad)
+            else:
+                # Last item carries a comment: strip any trailing indent
+                # that was meant for "the next value" so the closing
+                # bracket lands at column 0 (or wherever close_pad lands).
+                _strip_trailing_indent(item.post_comma_trivia)
             if _is_pure_whitespace(item.trailing):
                 item.trailing = Trivia()
         else:
             if item.has_comma and _is_pure_whitespace(item.post_comma_trivia):
                 item.has_comma = False
                 item.post_comma_trivia = Trivia()
-            if (
-                _is_pure_whitespace(item.trailing)
-                and item.trailing.render() != close_render
-            ):
-                item.trailing = _clone_trivia(style.close_pad)
+            if _is_pure_whitespace(item.trailing):
+                if item.trailing.render() != close_render:
+                    item.trailing = _clone_trivia(style.close_pad)
+            else:
+                # Non-empty content (e.g. comment) in trailing: trim any
+                # leftover "next-item indent" so the closing bracket
+                # doesn't end up indented after a reorder.
+                _strip_trailing_indent(item.trailing)
 
 
 def _array_indent(arr: ArrayNode) -> str:
