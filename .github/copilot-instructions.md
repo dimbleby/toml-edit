@@ -85,6 +85,11 @@ The codebase is small and deliberately layered. Read in this order:
   rebase, and splice helpers used when assigning whole tables / AoTs
   into a document. Reaches into `_document` privates by design (it is
   the inverse of "give me the CST that backs this view").
+- **`_comment_views.py`** — the `MutableMapping` / `MutableSequence`
+  views returned by `Table.comments` / `.leading_comments` and the
+  `Array` equivalents. `_PresenceFilteredView` is an `abc.ABC` with
+  `@abstractmethod` hooks; the four concrete subclasses are imported
+  by `_document.py` and constructed from the relevant properties.
 - **`_document.py`** — the **logical view layer**: `Document`, `Table`,
   `Array`, `AoT` wrappers that present a dict/list-shaped API while
   delegating all mutation to the CST. The Comment API and typed
