@@ -201,6 +201,41 @@ def _ensure_trailing_newline(section: SectionNode) -> None:
         last.newline = NewlineNode("\n")
 
 
+def _refuse_promotion_with_inner_comments(
+    key: str,
+    inline: InlineTableNode,
+    *,
+    target: str,
+) -> None:
+    """Raise if promoting ``inline`` would silently drop inner comments.
+
+    A multi-line inline table (TOML 1.1) can carry comments on its
+    entries -- in their leading trivia, their trailing trivia, or the
+    ``post_comma_trivia`` between commas. The promotion paths cannot
+    currently translate that trivia to the section-with-KVs layout, so
+    they would silently lose the comments. Refuse the promotion
+    instead and leave the user to remove the comments first.
+    """
+    has_comments = _trivia_has_comment(inline.final_trivia) or any(
+        _trivia_has_comment(e.leading)
+        or _trivia_has_comment(e.trailing)
+        or _trivia_has_comment(e.post_comma_trivia)
+        for e in inline.entries
+    )
+    if has_comments:
+        msg = (
+            f"cannot promote {key!r} to {target}: inline table has "
+            "inner comments that would be lost; remove the inner "
+            "comments first"
+        )
+        raise TOMLError(msg)
+
+
+def _trivia_has_comment(trivia: Trivia) -> bool:
+    """``True`` iff ``trivia`` contains any :class:`CommentNode`."""
+    return any(isinstance(p, CommentNode) for p in trivia.pieces)
+
+
 def _starts_with_blank_line(trivia: Trivia) -> bool:
     """``True`` iff ``trivia`` begins with a bare newline.
 
@@ -2695,6 +2730,7 @@ class _StdTable(Table):
     @override
     def promote_inline(self, key: str) -> Table:
         sec, kv, inline = self._find_promotable(key, InlineTableNode, "an inline table")
+        _refuse_promotion_with_inner_comments(key, inline, target="[..]")
         child_path = (*self._path, key)
         self._refuse_existing_promoted_section(key, child_path, kind="table")
         new_sec = _build_promoted_section(child_path, inline, kv)
@@ -2718,6 +2754,27 @@ class _StdTable(Table):
                     "promote to array-of-tables"
                 )
                 raise TOMLError(msg)
+        for item in items:
+            if (
+                _trivia_has_comment(item.leading)
+                or _trivia_has_comment(
+                    item.post_comma_trivia,
+                )
+                or _trivia_has_comment(item.trailing)
+            ):
+                msg = (
+                    f"cannot promote {key!r}: array item has comments that "
+                    "would be lost; remove the inner comments first"
+                )
+                raise TOMLError(msg)
+            assert isinstance(item.value, InlineTableNode)
+            _refuse_promotion_with_inner_comments(key, item.value, target="[[..]]")
+        if _trivia_has_comment(array.final_trivia):
+            msg = (
+                f"cannot promote {key!r}: array has a trailing comment that "
+                "would be lost; remove the inner comments first"
+            )
+            raise TOMLError(msg)
         child_path = (*self._path, key)
         self._refuse_existing_promoted_section(key, child_path, kind="aot")
         new_secs = [

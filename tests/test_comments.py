@@ -270,6 +270,44 @@ def test_inline_promotion_then_set_comment_on_member() -> None:
     )
 
 
+def test_promote_inline_refuses_when_inner_comments_would_be_lost() -> None:
+    src = "pkg = {\n    # inner\n    x = 1,\n}\n"
+    doc = tomlrt.parse(src)
+    with pytest.raises(tomlrt.TOMLError, match="inner comments"):
+        doc.promote_inline("pkg")
+    # Nothing was mutated.
+    assert tomlrt.dumps(doc) == src
+
+
+def test_promote_inline_refuses_on_eol_comment_inside_entry() -> None:
+    src = "pkg = {\n    x = 1, # inner-eol\n    y = 2,\n}\n"
+    doc = tomlrt.parse(src)
+    with pytest.raises(tomlrt.TOMLError, match="inner comments"):
+        doc.promote_inline("pkg")
+
+
+def test_promote_array_refuses_when_item_eol_comment_would_be_lost() -> None:
+    src = "a = [\n    {x=1}, # one\n    {x=2},\n]\n"
+    doc = tomlrt.parse(src)
+    with pytest.raises(tomlrt.TOMLError, match="comments that would be lost"):
+        doc.promote_array("a")
+    assert tomlrt.dumps(doc) == src
+
+
+def test_promote_array_refuses_when_array_final_comment_would_be_lost() -> None:
+    src = "a = [\n    {x=1},\n    # trailing\n]\n"
+    doc = tomlrt.parse(src)
+    with pytest.raises(tomlrt.TOMLError, match="comments that would be lost"):
+        doc.promote_array("a")
+
+
+def test_promote_array_refuses_when_inner_inline_table_has_comments() -> None:
+    src = "a = [\n    {\n        # inner\n        x = 1,\n    },\n]\n"
+    doc = tomlrt.parse(src)
+    with pytest.raises(tomlrt.TOMLError, match="inner comments"):
+        doc.promote_array("a")
+
+
 def test_inline_promotion_inserts_after_parent_block() -> None:
     src = "[parent]\na = 1\npkg = { x = 10 }\n[other]\nb = 2\n"
     doc = tomlrt.parse(src)

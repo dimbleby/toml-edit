@@ -36,6 +36,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `promote_inline` and `promote_array` previously silently dropped
+  any comments inside multi-line inline tables (TOML 1.1) and any EOL
+  / leading comments on inline-array items. Both now refuse to
+  promote when comments would be lost, with a `TOMLError` pointing
+  at the offending key. Callers that want the old behaviour can
+  remove the inner comments first.
+
 - `Array.comments` and `Array.leading_comments` now accept negative
   indices, mirroring `Array.__getitem__` / `Array.__setitem__` and
   Python list semantics. Previously ``arr[-1]`` worked but
