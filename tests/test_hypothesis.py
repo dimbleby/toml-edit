@@ -8,6 +8,7 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 import tomlrt
+from _toml_str import td
 
 # ---------------------------------------------------------------------------
 # Strategies for safe TOML fragments (we generate values whose canonical
@@ -142,11 +143,26 @@ _EDGE_CASES = [
     "key = 1",  # no trailing newline
     "key = 1\n",
     "# only a comment\n",
-    "a = 1\n\n[b]\nc = 2\n",
+    td("""
+        a = 1
+
+        [b]
+        c = 2
+        """),
     "x = [1, 2, 3]\n",
-    "x = [\n  1,\n  2,\n]\n",
+    td("""
+        x = [
+          1,
+          2,
+        ]
+        """),
     "obj = { a = 1, b = 2 }\n",
-    "[[items]]\nname = 'x'\n[[items]]\nname = 'y'\n",
+    td("""
+        [[items]]
+        name = 'x'
+        [[items]]
+        name = 'y'
+        """),
     "[a.b.c]\nv = 1\n",
     "a.b.c = 1\n",
     f"strs = {list(string.ascii_letters[:5])}\n".replace("'", '"'),

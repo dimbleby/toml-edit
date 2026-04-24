@@ -12,6 +12,7 @@ from datetime import datetime, time, timedelta, timezone
 import pytest
 
 import tomlrt
+from _toml_str import td
 
 UTC = timezone.utc
 
@@ -168,7 +169,12 @@ def test_inline_table_trailing_comma_accepted() -> None:
 
 
 def test_inline_table_multiline() -> None:
-    src = "a = {\n    x = 1,\n    y = 2,\n}\n"
+    src = td("""
+        a = {
+            x = 1,
+            y = 2,
+        }
+        """)
     doc = tomlrt.parse(src)
     a = doc["a"]
     assert isinstance(a, tomlrt.Table)
@@ -177,7 +183,12 @@ def test_inline_table_multiline() -> None:
 
 
 def test_inline_table_multiline_no_trailing_comma() -> None:
-    src = "a = {\n    x = 1,\n    y = 2\n}\n"
+    src = td("""
+        a = {
+            x = 1,
+            y = 2
+        }
+        """)
     doc = tomlrt.parse(src)
     a = doc["a"]
     assert isinstance(a, tomlrt.Table)
@@ -186,7 +197,12 @@ def test_inline_table_multiline_no_trailing_comma() -> None:
 
 
 def test_inline_table_newline_with_comments_round_trips() -> None:
-    src = "a = { # opener\n    x = 1, # one\n    y = 2, # two\n}\n"
+    src = td("""
+        a = { # opener
+            x = 1, # one
+            y = 2, # two
+        }
+        """)
     doc = tomlrt.parse(src)
     a = doc["a"]
     assert isinstance(a, tomlrt.Table)
