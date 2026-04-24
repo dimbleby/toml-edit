@@ -2029,3 +2029,38 @@ def test_setting_eol_comment_on_consecutive_items_keeps_indent() -> None:
     doc["arr"].comments[0] = "zero"
     doc["arr"].comments[1] = "one"
     assert tomlrt.dumps(doc) == "arr = [\n  1, # zero\n  2, # one\n]\n"
+
+
+def test_aot_pop_preserves_owned_sub_sections_in_orphan() -> None:
+    """``AoT.pop`` returns a view that still carries its [a.sub] children.
+
+    Regression: ``_resync``'s detach pass runs after
+    ``remove_sections`` strips the entry's block from the live doc,
+    so by the time the popped entry's ``_detach`` searched
+    ``aot_owned_range`` for its sub-sections they were already gone
+    and the orphan captured only the bare ``[[a]]`` anchor. Re-
+    installing the popped entry elsewhere therefore silently lost
+    every nested ``[a.sub]`` section.
+    """
+    src = "[[a]]\nx = 1\n\n[a.sub]\ny = 2\n\n[[a]]\nx = 9\n"
+    doc = tomlrt.loads(src)
+    popped = doc["a"].pop(0)
+    new_doc = tomlrt.loads("")
+    new_doc["a"] = popped
+    assert tomlrt.dumps(new_doc) == "[a]\nx = 1\n\n[a.sub]\ny = 2\n"
+
+
+def test_aot_clear_preserves_owned_sub_sections_in_cached_views() -> None:
+    """``AoT.clear`` orphans cached entries with their full sub-section run.
+
+    Same root cause as the ``pop`` regression: every dying entry's
+    detach must run while the live doc still indexes the owned range,
+    or the cached Table view loses its nested ``[a.sub]`` sections.
+    """
+    src = "[[a]]\nx = 1\n\n[a.sub]\ny = 2\n\n[[a]]\nx = 9\n"
+    doc = tomlrt.loads(src)
+    e0 = doc["a"][0]
+    doc["a"].clear()
+    new_doc = tomlrt.loads("")
+    new_doc["a"] = e0
+    assert tomlrt.dumps(new_doc) == "[a]\nx = 1\n\n[a.sub]\ny = 2\n"
