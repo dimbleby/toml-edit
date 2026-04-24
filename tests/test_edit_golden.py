@@ -1809,6 +1809,53 @@ def test_array_reverse_with_eol_comments_keeps_close_bracket_unindented() -> Non
     assert tomlrt.dumps(doc) == src
 
 
+def test_array_reverse_with_leading_comments_follows_items() -> None:
+    """Leading comments are anchored to their item, not their slot:
+    reversing the array reverses the comments alongside the values."""
+    src = "a = [\n  # for 1\n  1,\n  # for 2\n  2,\n  # for 3\n  3,\n]\n"
+    doc = tomlrt.loads(src)
+    doc["a"].reverse()
+    expected = "a = [\n  # for 3\n  3,\n  # for 2\n  2,\n  # for 1\n  1,\n]\n"
+    assert tomlrt.dumps(doc) == expected
+
+
+def test_array_sort_with_leading_comments_follows_items() -> None:
+    src = "a = [\n  # for c\n  3,\n  # for a\n  1,\n  # for b\n  2,\n]\n"
+    doc = tomlrt.loads(src)
+    doc["a"].sort()
+    expected = "a = [\n  # for a\n  1,\n  # for b\n  2,\n  # for c\n  3,\n]\n"
+    assert tomlrt.dumps(doc) == expected
+
+
+def test_array_insert_zero_pushes_existing_leading_comment_to_new_position() -> None:
+    """``insert(0, x)`` must not duplicate the leading-of-(formerly) item-0
+    onto both the new item and its old (now position-1) item."""
+    src = "a = [\n  # above 1\n  1,\n  2,\n]\n"
+    doc = tomlrt.loads(src)
+    doc["a"].insert(0, 99)
+    expected = "a = [\n  99,\n  # above 1\n  1,\n  2,\n]\n"
+    assert tomlrt.dumps(doc) == expected
+
+
+def test_array_pop_drops_the_popped_items_leading_comment() -> None:
+    src = "a = [\n  # for 1\n  1,\n  # for 2\n  2,\n  # for 3\n  3,\n]\n"
+    doc = tomlrt.loads(src)
+    doc["a"].pop(1)
+    expected = "a = [\n  # for 1\n  1,\n  # for 3\n  3,\n]\n"
+    assert tomlrt.dumps(doc) == expected
+
+
+def test_leading_comments_view_does_not_bleed_eol_comment() -> None:
+    """``leading_comments[i]`` for ``i > 0`` is read out of
+    ``items[i-1].post_comma_trivia``, which also holds item ``i-1``'s
+    EOL comment. The reader used to consume the EOL line as part of the
+    leading block, so users saw a phantom extra line."""
+    src = "a = [\n  1, # eol\n  # above 2\n  2,\n]\n"
+    doc = tomlrt.loads(src)
+    assert dict(doc["a"].leading_comments) == {1: ("above 2",)}
+    assert dict(doc["a"].comments) == {0: "eol"}
+
+
 def test_aot_clear_renders_empty_but_keeps_key() -> None:
     """Clearing an AoT empties it like a regular Python list value:
     the key stays on the host (so ``in`` / ``len`` / ``keys`` keep

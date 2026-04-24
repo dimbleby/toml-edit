@@ -24,6 +24,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reordering items in a multi-line array (`reverse`, `sort`,
+  `insert(i, …)`, `pop(i)`, `__setitem__` slice, `__delitem__`,
+  `__imul__`) now keeps each item's leading-comment block attached to
+  the item, not to the storage slot. Previously the parser-encoded
+  layout — leading comments stored at the tail of the *previous* item's
+  `post_comma_trivia` — meant `arr.reverse()` left comments stranded
+  at their old positions and silently duplicated the original first
+  item's comment via the `_SeparatorStyle` snapshot. The fix snapshots
+  the per-item leadings before each reorder and re-emits them into the
+  canonical slots after the items list has moved. EOL comments (already
+  stored on the item itself) continue to follow the item.
+
+- `leading_comments[i]` for `i > 0` no longer bleeds in the previous
+  item's EOL comment. Both the EOL line and the leading-of-next block
+  live in the same `post_comma_trivia` slot and have the same
+  `[WS] Comment NL` shape, so the trailing-block scanner used to walk
+  back over both. A new EOL-aware split (`_extract_pct_leading_block` /
+  `_replace_pct_leading_block`) clips the scan at the EOL boundary.
+
 - The `Document.preamble` setter was the one leading-comment setter
   that didn't route through `_replace_trailing_comment_block`, so it
   also lacked the str-as-Sequence guard added in the prior commit.
