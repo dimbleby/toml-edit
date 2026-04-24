@@ -24,6 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Setting a leading-comment block on a key (or array item) via the
+  `leading_comments` setter now refuses bare ``str`` arguments instead
+  of silently iterating them character-by-character. ``str`` is
+  technically a ``Sequence[str]`` of one-character strings, so
+  ``doc[t].leading_comments["x"] = "# above"`` was producing a stack of
+  ``# #``, ``#  ``, ``# a``, ``# b``, … lines. The setter now raises
+  ``TypeError`` and points the caller at the correct shape
+  (``("# above",)``).
+
 - Setting an end-of-line comment on a non-last item in a multi-line
   array (`arr.comments[i] = "# c"`) no longer doubles the indent of the
   *following* item. The parser stores the inter-item `\n  ` on the
