@@ -24,6 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Replacing a section in place via `doc[k] = Table.section({...})` (or the
+  equivalent `Table.aot([...])` / `AoT(...)` assignment) no longer drops
+  the leading comment block that sat above the original `[k]` header.
+  Since `5527097` the slot was reused, but the prior header's leading
+  trivia was discarded — comments above the section vanished silently.
+  `_prepare_section_slot` now snapshots that trivia before purging and
+  the install paths transplant it onto the first new section's header.
+
 - Installing a detached `AoT` no longer drops per-entry formatting such as
   multi-line arrays.
 - Installing a sub-section under one AoT entry no longer silently deletes a
