@@ -201,34 +201,33 @@ def _ensure_trailing_newline(section: SectionNode) -> None:
         last.newline = NewlineNode("\n")
 
 
-def _refuse_promotion_with_inner_comments(
-    key: str,
-    inline: InlineTableNode,
-    *,
-    target: str,
-) -> None:
-    """Raise if promoting ``inline`` would silently drop inner comments.
+def _iter_value_trivia(value: ValueNode) -> Iterator[Trivia]:
+    """Yield every trivia slot reachable inside ``value``.
 
-    A multi-line inline table (TOML 1.1) can carry comments on its
-    entries -- in their leading trivia, their trailing trivia, or the
-    ``post_comma_trivia`` between commas. The promotion paths cannot
-    currently translate that trivia to the section-with-KVs layout, so
-    they would silently lose the comments. Refuse the promotion
-    instead and leave the user to remove the comments first.
+    Walks into :class:`ArrayNode` and :class:`InlineTableNode`
+    children (the only value kinds with internal trivia); leaf
+    scalars yield nothing. Used by translators that need to assert
+    "this value carries no comments anywhere".
     """
-    has_comments = _trivia_has_comment(inline.final_trivia) or any(
-        _trivia_has_comment(e.leading)
-        or _trivia_has_comment(e.trailing)
-        or _trivia_has_comment(e.post_comma_trivia)
-        for e in inline.entries
-    )
-    if has_comments:
-        msg = (
-            f"cannot promote {key!r} to {target}: inline table has "
-            "inner comments that would be lost; remove the inner "
-            "comments first"
-        )
-        raise TOMLError(msg)
+    if isinstance(value, ArrayNode):
+        yield value.final_trivia
+        for item in value.items:
+            yield item.leading
+            yield item.trailing
+            yield item.post_comma_trivia
+            yield from _iter_value_trivia(item.value)
+    elif isinstance(value, InlineTableNode):
+        yield value.final_trivia
+        for entry in value.entries:
+            yield entry.leading
+            yield entry.trailing
+            yield entry.post_comma_trivia
+            yield from _iter_value_trivia(entry.value)
+
+
+def _value_has_inner_comment(value: ValueNode) -> bool:
+    """``True`` iff any trivia inside ``value`` carries a comment."""
+    return any(_trivia_has_comment(t) for t in _iter_value_trivia(value))
 
 
 def _trivia_has_comment(trivia: Trivia) -> bool:
@@ -2730,7 +2729,12 @@ class _StdTable(Table):
     @override
     def promote_inline(self, key: str) -> Table:
         sec, kv, inline = self._find_promotable(key, InlineTableNode, "an inline table")
-        _refuse_promotion_with_inner_comments(key, inline, target="[..]")
+        if _value_has_inner_comment(inline):
+            msg = (
+                f"cannot promote {key!r} to [..]: inline table has inner "
+                "comments that would be lost; remove the inner comments first"
+            )
+            raise TOMLError(msg)
         child_path = (*self._path, key)
         self._refuse_existing_promoted_section(key, child_path, kind="table")
         new_sec = _build_promoted_section(child_path, inline, kv)
@@ -2754,25 +2758,10 @@ class _StdTable(Table):
                     "promote to array-of-tables"
                 )
                 raise TOMLError(msg)
-        for item in items:
-            if (
-                _trivia_has_comment(item.leading)
-                or _trivia_has_comment(
-                    item.post_comma_trivia,
-                )
-                or _trivia_has_comment(item.trailing)
-            ):
-                msg = (
-                    f"cannot promote {key!r}: array item has comments that "
-                    "would be lost; remove the inner comments first"
-                )
-                raise TOMLError(msg)
-            assert isinstance(item.value, InlineTableNode)
-            _refuse_promotion_with_inner_comments(key, item.value, target="[[..]]")
-        if _trivia_has_comment(array.final_trivia):
+        if _value_has_inner_comment(array):
             msg = (
-                f"cannot promote {key!r}: array has a trailing comment that "
-                "would be lost; remove the inner comments first"
+                f"cannot promote {key!r} to [[..]]: array has inner comments "
+                "that would be lost; remove the inner comments first"
             )
             raise TOMLError(msg)
         child_path = (*self._path, key)
@@ -3738,7 +3727,7 @@ class Array(list[Any]):
         :attr:`comments` / :attr:`leading_comments` if you really want
         a single-line layout.
         """
-        if not multiline and (self.comments or self.leading_comments):
+        if not multiline and _value_has_inner_comment(self._node):
             msg = (
                 "cannot collapse a multi-line array to single-line: "
                 "items carry EOL or leading comments which would "

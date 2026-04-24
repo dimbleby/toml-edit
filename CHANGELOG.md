@@ -36,6 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `Array.set_multiline(multiline=False)` now also refuses to collapse
+  when the array contains a multi-line inline table with inner
+  comments. The previous check only saw comments attached at the
+  array's own item level and would silently produce a hybrid layout
+  (collapsed outer brackets, multi-line inner inline table).
+
 - `promote_inline` and `promote_array` previously silently dropped
   any comments inside multi-line inline tables (TOML 1.1) and any EOL
   / leading comments on inline-array items. Both now refuse to

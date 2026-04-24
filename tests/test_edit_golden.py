@@ -1149,6 +1149,15 @@ def test_array_set_multiline_false_after_clearing_comments_works() -> None:
     assert tomlrt.dumps(doc) == "a = [1, 2]\n"
 
 
+def test_array_set_multiline_false_refuses_when_inner_inline_has_comment() -> None:
+    src = "a = [\n    {\n        # inner\n        x = 1,\n    },\n]\n"
+    doc = tomlrt.loads(src)
+    arr = doc.array("a")
+    with pytest.raises(tomlrt.TOMLError, match="EOL or leading comments"):
+        arr.set_multiline(multiline=False)
+    assert tomlrt.dumps(doc) == src
+
+
 def test_array_set_multiline_custom_indent() -> None:
     doc = tomlrt.loads("a = [1, 2]\n")
     doc.array("a").set_multiline(multiline=True, indent="  ")
