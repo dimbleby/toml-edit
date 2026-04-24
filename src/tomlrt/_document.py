@@ -237,14 +237,16 @@ def _prepend_blank_line(trivia: Trivia) -> None:
 
 
 def _strip_comment_marker(text: str) -> str:
-    """``"# foo "`` → ``"foo"``.
+    """``"# foo"`` → ``"foo"``.
 
-    Removes a leading ``#``, an optional single space, and trailing
-    horizontal whitespace.
+    Removes a leading ``#`` and one optional space. Symmetric with
+    :func:`_format_comment`, which prepends exactly ``# `` (or just
+    ``#`` for empty input). We deliberately do *not* strip trailing
+    whitespace -- the comment view contract is that reads and writes
+    are exact inverses, so trailing spaces are content.
     """
     text = text.removeprefix("#")
-    text = text.removeprefix(" ")
-    return text.rstrip(" \t")
+    return text.removeprefix(" ")
 
 
 def _format_comment(text: str) -> str:
@@ -302,10 +304,13 @@ class _HasEolComment(Protocol):
 def _set_eol_comment(node: _HasEolComment, value: str | None) -> None:
     """Set or clear the trailing ``# comment`` of a KV / header node.
 
-    Clearing also strips trailing whitespace from ``node.trailing`` so we
-    don't render ``foo = 12 \\n`` after the comment goes away.
+    ``value=None`` clears the comment and strips trailing whitespace
+    from ``node.trailing`` so we don't render ``foo = 12 \\n`` after
+    the comment goes away. ``value=""`` is *not* a clear: it sets an
+    empty comment (rendered as a bare ``#``), so the API is symmetric
+    with the reader, which returns ``""`` for a parsed bare ``#``.
     """
-    if value is None or value == "":
+    if value is None:
         node.trailing_comment = None
         node.trailing = None
         return
@@ -439,10 +444,12 @@ def _replace_eol_comment(
     """Set or clear the EOL comment at the *start* of ``trivia``.
 
     Existing EOL prefix (``[WS]? CommentNode``) is removed if present.
-    If ``value`` is non-empty, ``" # value"`` is prepended. When
-    ``force_newline`` is True and the trivia would otherwise lack a
-    NewlineNode after the new comment, one is inserted (so following
-    content doesn't end up on the same line as the comment).
+    ``value=None`` clears it; ``value=""`` writes a bare ``#`` (so the
+    API is symmetric with the reader, which returns ``""`` for a parsed
+    bare ``#``). When ``force_newline`` is True and the trivia would
+    otherwise lack a NewlineNode after the new comment, one is inserted
+    (so following content doesn't end up on the same line as the
+    comment).
     """
     pieces = trivia.pieces
     end_eol = 0
@@ -454,7 +461,7 @@ def _replace_eol_comment(
         end_eol = 0
     rest = list(pieces[end_eol:])
     new_prefix: list[TriviaPiece] = []
-    if value is not None and value != "":
+    if value is not None:
         new_prefix.append(WhitespaceNode(" "))
         new_prefix.append(CommentNode(text=_format_comment(value)))
         if force_newline and not any(isinstance(p, NewlineNode) for p in rest):
@@ -3329,7 +3336,7 @@ class _TableCommentsView(_TableKVViewBase[str]):
     @override
     def __setitem__(self, key: str, value: str) -> None:
         _, kv = self._table._find_direct_kv(key)  # noqa: SLF001
-        _set_eol_comment(kv, value if value != "" else None)
+        _set_eol_comment(kv, value)
 
 
 class _TableLeadingCommentsView(_TableKVViewBase["tuple[str, ...]"]):
@@ -3427,9 +3434,6 @@ class _ArrayCommentsView(_ArrayItemViewBase[str]):
         items = self._array._node.items  # noqa: SLF001
         item = items[i]
         is_last = i == len(items) - 1
-        if value == "":
-            del self[key]
-            return
         # Pick the slot that will carry the comment. Mid-array items
         # (and last items with a synthesized trailing comma) write into
         # post_comma_trivia; the only case left -- last item with no

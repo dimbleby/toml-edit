@@ -36,6 +36,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The comment-view setters (`comments[k] = …`, `header_comment = …`,
+  `Array.comments[i] = …`) used to treat ``""`` as a delete shortcut,
+  but the matching readers return ``""`` for a parsed bare ``#``. So
+  ``c[k] = c[k]`` silently removed any present empty comment. The
+  empty string is now content (rendered as a bare ``#``); use ``del``
+  (or assign ``None`` for the header variants) to actually clear.
+
+- `_strip_comment_marker` no longer rstrips trailing whitespace from
+  comment text. The reader is now an exact inverse of the writer
+  (``# `` prefix added on write, stripped on read), so trailing
+  spaces in user-supplied comment content survive a round trip
+  through the views.
+
 - The comment-write API (`comments[k] = …`, `leading_comments[k] = …`,
   `header_comment = …`, `header_leading_comments = …`) now treats the
   user's text as pure *content*, never as a pre-formatted comment.

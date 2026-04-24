@@ -73,14 +73,16 @@ def test_set_eol_comment_replaces_existing() -> None:
     assert tomlrt.dumps(doc) == 'name = "ada"  # new\n'
 
 
-def test_set_eol_comment_to_empty_string_removes() -> None:
+def test_set_eol_comment_to_empty_string_writes_bare_hash() -> None:
+    # An empty comment string is content (a bare '#'), not a delete:
+    # the API is symmetric with the reader, which returns "" for a
+    # parsed bare '#'. Use ``del`` (or assign ``None`` for the header
+    # variants) to actually remove a comment.
     src = 'name = "ada"  # old\n'
     doc = tomlrt.parse(src)
     doc.comments["name"] = ""
-    # Clearing also drops the inline whitespace that separated the
-    # comment from the value, so we don't render `name = "ada"  \n`.
-    assert tomlrt.dumps(doc) == 'name = "ada"\n'
-    assert "name" not in doc.comments
+    assert tomlrt.dumps(doc) == 'name = "ada"  #\n'
+    assert doc.comments["name"] == ""
 
 
 def test_del_eol_comment_removes_it() -> None:
@@ -122,6 +124,17 @@ def test_comment_views_are_idempotent_under_self_assignment() -> None:
         "c": "#hashtag",
         "d": "## emphasised",
     }
+
+
+def test_empty_comment_in_source_round_trips_through_view() -> None:
+    # A bare '#' (empty comment) in the source must read as ''
+    # *and* be present, and writing '' back must be a no-op. The
+    # ``del``-via-empty-string shortcut would have broken this.
+    doc = tomlrt.parse("a = 1  #\nb = 2\n")
+    assert doc.comments["a"] == ""
+    assert "a" in doc.comments
+    doc.comments["a"] = doc.comments["a"]
+    assert tomlrt.parse(tomlrt.dumps(doc)).comments["a"] == ""
 
 
 def test_set_eol_comment_rejects_newline() -> None:
@@ -328,10 +341,13 @@ def test_header_comment_replace_existing() -> None:
     assert tomlrt.dumps(doc) == "[server] # new\nhost = 'a'\n"
 
 
-def test_header_comment_clear_with_empty_string() -> None:
+def test_header_comment_empty_string_writes_bare_hash() -> None:
+    # An empty header_comment is a bare '#', not a clear: pass None
+    # (or use ``del``) to actually remove it.
     doc = tomlrt.parse("[server] # old\nhost = 'a'\n")
     doc.table("server").header_comment = ""
-    assert tomlrt.dumps(doc) == "[server]\nhost = 'a'\n"
+    assert tomlrt.dumps(doc) == "[server] #\nhost = 'a'\n"
+    assert doc.table("server").header_comment == ""
 
 
 def test_header_comment_clear_with_none() -> None:
@@ -894,14 +910,16 @@ def test_array_comments_delitem_missing_raises_keyerror() -> None:
         del arr.comments[0]
 
 
-def test_array_comments_setitem_empty_string_removes() -> None:
+def test_array_comments_setitem_empty_string_writes_bare_hash() -> None:
+    # An empty array-item comment is a bare '#', not a delete: use
+    # ``del`` to actually remove it.
     doc = tomlrt.parse("xs = [\n  1,\n  2,  # tail\n]\n")
     arr = doc.array("xs")
     assert arr.comments[1] == "tail"
     arr.comments[1] = ""
-    assert 1 not in arr.comments
-    out = tomlrt.dumps(doc)
-    assert "# tail" not in out
+    assert arr.comments[1] == ""
+    re = tomlrt.parse(tomlrt.dumps(doc))
+    assert re.array("xs").comments[1] == ""
 
 
 def test_array_comments_repr_lists_only_present_indices() -> None:
