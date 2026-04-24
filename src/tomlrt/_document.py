@@ -4313,9 +4313,17 @@ class AoT(list[Table]):
             return
         end = start + sum(len(b) for b in blocks)
         leadings = [self._block_leading(b) for b in blocks]
+        # Comments belong to their entry, separators belong to the slot.
+        # Snapshot per-entry comment payload before the leading-swap and
+        # replay it after, so reordering blocks moves comments with them
+        # while leaving the inter-entry separator pattern in place.
+        entry_comments = [_extract_trailing_comment_block(L) for L in leadings]
         blocks.reverse()
+        entry_comments.reverse()
         for block, leading in zip(blocks, leadings, strict=True):
             self._set_block_leading(block, leading)
+        for block, comment in zip(blocks, entry_comments, strict=True):
+            _replace_trailing_comment_block(self._block_leading(block), comment, "")
         self._doc_node.sections[start:end] = [s for block in blocks for s in block]
         self._resync()
 
@@ -4331,14 +4339,18 @@ class AoT(list[Table]):
             return
         end = start + sum(len(b) for b in blocks)
         leadings = [self._block_leading(b) for b in blocks]
-        pairs = list(zip(list(self), blocks, strict=True))
+        entry_comments = [_extract_trailing_comment_block(L) for L in leadings]
+        triples = list(zip(list(self), blocks, entry_comments, strict=True))
         if key is None:
-            pairs.sort(key=lambda p: p[0], reverse=reverse)  # type: ignore[arg-type,return-value]
+            triples.sort(key=lambda p: p[0], reverse=reverse)  # type: ignore[arg-type,return-value]
         else:
-            pairs.sort(key=lambda p: key(p[0]), reverse=reverse)  # type: ignore[arg-type,return-value]
-        new_blocks = [block for _, block in pairs]
+            triples.sort(key=lambda p: key(p[0]), reverse=reverse)  # type: ignore[arg-type,return-value]
+        new_blocks = [block for _, block, _ in triples]
+        new_comments = [comment for _, _, comment in triples]
         for block, leading in zip(new_blocks, leadings, strict=True):
             self._set_block_leading(block, leading)
+        for block, comment in zip(new_blocks, new_comments, strict=True):
+            _replace_trailing_comment_block(self._block_leading(block), comment, "")
         self._doc_node.sections[start:end] = [s for block in new_blocks for s in block]
         self._resync()
 

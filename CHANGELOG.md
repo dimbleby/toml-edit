@@ -24,6 +24,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `AoT.reverse()` and `AoT.sort()` now move each entry's leading
+  comment block with the entry, instead of leaving the comments
+  stranded at their original storage slots. Previously the leadings
+  were swapped wholesale, which preserved the inter-entry separator
+  pattern (correct) but also dragged the comment payload along
+  (wrong) — so reversing `# A\n[[t]]\n…\n# B\n[[t]]\n…` produced
+  `# A\n[[t]]\n…(B)\n# B\n[[t]]\n…(A)`. The comment portion is now
+  snapshotted per-entry and re-emitted after the leading-swap, so
+  separator style stays at the slot and comments follow the entry.
+
 - Reordering items in a multi-line array (`reverse`, `sort`,
   `insert(i, …)`, `pop(i)`, `__setitem__` slice, `__delitem__`,
   `__imul__`) now keeps each item's leading-comment block attached to
