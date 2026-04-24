@@ -34,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Deleting a key whose value is an in-cache table view that has no
   remaining CST footprint (e.g. after emptying its only descendant)
   no longer spuriously raises `KeyError`.
+- Assigning the same `Table.section(...)` sub-key on multiple AoT entries
+  (e.g. `aot[i]["source"] = Table.section({...})` in a loop) now keeps
+  each entry's values separate instead of leaking writes into the first
+  matching `[aot.k]` section and corrupting earlier entries.
 
 ## [0.4.0] - 2026-04-23
 
