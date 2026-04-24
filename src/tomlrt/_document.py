@@ -1434,6 +1434,21 @@ class Table(dict[str, Any]):
 
     # --- mutators ----------------------------------------------------------
 
+    def _is_own_section_slot(self, key: str, value: object) -> bool:
+        """Whether ``value`` is the section-Table view already at ``self[key]``.
+
+        The cached-view identity case (``self[k] is value``) is caught
+        earlier by ``__setitem__``'s ``old is value`` short-circuit;
+        this guard exists for the pathological case of a freshly-
+        constructed section-Table view aimed at the same slot, which
+        would otherwise infinite-loop through the structural-install
+        fallback. Only meaningful for section-backed Tables; other
+        flavours don't have the addressable ``(_doc_node, _path)``
+        identity that defines "same slot".
+        """
+        del key, value
+        return False
+
     @override
     def __setitem__(self, key: str, value: object) -> None:
         if not self._attached:
@@ -1451,12 +1466,21 @@ class Table(dict[str, Any]):
             if isinstance(old, (Table, AoT, Array)):
                 old._detach()  # noqa: SLF001
         # Flavour-bearing values drive structural installation rather
-        # than a raw value write. Attached Arrays/AoTs from another
-        # document fall through to the deepcopy path so their full CST
-        # (comments, formatting) survives the copy; only SectionSpec,
-        # standalone AoTs, and standalone Arrays need structural work.
-        if isinstance(value, SectionSpec) or (
-            isinstance(value, (AoT, Array)) and not value._attached  # noqa: SLF001
+        # than a raw value write. The four "section-flavoured" types
+        # (SectionSpec, any AoT, foreign-attached section-Table,
+        # standalone Array) all encode the same intent — "install a
+        # structural block here" — and route through
+        # ``_install_flavoured`` so each Table flavour can apply its
+        # own per-host policy uniformly (``_StdTable`` performs the
+        # structural splice; ``_InlineTable`` refuses, since an
+        # inline host cannot contain section blocks).
+        if (
+            isinstance(value, (SectionSpec, AoT))
+            or (isinstance(value, Array) and not value._attached)  # noqa: SLF001
+            or (
+                isinstance(value, _StdTable)
+                and not self._is_own_section_slot(key, value)
+            )
         ):
             self._install_flavoured((key,), value)
             return
@@ -1562,6 +1586,15 @@ class Table(dict[str, Any]):
             raise TOMLError(msg)
         if isinstance(value, AoT):
             msg = "cannot install an array-of-tables inside an inline-style table"
+            raise TOMLError(msg)
+        if isinstance(value, _StdTable):
+            # An attached section-backed Table is the same kind of
+            # "give me a [section] here" request as a SectionSpec; the
+            # only difference is whether the user spelled the spec
+            # themselves or copied an existing block. Refuse it for
+            # the same reason — silently flattening it into the
+            # inline host loses the [section] semantics.
+            msg = "cannot install a [section]-style table inside an inline-style table"
             raise TOMLError(msg)
         if len(parts) > 1:
             path = ".".join(parts)
@@ -2402,6 +2435,14 @@ class _StdTable(Table):
             ):
                 out.append(sec)
         return out
+
+    @override
+    def _is_own_section_slot(self, key: str, value: object) -> bool:
+        return (
+            isinstance(value, _StdTable)
+            and value._doc_node is self._doc_node  # noqa: SLF001
+            and value._path == (*self._path, key)  # noqa: SLF001
+        )
 
     def _classify(self, key: str) -> tuple[str, object]:
         """Classify a key for mutation purposes.
