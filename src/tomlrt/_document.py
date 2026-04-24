@@ -4327,29 +4327,31 @@ class AoT(list[Table]):
         if i < 0 or i >= n:
             msg = "pop index out of range"
             raise IndexError(msg)
-        target = own[i]
-        block = self._doc_node.aot_entry_block(target)
-        # Use the live entry as the popped object to preserve identity.
         popped = self[i]
-        # Orphan the popped view onto its own ``DocumentNode`` *before*
-        # removing the block from the live doc: ``_resync``'s default
-        # detach path runs after ``remove_sections``, by which point
-        # ``aot_owned_range`` searches an empty list and silently
-        # drops the popped entry's ``[a.sub]``-style sub-sections.
-        popped._detach(DocumentNode(sections=list(block)))  # noqa: SLF001
-        self._doc_node.remove_sections(set(block))
-        self._resync()
+        self._orphan_and_remove([(popped, own[i])])
         return popped
 
     @override
     def clear(self) -> None:
         own = self._own_sections()
+        self._orphan_and_remove(list(zip(list(self), own, strict=True)))
+
+    def _orphan_and_remove(
+        self,
+        targets: list[tuple[Table, SectionNode]],
+    ) -> None:
+        """Orphan ``targets`` then strip their blocks from the live doc.
+
+        Each cached entry view is rehomed onto its own
+        :class:`DocumentNode` carrying the entry's full
+        ``aot_entry_block`` *before* ``remove_sections`` runs --
+        otherwise ``_resync``'s default detach pass would search a
+        section list that's already been emptied of the block, and
+        any nested ``[a.sub]``-style sub-sections of the dying entry
+        would be silently dropped from the orphaned view.
+        """
         to_remove: set[SectionNode] = set()
-        # Pre-detach every entry into its own orphan doc, for the same
-        # reason as ``pop``: once ``remove_sections`` runs, ``_resync``'s
-        # detach pass cannot rebuild owned-range capture and would lose
-        # any nested sub-sections from the cached entry views.
-        for entry, sec in zip(list(self), own, strict=True):
+        for entry, sec in targets:
             block = self._doc_node.aot_entry_block(sec)
             entry._detach(DocumentNode(sections=list(block)))  # noqa: SLF001
             to_remove.update(block)
