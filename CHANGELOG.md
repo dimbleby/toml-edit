@@ -36,6 +36,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `Array.set_multiline(multiline=False)` (and the equivalent
+  `array.multiline = False` setter) now raises :class:`TOMLError`
+  when any item carries an EOL or leading comment, instead of
+  silently producing invalid TOML. A ``#`` comment runs to end of
+  line, so collapsing ``[\n  1,  # one\n  2,\n]`` to a single line
+  would have rendered ``[1,  # one\n  2]`` -- a syntax error on
+  re-parse. The error message points at the ``.comments`` and
+  ``.leading_comments`` views for clearing the offending comments
+  first.
+
 - `AoT.__imul__` (in-place repetition, e.g. `aot *= 2`) now keeps each
   duplicated entry's leading-comment block attached to that entry,
   instead of overwriting the duplicated first entry's comment with the
