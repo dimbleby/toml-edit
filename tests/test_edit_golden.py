@@ -1858,3 +1858,22 @@ def test_replace_dotted_subtable_with_value_no_stray_top_blank() -> None:
     doc = tomlrt.loads("[a.b]\nx=1\n")
     doc["a"]["b"] = 99
     assert tomlrt.dumps(doc) == "[a]\nb = 99\n"
+
+
+def test_setting_eol_comment_does_not_double_indent_next_item() -> None:
+    """Adding an EOL comment to a multi-line array item must not push
+    the following item's indent. The parser stores the inter-item
+    ``\\n  `` on the *previous* item's ``post_comma_trivia``; the
+    comment-setter then unconditionally seeded ``next_item.leading``
+    with another indent run, so the next item rendered at double the
+    original indent."""
+    doc = tomlrt.loads("arr = [\n  1,\n  2,\n  3,\n]\n")
+    doc["arr"].comments[0] = "# z"
+    assert tomlrt.dumps(doc) == "arr = [\n  1, # z\n  2,\n  3,\n]\n"
+
+
+def test_setting_eol_comment_on_consecutive_items_keeps_indent() -> None:
+    doc = tomlrt.loads("arr = [\n  1,\n  2,\n]\n")
+    doc["arr"].comments[0] = "# zero"
+    doc["arr"].comments[1] = "# one"
+    assert tomlrt.dumps(doc) == "arr = [\n  1, # zero\n  2, # one\n]\n"

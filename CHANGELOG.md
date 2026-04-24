@@ -24,6 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Setting an end-of-line comment on a non-last item in a multi-line
+  array (`arr.comments[i] = "# c"`) no longer doubles the indent of the
+  *following* item. The parser stores the inter-item `\n  ` on the
+  previous item's `post_comma_trivia`; the comment-setter saw the next
+  item's leading was empty and unconditionally seeded another indent
+  run there, producing `1, # c\n    2,` instead of `1, # c\n  2,`. The
+  setter now skips the next-item indent step when either the rewritten
+  slot or the next item's leading already supplies the line's indent.
+
 - Overwriting a dotted-key sub-table with a scalar (e.g. `doc["a"]["b"] = 99`
   when the doc was `[a.b]\nx=1`) no longer leaves a stray blank line above
   the materialised parent header. `_ensure_nested_section` was prepending
