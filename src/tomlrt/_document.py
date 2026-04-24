@@ -312,7 +312,11 @@ def _set_eol_comment(node: _HasEolComment, value: str | None) -> None:
         node.newline = NewlineNode("\n")
 
 
-def _trailing_comment_block_span(pieces: Sequence[TriviaPiece]) -> tuple[int, int]:
+def _trailing_comment_block_span(
+    pieces: Sequence[TriviaPiece],
+    *,
+    min_start: int = 0,
+) -> tuple[int, int]:
     """Locate the trailing-comment block within ``pieces``.
 
     Returns ``(start, end)`` such that ``pieces[start:end]`` is the
@@ -320,34 +324,45 @@ def _trailing_comment_block_span(pieces: Sequence[TriviaPiece]) -> tuple[int, in
     immediately preceding the trivia's anchoring whitespace, and
     ``pieces[end:]`` is that anchor. Earlier comment lines that are
     separated from the run by a blank line are excluded.
+
+    ``min_start`` clips the backward walk: triples lying entirely below
+    that index are not consumed. Used by callers that want the trailing
+    block of ``post_comma_trivia`` *after* an EOL-comment prefix
+    (``[WS] Comment NL``) that belongs to the previous item.
     """
     end = len(pieces)
-    while end > 0 and isinstance(pieces[end - 1], WhitespaceNode):
+    while end > min_start and isinstance(pieces[end - 1], WhitespaceNode):
         end -= 1
     start = end
     i = end
-    while i >= 2:
+    while i >= min_start + 2:
         nl = pieces[i - 1]
         cm = pieces[i - 2]
         if not (isinstance(nl, NewlineNode) and isinstance(cm, CommentNode)):
             break
         i -= 2
-        if i > 0 and isinstance(pieces[i - 1], WhitespaceNode):
+        if i > min_start and isinstance(pieces[i - 1], WhitespaceNode):
             i -= 1
         start = i
     return start, end
 
 
-def _extract_trailing_comment_block(trivia: Trivia) -> tuple[str, ...]:
+def _extract_trailing_comment_block(
+    trivia: Trivia,
+    *,
+    min_start: int = 0,
+) -> tuple[str, ...]:
     """Return the contiguous run of comment lines at the *end* of ``trivia``.
 
     A "comment line" is ``[WS] CommentNode NewlineNode``. The trailing
     block ends immediately before the trivia's anchoring whitespace
     (the indent of the line that follows). Earlier comment lines that
     are separated from the run by a blank line are *not* included.
+
+    ``min_start`` clips the scan; see :func:`_trailing_comment_block_span`.
     """
     pieces = trivia.pieces
-    start, end = _trailing_comment_block_span(pieces)
+    start, end = _trailing_comment_block_span(pieces, min_start=min_start)
     return tuple(
         _strip_comment_marker(p.text)
         for p in pieces[start:end]
@@ -375,15 +390,18 @@ def _replace_trailing_comment_block(
     trivia: Trivia,
     lines: Sequence[str],
     indent: str,
+    *,
+    min_start: int = 0,
 ) -> None:
     """Replace the trailing comment block in ``trivia`` with ``lines``.
 
     Earlier trivia (older blank-separated comments, leading whitespace)
     and the trailing whitespace anchor are preserved.
+    ``min_start`` clips the scan; see :func:`_trailing_comment_block_span`.
     """
     _validate_comment_lines(lines)
     pieces = trivia.pieces
-    start, end = _trailing_comment_block_span(pieces)
+    start, end = _trailing_comment_block_span(pieces, min_start=min_start)
     new_pieces: list[TriviaPiece] = []
     for line in lines:
         if indent:
@@ -447,9 +465,9 @@ def _split_pct_eol(pieces: Sequence[TriviaPiece]) -> int:
     is, the previous item's end-of-line comment, on the same source line
     as the comma. Returns ``0`` if there is no EOL comment.
 
-    Use this to clip ``[WS] Comment NL``-walking helpers (notably
-    :func:`_trailing_comment_block_span`) so they don't backtrack into
-    the EOL line and confuse it with a ``leading_comments[i]`` entry.
+    Pass the result as ``min_start`` to :func:`_trailing_comment_block_span`
+    (or its callers) so the backward walk doesn't confuse the EOL line
+    with a ``leading_comments[i]`` entry.
     """
     ws_end = 1 if pieces and isinstance(pieces[0], WhitespaceNode) else 0
     if ws_end < len(pieces) and isinstance(pieces[ws_end], CommentNode):
@@ -458,41 +476,6 @@ def _split_pct_eol(pieces: Sequence[TriviaPiece]) -> int:
             end += 1
         return end
     return 0
-
-
-def _extract_pct_leading_block(pct: Trivia) -> tuple[str, ...]:
-    """``leading_comments[i]`` (for ``i > 0``) extracted from ``items[i-1].pct``.
-
-    Skips the EOL-comment prefix that belongs to ``items[i-1]`` itself.
-    """
-    pieces = pct.pieces
-    eol_end = _split_pct_eol(pieces)
-    sub = pieces[eol_end:]
-    start, end = _trailing_comment_block_span(sub)
-    return tuple(
-        _strip_comment_marker(p.text)
-        for p in sub[start:end]
-        if isinstance(p, CommentNode)
-    )
-
-
-def _replace_pct_leading_block(
-    pct: Trivia,
-    lines: Sequence[str],
-    indent: str,
-) -> None:
-    """Replace the post-EOL trailing comment block in ``pct``.
-
-    Preserves the EOL-comment prefix (which belongs to the previous
-    item) and the trivia's anchoring whitespace.
-    """
-    _validate_comment_lines(lines)
-    pieces = pct.pieces
-    eol_end = _split_pct_eol(pieces)
-    sub = list(pieces[eol_end:])
-    sub_trivia = Trivia(sub)
-    _replace_trailing_comment_block(sub_trivia, lines, indent)
-    pct.pieces = list(pieces[:eol_end]) + sub_trivia.pieces
 
 
 def _is_pure_whitespace(t: Trivia) -> bool:
@@ -593,6 +576,26 @@ def _derive_close_pad(inter: Trivia) -> Trivia:
     return Trivia()
 
 
+def _logical_leading_slot(
+    items: Sequence[_Separated],
+    i: int,
+) -> tuple[Trivia, int]:
+    """Return ``(trivia, min_start)`` locating ``leadings[i]`` in the CST.
+
+    The block lives at the trailing-comment span of the returned trivia,
+    starting no earlier than ``min_start``. The two on-disk encodings
+    are unified here:
+
+    * ``i == 0``: ``items[0].leading``, scan from the start
+    * ``i > 0``: ``items[i-1].post_comma_trivia``, scan after the EOL
+      prefix that belongs to item *i-1*
+    """
+    if i == 0:
+        return items[0].leading, 0
+    slot = items[i - 1].post_comma_trivia
+    return slot, _split_pct_eol(slot.pieces)
+
+
 def _leading0_is_header(leading: Trivia) -> bool:
     """True iff ``items[0].leading`` is a "header" comment stuck to ``[``.
 
@@ -627,16 +630,13 @@ def _snapshot_item_leadings(items: Sequence[_Separated]) -> list[tuple[str, ...]
     """
     if not items:
         return []
-    leading0_block = (
-        ()
-        if _leading0_is_header(items[0].leading)
-        else _extract_trailing_comment_block(items[0].leading)
-    )
-    out = [leading0_block]
-    out.extend(
-        _extract_pct_leading_block(items[i - 1].post_comma_trivia)
-        for i in range(1, len(items))
-    )
+    out: list[tuple[str, ...]] = []
+    for i in range(len(items)):
+        if i == 0 and _leading0_is_header(items[0].leading):
+            out.append(())
+            continue
+        trivia, min_start = _logical_leading_slot(items, i)
+        out.append(_extract_trailing_comment_block(trivia, min_start=min_start))
     return out
 
 
@@ -646,28 +646,26 @@ def _write_item_leadings(
 ) -> None:
     """Re-encode per-item leading-comment blocks into their canonical slots.
 
-    Inverse of :func:`_snapshot_item_leadings`: writes ``leadings[i]`` to
-    ``items[0].leading`` for ``i == 0``, or to the post-EOL tail of
-    ``items[i-1].post_comma_trivia`` for ``i > 0`` (preserving any
-    EOL-comment prefix and indent anchor). Also clears any stale
-    leading-of-next residue from the *last* item's pct, since there is
-    no logical owner for it once the item sits at the end.
-
-    A header comment stuck to ``[`` is left alone (open_pad already
-    carries it).
+    Inverse of :func:`_snapshot_item_leadings`. Also clears any stale
+    leading-of-next residue from the *last* item's pct (no logical
+    owner once the item sits at the end), and leaves a header comment
+    stuck to ``[`` alone (``open_pad`` already carries it).
     """
     if not items:
         return
-    if not _leading0_is_header(items[0].leading):
-        indent0 = _indent_after_last_newline(items[0].leading)
-        _replace_trailing_comment_block(items[0].leading, leadings[0], indent0)
-    for i in range(1, len(items)):
-        slot = items[i - 1].post_comma_trivia
-        ind = _indent_after_last_newline(slot)
-        _replace_pct_leading_block(slot, leadings[i], ind)
+    for i in range(len(items)):
+        if i == 0 and _leading0_is_header(items[0].leading):
+            continue
+        trivia, min_start = _logical_leading_slot(items, i)
+        ind = _indent_after_last_newline(trivia)
+        _replace_trailing_comment_block(trivia, leadings[i], ind, min_start=min_start)
     last_slot = items[-1].post_comma_trivia
-    last_ind = _indent_after_last_newline(last_slot)
-    _replace_pct_leading_block(last_slot, (), last_ind)
+    _replace_trailing_comment_block(
+        last_slot,
+        (),
+        _indent_after_last_newline(last_slot),
+        min_start=_split_pct_eol(last_slot.pieces),
+    )
 
 
 def _sample_separator_style(
@@ -3462,36 +3460,22 @@ class _ArrayLeadingCommentsView(MutableMapping[int, "tuple[str, ...]"]):
 
     def _read(self, i: int) -> tuple[str, ...]:
         items = self._array._node.items  # noqa: SLF001
-        if i == 0:
-            return _extract_trailing_comment_block(items[0].leading)
-        return _extract_pct_leading_block(items[i - 1].post_comma_trivia)
+        trivia, min_start = _logical_leading_slot(items, i)
+        return _extract_trailing_comment_block(trivia, min_start=min_start)
 
     def _write(self, i: int, value: Sequence[str]) -> None:
         items = self._array._node.items  # noqa: SLF001
         indent = _array_indent(self._array._node)  # noqa: SLF001
-        if i == 0:
-            trivia = items[0].leading
-            if value and not any(isinstance(p, NewlineNode) for p in trivia.pieces):
-                while trivia.pieces and isinstance(
-                    trivia.pieces[-1],
-                    WhitespaceNode,
-                ):
-                    trivia.pieces.pop()
-                trivia.pieces.append(NewlineNode("\n"))
-                if indent:
-                    trivia.pieces.append(WhitespaceNode(indent))
-            _replace_trailing_comment_block(trivia, value, indent)
-            return
-        slot = items[i - 1].post_comma_trivia
+        trivia, min_start = _logical_leading_slot(items, i)
         # Ensure the slot ends with a newline+indent anchor so the
         # block lands on its own line(s) before the next value.
-        if value and not any(isinstance(p, NewlineNode) for p in slot.pieces):
-            while slot.pieces and isinstance(slot.pieces[-1], WhitespaceNode):
-                slot.pieces.pop()
-            slot.pieces.append(NewlineNode("\n"))
+        if value and not any(isinstance(p, NewlineNode) for p in trivia.pieces):
+            while trivia.pieces and isinstance(trivia.pieces[-1], WhitespaceNode):
+                trivia.pieces.pop()
+            trivia.pieces.append(NewlineNode("\n"))
             if indent:
-                slot.pieces.append(WhitespaceNode(indent))
-        _replace_pct_leading_block(slot, value, indent)
+                trivia.pieces.append(WhitespaceNode(indent))
+        _replace_trailing_comment_block(trivia, value, indent, min_start=min_start)
 
     @override
     def __getitem__(self, key: int) -> tuple[str, ...]:
