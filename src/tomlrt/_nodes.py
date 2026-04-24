@@ -100,9 +100,6 @@ class Trivia:
             return pieces[0].render()
         return "".join([p.render() for p in pieces])
 
-    def is_empty(self) -> bool:
-        return not self.pieces
-
 
 # ---------------------------------------------------------------------------
 # Keys
