@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
+    from collections.abc import Container
     from datetime import date, datetime, time
 
 
@@ -500,6 +501,22 @@ class DocumentNode:
             while pieces and isinstance(pieces[0], NewlineNode):
                 pieces.pop(0)
             return
+
+    def remove_sections_by_id(self, victims: Container[int]) -> None:
+        """Drop every section whose ``id()`` is in ``victims``, then normalise.
+
+        Identity-keyed (not equality-keyed) so two structurally-equal
+        section nodes are never confused — a recurring class of bug
+        when ``list.remove`` / ``list.index`` is used on the dataclass
+        nodes. Runs :meth:`normalise_top_blank` afterwards so callers
+        don't have to remember to clean up a stray top-of-file blank
+        when the first physical section is among the removed.
+        """
+        kept = [s for s in self.sections if id(s) not in victims]
+        if len(kept) == len(self.sections):
+            return
+        self.sections = kept
+        self.normalise_top_blank()
 
     def aot_owned_range(self, aot_sec: SectionNode) -> list[SectionNode]:
         """Sections owned by this AoT entry.

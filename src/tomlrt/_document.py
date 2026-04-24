@@ -2779,7 +2779,7 @@ class _StdTable(Table):
                 or any(isinstance(p, CommentNode) for p in hdr.leading.pieces)
             ):
                 continue
-            self._doc_node.sections.remove(sec)
+            self._doc_node.remove_sections_by_id({id(sec)})
             if self._anchor is sec:
                 self._anchor = None
             if self._owner_anchor is sec:
@@ -3918,11 +3918,10 @@ class AoT(list[Table]):
             raise IndexError(msg)
         target = own[i]
         owned = self._doc_node.aot_owned_range(target)
-        sections = self._doc_node.sections
         to_remove = {id(target), *(id(s) for s in owned)}
         # Use the live entry as the popped object to preserve identity.
         popped = self[i]
-        self._doc_node.sections = [s for s in sections if id(s) not in to_remove]
+        self._doc_node.remove_sections_by_id(to_remove)
         self._resync()
         popped._detach()  # noqa: SLF001
         return popped
@@ -3935,8 +3934,7 @@ class AoT(list[Table]):
             to_remove.add(id(s))
             for sub in self._doc_node.aot_owned_range(s):
                 to_remove.add(id(sub))
-        sections = self._doc_node.sections
-        self._doc_node.sections = [s for s in sections if id(s) not in to_remove]
+        self._doc_node.remove_sections_by_id(to_remove)
         self._resync()
 
     @override

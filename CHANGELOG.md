@@ -24,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lines between sections.
 - Deleting the first section in a document no longer leaves a stray blank
   line at the top of the rendered output.
+- Removing the first entry of an AoT (`del aot[0]`, `aot.pop(0)`,
+  `aot.remove(...)`, slice deletion) no longer leaves a stray blank line at
+  the top of the rendered output. The section-removal helper now lives on
+  `DocumentNode`, so identity-keyed removal and top-of-file normalisation
+  are wired together at a single chokepoint instead of being open-coded
+  per call site.
 - Assigning `Table.section({})` and then a child section (e.g.
   `doc[k] = Table.section({}); doc[k][c] = ...`) no longer leaves an
   empty `[k]` header above the child.
