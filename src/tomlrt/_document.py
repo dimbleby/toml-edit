@@ -1071,10 +1071,7 @@ def _clone_aot_sections(
     blank-line policy, dict-storage sync) is the caller's job.
     """
     doc_node = value._doc_node  # noqa: SLF001
-    blocks = (
-        [header, *doc_node.aot_owned_range(header)]
-        for header in value._own_sections()  # noqa: SLF001
-    )
+    blocks = (doc_node.aot_entry_block(header) for header in value._own_sections())  # noqa: SLF001
     sections = [sec for block in blocks for sec in block]
     return _clone_sections_rebased(sections, value._path, full_path)  # noqa: SLF001
 
@@ -2294,7 +2291,7 @@ class _StdTable(Table):
         owner = self._owner_anchor
         if owner is None:
             return None
-        return [owner, *self._doc_node.aot_owned_range(owner)]
+        return self._doc_node.aot_entry_block(owner)
 
     def _compute_extras(
         self,
@@ -2379,7 +2376,7 @@ class _StdTable(Table):
             # plus its owned sub-section run; everything else captures
             # all sections rooted at our path.
             captured = (
-                [self._anchor, *self._doc_node.aot_owned_range(self._anchor)]
+                self._doc_node.aot_entry_block(self._anchor)
                 if self._anchor is not None
                 else self._sections_under_path()
             )
@@ -4072,13 +4069,10 @@ class AoT(list[Table]):
             captured: list[SectionNode] = []
             seen: set[int] = set()
             for s in self._own_sections():
-                if id(s) not in seen:
-                    captured.append(s)
-                    seen.add(id(s))
-                for sub in self._doc_node.aot_owned_range(s):
-                    if id(sub) not in seen:
-                        captured.append(sub)
-                        seen.add(id(sub))
+                for sec in self._doc_node.aot_entry_block(s):
+                    if id(sec) not in seen:
+                        captured.append(sec)
+                        seen.add(id(sec))
             doc_node = DocumentNode(sections=captured)
         self._attached = False
         self._doc_node = doc_node
@@ -4112,7 +4106,7 @@ class AoT(list[Table]):
             return 0, []
         sections = self._doc_node.sections
         blocks: list[list[SectionNode]] = [
-            [header, *self._doc_node.aot_owned_range(header)] for header in own
+            self._doc_node.aot_entry_block(header) for header in own
         ]
         start = sections.index(blocks[0][0])
         cursor = start
@@ -4273,9 +4267,7 @@ class AoT(list[Table]):
             # Append: land after the last [[path]] entry's owned range,
             # or at end of doc if no entries exist yet.
             if own:
-                last = own[-1]
-                owned = self._doc_node.aot_owned_range(last)
-                tail = owned[-1] if owned else last
+                tail = self._doc_node.aot_entry_block(own[-1])[-1]
                 insert_idx = sections.index(tail) + 1
             else:
                 insert_idx = len(sections)
@@ -4319,8 +4311,7 @@ class AoT(list[Table]):
             msg = "pop index out of range"
             raise IndexError(msg)
         target = own[i]
-        owned = self._doc_node.aot_owned_range(target)
-        to_remove: set[SectionNode] = {target, *owned}
+        to_remove: set[SectionNode] = set(self._doc_node.aot_entry_block(target))
         # Use the live entry as the popped object to preserve identity.
         popped = self[i]
         self._doc_node.remove_sections(to_remove)
@@ -4333,9 +4324,7 @@ class AoT(list[Table]):
         own = self._own_sections()
         to_remove: set[SectionNode] = set()
         for s in own:
-            to_remove.add(s)
-            for sub in self._doc_node.aot_owned_range(s):
-                to_remove.add(sub)
+            to_remove.update(self._doc_node.aot_entry_block(s))
         self._doc_node.remove_sections(to_remove)
         self._resync()
 
