@@ -605,6 +605,34 @@ def test_aot_reverse_preserves_owned_subtables() -> None:
     ]
 
 
+def test_aot_reverse_moves_leading_comments_with_entries() -> None:
+    src = "# A\n[[t]]\nx = 1\n\n# B\n[[t]]\nx = 2\n\n# C\n[[t]]\nx = 3\n"
+    doc = tomlrt.parse(src)
+    doc.aot("t").reverse()
+    assert tomlrt.dumps(doc) == (
+        "# C\n[[t]]\nx = 3\n\n# B\n[[t]]\nx = 2\n\n# A\n[[t]]\nx = 1\n"
+    )
+
+
+def test_aot_sort_moves_leading_comments_with_entries() -> None:
+    src = "# x=2\n[[t]]\nx = 2\n\n# x=3\n[[t]]\nx = 3\n\n# x=1\n[[t]]\nx = 1\n"
+    doc = tomlrt.parse(src)
+    doc.aot("t").sort(key=lambda e: e["x"])
+    assert tomlrt.dumps(doc) == (
+        "# x=1\n[[t]]\nx = 1\n\n# x=2\n[[t]]\nx = 2\n\n# x=3\n[[t]]\nx = 3\n"
+    )
+
+
+def test_aot_reverse_with_partial_leading_comments() -> None:
+    # Only the middle entry has a leading comment; reversing should
+    # carry it with that entry and leave the new first/last entries
+    # commentless.
+    src = "[[t]]\nx = 1\n\n# B\n[[t]]\nx = 2\n\n[[t]]\nx = 3\n"
+    doc = tomlrt.parse(src)
+    doc.aot("t").reverse()
+    assert tomlrt.dumps(doc) == ("[[t]]\nx = 3\n\n# B\n[[t]]\nx = 2\n\n[[t]]\nx = 1\n")
+
+
 def test_aot_remove_drops_first_matching_entry_from_cst() -> None:
     doc = tomlrt.parse("[[t]]\nx = 1\n[[t]]\nx = 2\n[[t]]\nx = 3\n")
     aot = doc.aot("t")
