@@ -508,10 +508,14 @@ def test_top_level_insert_into_existing_pre_header_section() -> None:
         """)
     )
     doc["z"] = 99
-    # Previously gap between ``first`` and ``[a]`` was zero blank lines;
-    # after insertion the new key follows ``first`` packed but a blank
-    # line is added before ``[a]`` for visual clarity.
-    assert tomlrt.dumps(doc) == "first = 0\nz = 99\n\n[a]\nx = 1\n"
+    # The user's existing layout had no blank between ``first`` and
+    # ``[a]``; appending another KV must not silently inject one.
+    assert tomlrt.dumps(doc) == td("""
+        first = 0
+        z = 99
+        [a]
+        x = 1
+        """)
 
 
 def test_aot_first_two_appends_into_empty_doc_blank_separate() -> None:
