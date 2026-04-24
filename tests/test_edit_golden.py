@@ -577,6 +577,40 @@ def test_subsection_under_non_last_aot_entry_lands_in_owned_range() -> None:
     assert "source" not in parsed["package"][2]
 
 
+def test_del_after_emptying_descendant_succeeds() -> None:
+    """A cached implicit-table view stays deletable after its only descendant
+    is removed.
+
+    Holding ``bar = group['bar']`` and then ``del bar['dependencies']``
+    leaves ``bar`` reachable through ``group`` as an empty table — same
+    as plain Python dict semantics — and ``del group['bar']`` (or
+    ``group.pop('bar')``) must succeed rather than raising ``KeyError``
+    because the underlying CST chain is already gone.
+    """
+    doc = tomlrt.loads('[tool.poetry.group.bar.dependencies]\nfoo = "1"\n')
+    bar = doc["tool"]["poetry"]["group"]["bar"]
+    del bar["dependencies"]
+    group = doc["tool"]["poetry"]["group"]
+    assert "bar" in group
+    assert dict(group["bar"]) == {}
+    del group["bar"]
+    assert "bar" not in group
+    assert tomlrt.dumps(doc) == ""
+
+    # ``pop`` is the same code path; verify it too returns the empty view.
+    doc2 = tomlrt.loads('[tool.poetry.group.bar.dependencies]\nfoo = "1"\n')
+    bar2 = doc2["tool"]["poetry"]["group"]["bar"]
+    del bar2["dependencies"]
+    group2 = doc2["tool"]["poetry"]["group"]
+    popped = group2.pop("bar")
+    assert dict(popped) == {}
+    assert "bar" not in group2
+
+    # A genuinely-absent key still raises, exactly as a plain dict would.
+    with pytest.raises(KeyError):
+        del group["nope"]
+
+
 def test_install_attached_aot_preserves_comments() -> None:
     # `install` and `__setitem__` should both deep-clone the source CST
     # when given an attached AoT from another document. The previous
