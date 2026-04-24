@@ -552,6 +552,67 @@ def test_delete_first_aot_entry_strips_top_blank() -> None:
     assert tomlrt.dumps(doc) == "[[items]]\nn = 2\n"
 
 
+def test_delete_first_top_level_kv_strips_top_blank() -> None:
+    """``del doc[k]`` (k the first top-level KV) doesn't leave a stray blank.
+
+    The successor entry's leading blank-line trivia was a separator
+    from the now-removed first KV; after removal it must not show up
+    as a top-of-file blank line.
+    """
+    doc = tomlrt.parse("x = 1\n\ny = 2\n")
+    del doc["x"]
+    assert tomlrt.dumps(doc) == "y = 2\n"
+
+    # Same when the survivor is a section, not a KV.
+    doc = tomlrt.parse("x = 1\n\n[a]\ny = 2\n")
+    del doc["x"]
+    assert tomlrt.dumps(doc) == "[a]\ny = 2\n"
+
+    # Same via Table.pop.
+    doc = tomlrt.parse("x = 1\n\ny = 2\n")
+    doc.pop("x")
+    assert tomlrt.dumps(doc) == "y = 2\n"
+
+
+def test_aot_imul_inserts_blank_separator_when_no_sibling_to_sample() -> None:
+    """``aot *= n`` on a single-entry AoT must blank-separate the copies.
+
+    With one block there is no inter-entry separator to copy, so the
+    repeat path used to fall back to empty trivia, gluing the new
+    headers directly under the original (``[[t]]\\n[[t]]\\n``). The
+    canonical-style fallback inserts a blank line between repetitions.
+    """
+    doc = tomlrt.parse("[[t]]\nn = 1\n")
+    doc.aot("t").__imul__(2)
+    assert tomlrt.dumps(doc) == "[[t]]\nn = 1\n\n[[t]]\nn = 1\n"
+
+    doc = tomlrt.parse("[[t]]\nn = 1\n")
+    doc.aot("t").__imul__(3)
+    assert tomlrt.dumps(doc) == ("[[t]]\nn = 1\n\n[[t]]\nn = 1\n\n[[t]]\nn = 1\n")
+
+
+def test_install_through_aot_rejects_cleanly() -> None:
+    """``install`` rejects a path that threads through an AoT, untouched.
+
+    AoT entries don't have a single addressable child container, so a
+    multi-segment install whose intermediate is ``[[t]]`` has no
+    well-defined target. Reject up-front with a clear ``TOMLError``
+    rather than letting downstream code trip an ``AssertionError``
+    after partially mutating the document.
+    """
+    src = "[[t]]\nn = 1\n"
+    doc = tomlrt.parse(src)
+    with pytest.raises(tomlrt.TOMLError, match="array-of-tables"):
+        doc.install(("t", "sub"), Table.section({"k": 1}))
+    # Document must be unchanged after the rejected install.
+    assert tomlrt.dumps(doc) == src
+
+    # Single-segment install at the AoT key still replaces it.
+    doc = tomlrt.parse(src)
+    doc.install(("t",), Table.section({"k": 1}))
+    assert tomlrt.dumps(doc) == "[t]\nk = 1\n"
+
+
 def test_chained_supertable_assignment_drops_empty_parent() -> None:
     """``doc[t] = Table.section({}); doc[t][c] = ...`` doesn't leave ``[t]``.
 
