@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- CST node dataclasses now declare `eq=False`, so `==` / `in` / `list.index`
+  / `list.remove` / set membership all fall back to identity comparison.
+  This is what every internal call site already wanted; the previous
+  default of structural equality was a recurring footgun behind several
+  past fixes (commits `3dbdb4c`, `227d1bc`, `bdb7ea2`). Two distinct
+  CST nodes that happen to render the same are no longer ever conflated.
+  As a consequence the bespoke identity-keyed helpers (`_index_of`,
+  `remove_sections_by_id`, `remove_entry_by_id`) collapse back into
+  ordinary `list.index` / `list.remove` and a thin chokepoint that pairs
+  the structural change with `normalise_top_blank()`. There is no
+  user-visible behavioural change — the public `Array.remove` and
+  `AoT.remove` accept Python values and still match by value.
+
 ### Fixed
 
 - Installing a detached `AoT` no longer drops per-entry formatting such as
@@ -33,7 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Deleting the first top-level key (`del doc[k]` / `doc.pop(k)`) no longer
   leaves a stray blank line at the top of the rendered output. Same shape
   as the AoT-deletion bug; the entry-removal path now goes through a
-  matching `DocumentNode.remove_entry_by_id` chokepoint that runs the
+  matching `DocumentNode.remove_entry` chokepoint that runs the
   top-of-file normalisation afterwards.
 - `aot *= n` on a single-entry AoT no longer glues the duplicated
   ``[[t]]`` headers together: with no second entry to sample as an

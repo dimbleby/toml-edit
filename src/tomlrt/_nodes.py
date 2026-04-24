@@ -34,13 +34,23 @@ if TYPE_CHECKING:
     from collections.abc import Container
     from datetime import date, datetime, time
 
+# CST node dataclasses use ``eq=False`` (see every ``@dataclass`` below) so
+# that ``==`` / ``in`` / ``list.index`` / ``list.remove`` / set membership
+# all fall back to identity comparison. We never want two distinct CST
+# nodes that happen to render the same to be treated as equal: the parser
+# preserves trivia per occurrence, mutations rewrite specific node objects,
+# and several invariants depend on locating *the* node we hold a reference
+# to (not any structurally-equal twin). Removing this opt-out re-introduces
+# a class of bugs that has bitten this codebase repeatedly — see commits
+# 3dbdb4c, 227d1bc, bdb7ea2 for the symptoms.
+
 
 # ---------------------------------------------------------------------------
 # Trivia
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, eq=False)
 class WhitespaceNode:
     """Run of spaces and/or tabs (no newlines)."""
 
@@ -50,7 +60,7 @@ class WhitespaceNode:
         return self.text
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, eq=False)
 class NewlineNode:
     """A single line terminator (``\\n`` or ``\\r\\n``)."""
 
@@ -60,7 +70,7 @@ class NewlineNode:
         return self.text
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, eq=False)
 class CommentNode:
     """A ``# ...`` comment, *not* including the trailing newline."""
 
@@ -74,7 +84,7 @@ TriviaPiece = WhitespaceNode | NewlineNode | CommentNode
 """A single trivia atom."""
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, eq=False)
 class Trivia:
     """An ordered run of trivia pieces."""
 
@@ -102,7 +112,7 @@ class Trivia:
 KeyKind = Literal["bare", "basic", "literal"]
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, eq=False)
 class KeyPart:
     """A single dotted-key component (the part between dots)."""
 
@@ -118,7 +128,7 @@ class KeyPart:
         return self.raw
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, eq=False)
 class Key:
     """A dotted key: one or more :class:`KeyPart` separated by ``.``.
 
@@ -158,7 +168,7 @@ StringStyle = Literal["basic", "literal", "ml-basic", "ml-literal"]
 IntStyle = Literal["dec", "hex", "oct", "bin"]
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, eq=False)
 class StringNode:
     raw: str  # including quotes
     value: str
@@ -168,7 +178,7 @@ class StringNode:
         return self.raw
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, eq=False)
 class IntegerNode:
     raw: str
     value: int
@@ -178,7 +188,7 @@ class IntegerNode:
         return self.raw
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, eq=False)
 class FloatNode:
     raw: str
     value: float
@@ -187,7 +197,7 @@ class FloatNode:
         return self.raw
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, eq=False)
 class BoolNode:
     raw: str  # "true" or "false"
     value: bool
@@ -199,7 +209,7 @@ class BoolNode:
 DateLikeKind = Literal["offset-datetime", "local-datetime", "local-date", "local-time"]
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, eq=False)
 class DateTimeNode:
     raw: str
     value: datetime | date | time
@@ -209,7 +219,7 @@ class DateTimeNode:
         return self.raw
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, eq=False)
 class ArrayItem:
     """One slot inside an inline array.
 
@@ -231,7 +241,7 @@ class ArrayItem:
         return out
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, eq=False)
 class ArrayNode:
     """Inline array literal (``[ ... ]``)."""
 
@@ -244,7 +254,7 @@ class ArrayNode:
         return f"[{body}{self.final_trivia.render()}]"
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, eq=False)
 class InlineTableEntry:
     """One ``key = value`` slot inside an inline table."""
 
@@ -269,7 +279,7 @@ class InlineTableEntry:
         return out
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, eq=False)
 class InlineTableNode:
     """Inline table literal (``{ a = 1, b = 2 }``)."""
 
@@ -297,7 +307,7 @@ ValueNode = (
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, eq=False)
 class KeyValueNode:
     """A ``key = value`` line in the document or a standard table.
 
@@ -337,7 +347,7 @@ class KeyValueNode:
 HeaderKind = Literal["table", "array"]
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, eq=False)
 class TableHeaderNode:
     """A ``[name]`` or ``[[name]]`` header line.
 
@@ -374,7 +384,7 @@ class TableHeaderNode:
 
 # A "section" is a header followed by zero or more KeyValueNodes that
 # belong to it. The implicit pre-header section uses ``header=None``.
-@dataclass(slots=True)
+@dataclass(slots=True, eq=False)
 class SectionNode:
     header: TableHeaderNode | None
     entries: list[KeyValueNode] = field(default_factory=list)
@@ -390,7 +400,7 @@ class SectionNode:
         return head + "".join([entry.render() for entry in self.entries])
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, eq=False)
 class DocumentNode:
     """Root of the physical CST."""
 
@@ -508,33 +518,24 @@ class DocumentNode:
                 pieces.pop(0)
             return
 
-    def remove_entry_by_id(self, sec: SectionNode, victim_id: int) -> None:
-        """Drop the entry with ``id() == victim_id`` from ``sec``, then normalise.
+    def remove_entry(self, sec: SectionNode, victim: KeyValueNode) -> None:
+        """Drop ``victim`` from ``sec.entries``, then renormalise.
 
-        Identity-keyed counterpart to :meth:`remove_sections_by_id` for
-        ``KeyValueNode``s, used by mutators that delete a single KV.
-        Runs :meth:`normalise_top_blank` afterwards so callers don't
-        have to remember to clean up a stray top-of-file blank when
-        the removed entry was the document's first piece of content.
+        Bundles the structural change with :meth:`normalise_top_blank`
+        so a stray top-of-file blank can't be left behind when the
+        removed entry was the document's first piece of content.
         """
-        entries = sec.entries
-        for i, kv in enumerate(entries):
-            if id(kv) == victim_id:
-                del entries[i]
-                self.normalise_top_blank()
-                return
+        sec.entries.remove(victim)
+        self.normalise_top_blank()
 
-    def remove_sections_by_id(self, victims: Container[int]) -> None:
-        """Drop every section whose ``id()`` is in ``victims``, then normalise.
+    def remove_sections(self, victims: Container[SectionNode]) -> None:
+        """Drop every section in ``victims`` from this document, then renormalise.
 
-        Identity-keyed (not equality-keyed) so two structurally-equal
-        section nodes are never confused — a recurring class of bug
-        when ``list.remove`` / ``list.index`` is used on the dataclass
-        nodes. Runs :meth:`normalise_top_blank` afterwards so callers
-        don't have to remember to clean up a stray top-of-file blank
-        when the first physical section is among the removed.
+        Bundles the structural change with :meth:`normalise_top_blank`
+        so a stray top-of-file blank can't be left behind when the
+        document's first physical section is among the removed.
         """
-        kept = [s for s in self.sections if id(s) not in victims]
+        kept = [s for s in self.sections if s not in victims]
         if len(kept) == len(self.sections):
             return
         self.sections = kept

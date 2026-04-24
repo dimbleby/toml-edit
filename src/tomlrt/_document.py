@@ -2324,7 +2324,7 @@ class _StdTable(Table):
         # line separates the new key from that header.
         if self._path == () and target.header is None:
             doc_node = self._doc_node
-            idx = _index_of(doc_node.sections, target)
+            idx = doc_node.sections.index(target)
             if idx + 1 < len(doc_node.sections):
                 next_header = doc_node.sections[idx + 1].header
                 if next_header is not None:
@@ -2349,14 +2349,12 @@ class _StdTable(Table):
             # Avoids the O(N) section walks and full-list rebuilds in
             # ``_purge_conflicting`` when there's nothing else to remove.
             target = payload
-            target_id = id(target)
             scope = self._scope()
             sections = scope if scope is not None else self._doc_node.sections
             for sec in sections:
-                for kv in sec.entries:
-                    if kv is target:
-                        self._doc_node.remove_entry_by_id(sec, target_id)
-                        return
+                if target in sec.entries:
+                    self._doc_node.remove_entry(sec, target)
+                    return
             return  # pragma: no cover - defensive: kv must be reachable
         self._purge_conflicting(key)
 
@@ -2492,7 +2490,7 @@ class _StdTable(Table):
         child_path = (*self._path, key)
         self._refuse_existing_promoted_section(key, child_path, kind="table")
         new_sec = _build_promoted_section(child_path, inline, kv)
-        self._doc_node.remove_entry_by_id(sec, id(kv))
+        self._doc_node.remove_entry(sec, kv)
         self._splice_promoted_sections([new_sec])
         view = _StdTable(self._doc_node, child_path)
         dict.__setitem__(self, key, view)
@@ -2533,7 +2531,7 @@ class _StdTable(Table):
             if last_entries:
                 last_entries[-1].trailing = kv.trailing
                 last_entries[-1].trailing_comment = kv.trailing_comment
-        self._doc_node.remove_entry_by_id(sec, id(kv))
+        self._doc_node.remove_entry(sec, kv)
         self._splice_promoted_sections(new_secs)
         aot = AoT._attached_to(self._doc_node, child_path, [])  # noqa: SLF001
         aot._resync()  # noqa: SLF001
@@ -2712,7 +2710,7 @@ class _StdTable(Table):
         # AoT-entry sub-table with no prior section at this path:
         # pin the new section to the end of this entry's owned range
         # so it doesn't get re-attributed to a later entry on round-trip.
-        return full_path, _index_of(sections, owner) + len(self._scope() or ())
+        return full_path, sections.index(owner) + len(self._scope() or ())
 
     def _install_attached_aot(
         self,
@@ -2802,7 +2800,7 @@ class _StdTable(Table):
                 or any(isinstance(p, CommentNode) for p in hdr.leading.pieces)
             ):
                 continue
-            self._doc_node.remove_sections_by_id({id(sec)})
+            self._doc_node.remove_sections({sec})
             if self._anchor is sec:
                 self._anchor = None
             if self._owner_anchor is sec:
@@ -3755,7 +3753,7 @@ class AoT(list[Table]):
         blocks: list[list[SectionNode]] = [
             [header, *self._doc_node.aot_owned_range(header)] for header in own
         ]
-        start = _index_of(sections, blocks[0][0])
+        start = sections.index(blocks[0][0])
         cursor = start
         for block in blocks:
             if sections[cursor] is not block[0]:
@@ -3897,11 +3895,11 @@ class AoT(list[Table]):
                 last = own[-1]
                 owned = self._doc_node.aot_owned_range(last)
                 tail = owned[-1] if owned else last
-                insert_idx = _index_of(sections, tail) + 1
+                insert_idx = sections.index(tail) + 1
             else:
                 insert_idx = len(sections)
         else:
-            insert_idx = _index_of(sections, own[py_index])
+            insert_idx = sections.index(own[py_index])
         # Insert a blank-line separator before the new header iff there
         # is already rendered content preceding it. When existing
         # siblings already share a uniform spacing style, copy that;
@@ -3941,10 +3939,10 @@ class AoT(list[Table]):
             raise IndexError(msg)
         target = own[i]
         owned = self._doc_node.aot_owned_range(target)
-        to_remove = {id(target), *(id(s) for s in owned)}
+        to_remove: set[SectionNode] = {target, *owned}
         # Use the live entry as the popped object to preserve identity.
         popped = self[i]
-        self._doc_node.remove_sections_by_id(to_remove)
+        self._doc_node.remove_sections(to_remove)
         self._resync()
         popped._detach()  # noqa: SLF001
         return popped
@@ -3952,12 +3950,12 @@ class AoT(list[Table]):
     @override
     def clear(self) -> None:
         own = self._own_sections()
-        to_remove: set[int] = set()
+        to_remove: set[SectionNode] = set()
         for s in own:
-            to_remove.add(id(s))
+            to_remove.add(s)
             for sub in self._doc_node.aot_owned_range(s):
-                to_remove.add(id(sub))
-        self._doc_node.remove_sections_by_id(to_remove)
+                to_remove.add(sub)
+        self._doc_node.remove_sections(to_remove)
         self._resync()
 
     @override
@@ -4106,14 +4104,6 @@ class AoT(list[Table]):
         header = block[0].header
         assert header is not None
         header.leading = leading
-
-
-def _index_of(sections: list[SectionNode], target: SectionNode) -> int:
-    for i, s in enumerate(sections):
-        if s is target:
-            return i
-    msg = "section not found in document (internal error)"
-    raise RuntimeError(msg)  # pragma: no cover
 
 
 # ---------------------------------------------------------------------------
