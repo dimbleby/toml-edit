@@ -3224,10 +3224,16 @@ class _ArrayCommentsView(MutableMapping[int, str]):
             self._ensure_array_break_before_close()
         else:
             # The next item now starts on a fresh line: give it an
-            # indent that matches its siblings.
+            # indent that matches its siblings -- but only if neither
+            # the slot we just wrote nor the next item's leading
+            # already supplies one (otherwise we'd double-indent).
             indent = _array_indent(self._array._node)  # noqa: SLF001
             next_item = items[i + 1]
-            if indent and "\n" not in next_item.leading.render():
+            slot_text = slot.render()
+            slot_nl = slot_text.rfind("\n")
+            slot_has_indent = slot_nl >= 0 and slot_text[slot_nl + 1 :] != ""
+            next_has_break = "\n" in next_item.leading.render()
+            if indent and not slot_has_indent and not next_has_break:
                 next_item.leading = Trivia([WhitespaceNode(indent)])
 
     def _ensure_array_break_before_close(self) -> None:
