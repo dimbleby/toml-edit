@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tomlrt
+from _toml_str import td
 from tomlrt import AoT, Table
 
 # ---------------------------------------------------------------------------
@@ -13,19 +14,48 @@ from tomlrt import AoT, Table
 def test_kv_append_to_packed_section_stays_packed() -> None:
     doc = tomlrt.parse("a = 1\nb = 2\n")
     doc["c"] = 3
-    assert tomlrt.dumps(doc) == "a = 1\nb = 2\nc = 3\n"
+    assert tomlrt.dumps(doc) == td("""
+        a = 1
+        b = 2
+        c = 3
+        """)
 
 
 def test_kv_append_to_uniformly_spaced_section_adds_blank() -> None:
-    doc = tomlrt.parse("a = 1\n\nb = 2\n")
+    doc = tomlrt.parse(
+        td("""
+        a = 1
+
+        b = 2
+        """)
+    )
     doc["c"] = 3
-    assert tomlrt.dumps(doc) == "a = 1\n\nb = 2\n\nc = 3\n"
+    assert tomlrt.dumps(doc) == td("""
+        a = 1
+
+        b = 2
+
+        c = 3
+        """)
 
 
 def test_kv_append_to_mixed_layout_does_not_add_blank() -> None:
-    doc = tomlrt.parse("a = 1\nb = 2\n\nc = 3\n")
+    doc = tomlrt.parse(
+        td("""
+        a = 1
+        b = 2
+
+        c = 3
+        """)
+    )
     doc["d"] = 4
-    assert tomlrt.dumps(doc) == "a = 1\nb = 2\n\nc = 3\nd = 4\n"
+    assert tomlrt.dumps(doc) == td("""
+        a = 1
+        b = 2
+
+        c = 3
+        d = 4
+        """)
 
 
 def test_kv_append_to_single_entry_does_not_add_blank() -> None:
@@ -43,12 +73,24 @@ def test_kv_append_to_empty_table_does_not_add_blank() -> None:
 
 
 def test_kv_append_preserves_indent_and_adds_blank() -> None:
-    src = "[t]\n    a = 1\n\n    b = 2\n"
+    src = td("""
+        [t]
+            a = 1
+
+            b = 2
+        """)
     doc = tomlrt.parse(src)
     tbl = doc["t"]
     assert isinstance(tbl, tomlrt.Table)
     tbl["c"] = 3
-    assert tomlrt.dumps(doc) == "[t]\n    a = 1\n\n    b = 2\n\n    c = 3\n"
+    assert tomlrt.dumps(doc) == td("""
+        [t]
+            a = 1
+
+            b = 2
+
+            c = 3
+        """)
 
 
 # ---------------------------------------------------------------------------
@@ -57,40 +99,104 @@ def test_kv_append_preserves_indent_and_adds_blank() -> None:
 
 
 def test_aot_append_to_packed_aot_stays_packed() -> None:
-    src = "[[i]]\nx = 1\n[[i]]\nx = 2\n"
+    src = td("""
+        [[i]]
+        x = 1
+        [[i]]
+        x = 2
+        """)
     doc = tomlrt.parse(src)
     aot = doc["i"]
     assert isinstance(aot, tomlrt.AoT)
     aot.append({"x": 3})
-    assert tomlrt.dumps(doc) == "[[i]]\nx = 1\n[[i]]\nx = 2\n[[i]]\nx = 3\n"
+    assert tomlrt.dumps(doc) == td("""
+        [[i]]
+        x = 1
+        [[i]]
+        x = 2
+        [[i]]
+        x = 3
+        """)
 
 
 def test_aot_append_to_spaced_aot_adds_blank() -> None:
-    src = "[[i]]\nx = 1\n\n[[i]]\nx = 2\n"
+    src = td("""
+        [[i]]
+        x = 1
+
+        [[i]]
+        x = 2
+        """)
     doc = tomlrt.parse(src)
     aot = doc["i"]
     assert isinstance(aot, tomlrt.AoT)
     aot.append({"x": 3})
-    assert tomlrt.dumps(doc) == ("[[i]]\nx = 1\n\n[[i]]\nx = 2\n\n[[i]]\nx = 3\n")
+    assert tomlrt.dumps(doc) == (
+        td("""
+        [[i]]
+        x = 1
+
+        [[i]]
+        x = 2
+
+        [[i]]
+        x = 3
+        """)
+    )
 
 
 def test_aot_insert_middle_uniformly_spaced_adds_blank() -> None:
-    src = "[[i]]\nx = 1\n\n[[i]]\nx = 3\n"
+    src = td("""
+        [[i]]
+        x = 1
+
+        [[i]]
+        x = 3
+        """)
     doc = tomlrt.parse(src)
     aot = doc["i"]
     assert isinstance(aot, tomlrt.AoT)
     aot.insert(1, {"x": 2})
-    assert tomlrt.dumps(doc) == ("[[i]]\nx = 1\n\n[[i]]\nx = 2\n\n[[i]]\nx = 3\n")
+    assert tomlrt.dumps(doc) == (
+        td("""
+        [[i]]
+        x = 1
+
+        [[i]]
+        x = 2
+
+        [[i]]
+        x = 3
+        """)
+    )
 
 
-def test_aot_insert_into_mixed_does_not_add_blank() -> None:
-    src = "[[i]]\nx = 1\n[[i]]\nx = 2\n\n[[i]]\nx = 4\n"
+def test_aot_append_to_mixed_does_not_add_blank() -> None:
+    src = td("""
+        [[i]]
+        x = 1
+        [[i]]
+        x = 2
+
+        [[i]]
+        x = 4
+        """)
     doc = tomlrt.parse(src)
     aot = doc["i"]
     assert isinstance(aot, tomlrt.AoT)
     aot.append({"x": 5})
     assert tomlrt.dumps(doc) == (
-        "[[i]]\nx = 1\n[[i]]\nx = 2\n\n[[i]]\nx = 4\n[[i]]\nx = 5\n"
+        td("""
+            [[i]]
+            x = 1
+            [[i]]
+            x = 2
+
+            [[i]]
+            x = 4
+            [[i]]
+            x = 5
+            """)
     )
 
 
@@ -103,28 +209,64 @@ def test_aot_append_to_single_entry_adds_blank() -> None:
     aot = doc["i"]
     assert isinstance(aot, tomlrt.AoT)
     aot.append({"x": 2})
-    assert tomlrt.dumps(doc) == "[[i]]\nx = 1\n\n[[i]]\nx = 2\n"
+    assert tomlrt.dumps(doc) == td("""
+        [[i]]
+        x = 1
+
+        [[i]]
+        x = 2
+        """)
 
 
 def test_aot_append_preserves_user_no_blank_style() -> None:
     """When the existing entries clearly show no-blank-line spacing
     (≥2 sibling gaps to learn from), respect the user's choice."""
-    src = "[[i]]\nx = 1\n[[i]]\nx = 2\n"
+    src = td("""
+        [[i]]
+        x = 1
+        [[i]]
+        x = 2
+        """)
     doc = tomlrt.parse(src)
     aot = doc["i"]
     assert isinstance(aot, tomlrt.AoT)
     aot.append({"x": 3})
-    assert tomlrt.dumps(doc) == "[[i]]\nx = 1\n[[i]]\nx = 2\n[[i]]\nx = 3\n"
+    assert tomlrt.dumps(doc) == td("""
+        [[i]]
+        x = 1
+        [[i]]
+        x = 2
+        [[i]]
+        x = 3
+        """)
 
 
 def test_aot_extend_inherits_blank_after_first_added_entry() -> None:
-    src = "[[i]]\nx = 1\n\n[[i]]\nx = 2\n"
+    src = td("""
+        [[i]]
+        x = 1
+
+        [[i]]
+        x = 2
+        """)
     doc = tomlrt.parse(src)
     aot = doc["i"]
     assert isinstance(aot, tomlrt.AoT)
     aot.extend([{"x": 3}, {"x": 4}])
     assert tomlrt.dumps(doc) == (
-        "[[i]]\nx = 1\n\n[[i]]\nx = 2\n\n[[i]]\nx = 3\n\n[[i]]\nx = 4\n"
+        td("""
+            [[i]]
+            x = 1
+
+            [[i]]
+            x = 2
+
+            [[i]]
+            x = 3
+
+            [[i]]
+            x = 4
+            """)
     )
 
 
@@ -164,17 +306,43 @@ def test_inline_array_append_into_empty_flush() -> None:
 
 
 def test_multiline_array_append_preserves_trailing_comma_layout() -> None:
-    src = "x = [\n    1,\n    2,\n    3,\n]\n"
+    src = td("""
+        x = [
+            1,
+            2,
+            3,
+        ]
+        """)
     doc = tomlrt.parse(src)
     doc.array("x").append(4)
-    assert tomlrt.dumps(doc) == "x = [\n    1,\n    2,\n    3,\n    4,\n]\n"
+    assert tomlrt.dumps(doc) == td("""
+        x = [
+            1,
+            2,
+            3,
+            4,
+        ]
+        """)
 
 
 def test_multiline_array_append_without_trailing_comma() -> None:
-    src = "x = [\n    1,\n    2,\n    3\n]\n"
+    src = td("""
+        x = [
+            1,
+            2,
+            3
+        ]
+        """)
     doc = tomlrt.parse(src)
     doc.array("x").append(4)
-    assert tomlrt.dumps(doc) == "x = [\n    1,\n    2,\n    3,\n    4\n]\n"
+    assert tomlrt.dumps(doc) == td("""
+        x = [
+            1,
+            2,
+            3,
+            4
+        ]
+        """)
 
 
 def test_array_of_inline_tables_append_preserves_separator() -> None:
@@ -262,10 +430,21 @@ def test_inline_table_delete_first_preserves_padding() -> None:
 
 
 def test_multiline_inline_table_insert_preserves_layout() -> None:
-    src = "x = {\n  a = 1,\n  b = 2,\n}\n"
+    src = td("""
+        x = {
+          a = 1,
+          b = 2,
+        }
+        """)
     doc = tomlrt.parse(src)
     doc.table("x")["c"] = 3
-    assert tomlrt.dumps(doc) == "x = {\n  a = 1,\n  b = 2,\n  c = 3,\n}\n"
+    assert tomlrt.dumps(doc) == td("""
+        x = {
+          a = 1,
+          b = 2,
+          c = 3,
+        }
+        """)
 
 
 # ---------------------------------------------------------------------------
@@ -277,24 +456,57 @@ def test_multiline_inline_table_insert_preserves_layout() -> None:
 def test_insert_top_level_kv_adds_blank_before_first_table() -> None:
     doc = tomlrt.parse("[a]\nx = 1\n")
     doc["z"] = 99
-    assert tomlrt.dumps(doc) == "z = 99\n\n[a]\nx = 1\n"
+    assert tomlrt.dumps(doc) == td("""
+        z = 99
+
+        [a]
+        x = 1
+        """)
 
 
 def test_insert_top_level_kv_preserves_existing_blank() -> None:
-    doc = tomlrt.parse("[a]\nx = 1\n\n[b]\ny = 2\n")
+    doc = tomlrt.parse(
+        td("""
+        [a]
+        x = 1
+
+        [b]
+        y = 2
+        """)
+    )
     doc["z"] = 99
-    assert tomlrt.dumps(doc) == "z = 99\n\n[a]\nx = 1\n\n[b]\ny = 2\n"
+    assert tomlrt.dumps(doc) == td("""
+        z = 99
+
+        [a]
+        x = 1
+
+        [b]
+        y = 2
+        """)
 
 
 def test_multiple_top_level_kv_inserts_share_one_blank() -> None:
     doc = tomlrt.parse("[a]\nx = 1\n")
     doc["y"] = 1
     doc["z"] = 2
-    assert tomlrt.dumps(doc) == "y = 1\nz = 2\n\n[a]\nx = 1\n"
+    assert tomlrt.dumps(doc) == td("""
+        y = 1
+        z = 2
+
+        [a]
+        x = 1
+        """)
 
 
 def test_top_level_insert_into_existing_pre_header_section() -> None:
-    doc = tomlrt.parse("first = 0\n[a]\nx = 1\n")
+    doc = tomlrt.parse(
+        td("""
+        first = 0
+        [a]
+        x = 1
+        """)
+    )
     doc["z"] = 99
     # Previously gap between ``first`` and ``[a]`` was zero blank lines;
     # after insertion the new key follows ``first`` packed but a blank
@@ -310,7 +522,13 @@ def test_aot_first_two_appends_into_empty_doc_blank_separate() -> None:
     aot.append({"name": "foo"})
     aot.append({"name": "bar"})
     assert tomlrt.dumps(doc) == (
-        '[[package]]\nname = "foo"\n\n[[package]]\nname = "bar"\n'
+        td("""
+            [[package]]
+            name = "foo"
+
+            [[package]]
+            name = "bar"
+            """)
     )
 
 

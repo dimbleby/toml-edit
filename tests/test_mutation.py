@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 from typing import TYPE_CHECKING, Any
 
+from _toml_str import td
+
 if TYPE_CHECKING:
     from collections.abc import MutableMapping
 
@@ -30,11 +32,19 @@ def _reparses(src: str) -> dict[str, Any]:
 
 
 def test_replace_scalar_preserves_surrounding_format() -> None:
-    src = "# header comment\nname = 'old'  # inline\nport = 80\n"
+    src = td("""
+        # header comment
+        name = 'old'  # inline
+        port = 80
+        """)
     doc = tomlrt.parse(src)
     doc["name"] = "new"
     out = tomlrt.dumps(doc)
-    assert out == '# header comment\nname = "new"  # inline\nport = 80\n'
+    assert out == td("""
+        # header comment
+        name = "new"  # inline
+        port = 80
+        """)
     assert _reparses(out)["name"] == "new"
 
 
@@ -53,7 +63,12 @@ def test_add_top_level_key_when_only_section_exists() -> None:
     out = tomlrt.dumps(doc)
     # Pre-header section is created at index 0; a blank line separates
     # the new top-level key from the following ``[srv]`` header.
-    assert out == 'name = "demo"\n\n[srv]\nport = 8080\n'
+    assert out == td("""
+        name = "demo"
+
+        [srv]
+        port = 8080
+        """)
     assert _reparses(out) == {"name": "demo", "srv": {"port": 8080}}
 
 
@@ -64,12 +79,21 @@ def test_add_key_inside_existing_section() -> None:
     assert isinstance(srv, tomlrt.Table)
     srv["host"] = "127.0.0.1"
     out = tomlrt.dumps(doc)
-    assert out == '[srv]\nport = 80\nhost = "127.0.0.1"\n'
+    assert out == td("""
+        [srv]
+        port = 80
+        host = "127.0.0.1"
+        """)
     assert _reparses(out) == {"srv": {"port": 80, "host": "127.0.0.1"}}
 
 
 def test_delete_scalar_removes_line_with_leading_trivia() -> None:
-    src = "a = 1\n# this comment belongs to b\nb = 2\nc = 3\n"
+    src = td("""
+        a = 1
+        # this comment belongs to b
+        b = 2
+        c = 3
+        """)
     doc = tomlrt.parse(src)
     del doc["b"]
     out = tomlrt.dumps(doc)
@@ -309,10 +333,21 @@ def test_array_insert_at_zero_does_not_duplicate_leading_comment() -> None:
     # The header comment ``# head`` is anchored to the array's opening
     # bracket (no newline before it). On insert(0, ...) it must stay
     # there, and the new item must land on its own indented line.
-    doc = tomlrt.parse("a = [# head\n 1,\n]\n")
+    doc = tomlrt.parse(
+        td("""
+        a = [# head
+         1,
+        ]
+        """)
+    )
     arr = doc.array("a")
     arr.insert(0, 99)
-    assert tomlrt.dumps(doc) == "a = [# head\n 99,\n 1,\n]\n"
+    assert tomlrt.dumps(doc) == td("""
+        a = [# head
+         99,
+         1,
+        ]
+        """)
 
 
 # Every Array/AoT mutator must be wired through the CST so the
@@ -474,7 +509,16 @@ def test_aot_delitem_slice_removes_range() -> None:
 
 def test_aot_delitem_slice_with_step() -> None:
     doc = tomlrt.parse(
-        "[[p]]\nn=1\n[[p]]\nn=2\n[[p]]\nn=3\n[[p]]\nn=4\n",
+        td("""
+            [[p]]
+            n=1
+            [[p]]
+            n=2
+            [[p]]
+            n=3
+            [[p]]
+            n=4
+            """),
     )
     aot = doc.aot("p")
     del aot[::2]
@@ -529,7 +573,14 @@ def test_aot_iadd_appends_entries_to_cst() -> None:
 
 
 def test_aot_imul_replicates_entries_in_cst() -> None:
-    doc = tomlrt.parse("[[t]]\nx = 1\n[[t]]\nx = 2\n")
+    doc = tomlrt.parse(
+        td("""
+        [[t]]
+        x = 1
+        [[t]]
+        x = 2
+        """)
+    )
     aot = doc.aot("t")
     aot *= 3
     rendered = tomlrt.dumps(doc)
@@ -544,28 +595,59 @@ def test_aot_imul_replicates_entries_in_cst() -> None:
 
 
 def test_aot_imul_zero_clears() -> None:
-    doc = tomlrt.parse("[[t]]\nx = 1\n[[t]]\nx = 2\n")
+    doc = tomlrt.parse(
+        td("""
+        [[t]]
+        x = 1
+        [[t]]
+        x = 2
+        """)
+    )
     aot = doc.aot("t")
     aot *= 0
     assert "t" not in tomlrt.loads(tomlrt.dumps(doc))
 
 
 def test_aot_reverse_reorders_cst() -> None:
-    doc = tomlrt.parse("[[t]]\nx = 1\n[[t]]\nx = 2\n[[t]]\nx = 3\n")
+    doc = tomlrt.parse(
+        td("""
+        [[t]]
+        x = 1
+        [[t]]
+        x = 2
+        [[t]]
+        x = 3
+        """)
+    )
     aot = doc.aot("t")
     aot.reverse()
     assert _reparses(tomlrt.dumps(doc))["t"] == [{"x": 3}, {"x": 2}, {"x": 1}]
 
 
 def test_aot_sort_reorders_cst() -> None:
-    doc = tomlrt.parse("[[t]]\nx = 3\n[[t]]\nx = 1\n[[t]]\nx = 2\n")
+    doc = tomlrt.parse(
+        td("""
+        [[t]]
+        x = 3
+        [[t]]
+        x = 1
+        [[t]]
+        x = 2
+        """)
+    )
     aot = doc.aot("t")
     aot.sort(key=lambda e: e["x"])
     assert _reparses(tomlrt.dumps(doc))["t"] == [{"x": 1}, {"x": 2}, {"x": 3}]
 
 
 def test_aot_imul_preserves_inter_entry_separator() -> None:
-    src = "[[t]]\nx = 1  # one\n\n[[t]]\nx = 2  # two\n"
+    src = td("""
+        [[t]]
+        x = 1  # one
+
+        [[t]]
+        x = 2  # two
+        """)
     doc = tomlrt.parse(src)
     doc.aot("t").__imul__(2)
     assert tomlrt.dumps(doc) == (
@@ -575,7 +657,15 @@ def test_aot_imul_preserves_inter_entry_separator() -> None:
 
 
 def test_aot_imul_preserves_per_entry_leading_comments() -> None:
-    src = "# A\n[[t]]\nx = 1\n\n# B\n[[t]]\nx = 2\n"
+    src = td("""
+        # A
+        [[t]]
+        x = 1
+
+        # B
+        [[t]]
+        x = 2
+        """)
     doc = tomlrt.parse(src)
     doc.aot("t").__imul__(2)
     assert tomlrt.dumps(doc) == (
@@ -585,26 +675,65 @@ def test_aot_imul_preserves_per_entry_leading_comments() -> None:
 
 
 def test_aot_sort_preserves_formatting_byte_exact() -> None:
-    src = "[[t]]\nx = 3  # third\n\n[[t]]\nx = 1  # first\n\n[[t]]\nx = 2  # second\n"
+    src = td("""
+        [[t]]
+        x = 3  # third
+
+        [[t]]
+        x = 1  # first
+
+        [[t]]
+        x = 2  # second
+        """)
     doc = tomlrt.parse(src)
     doc.aot("t").sort(key=lambda e: e["x"])
     assert tomlrt.dumps(doc) == (
-        "[[t]]\nx = 1  # first\n\n[[t]]\nx = 2  # second\n\n[[t]]\nx = 3  # third\n"
+        td("""
+            [[t]]
+            x = 1  # first
+
+            [[t]]
+            x = 2  # second
+
+            [[t]]
+            x = 3  # third
+            """)
     )
 
 
 def test_aot_reverse_preserves_formatting_byte_exact() -> None:
-    src = '[[t]]\nname = "a"  # first\n\n[[t]]\nname = "b"  # second\n'
+    src = td("""
+        [[t]]
+        name = "a"  # first
+
+        [[t]]
+        name = "b"  # second
+        """)
     doc = tomlrt.parse(src)
     doc.aot("t").reverse()
     assert tomlrt.dumps(doc) == (
-        '[[t]]\nname = "b"  # second\n\n[[t]]\nname = "a"  # first\n'
+        td("""
+            [[t]]
+            name = "b"  # second
+
+            [[t]]
+            name = "a"  # first
+            """)
     )
 
 
 def test_aot_reverse_preserves_owned_subtables() -> None:
     doc = tomlrt.parse(
-        '[[t]]\nname = "a"\n[t.sub]\ny = 1\n[[t]]\nname = "b"\n[t.sub]\ny = 2\n'
+        td("""
+            [[t]]
+            name = "a"
+            [t.sub]
+            y = 1
+            [[t]]
+            name = "b"
+            [t.sub]
+            y = 2
+            """)
     )
     aot = doc.aot("t")
     aot.reverse()
@@ -616,20 +745,68 @@ def test_aot_reverse_preserves_owned_subtables() -> None:
 
 
 def test_aot_reverse_moves_leading_comments_with_entries() -> None:
-    src = "# A\n[[t]]\nx = 1\n\n# B\n[[t]]\nx = 2\n\n# C\n[[t]]\nx = 3\n"
+    src = td("""
+        # A
+        [[t]]
+        x = 1
+
+        # B
+        [[t]]
+        x = 2
+
+        # C
+        [[t]]
+        x = 3
+        """)
     doc = tomlrt.parse(src)
     doc.aot("t").reverse()
     assert tomlrt.dumps(doc) == (
-        "# C\n[[t]]\nx = 3\n\n# B\n[[t]]\nx = 2\n\n# A\n[[t]]\nx = 1\n"
+        td("""
+            # C
+            [[t]]
+            x = 3
+
+            # B
+            [[t]]
+            x = 2
+
+            # A
+            [[t]]
+            x = 1
+            """)
     )
 
 
 def test_aot_sort_moves_leading_comments_with_entries() -> None:
-    src = "# x=2\n[[t]]\nx = 2\n\n# x=3\n[[t]]\nx = 3\n\n# x=1\n[[t]]\nx = 1\n"
+    src = td("""
+        # x=2
+        [[t]]
+        x = 2
+
+        # x=3
+        [[t]]
+        x = 3
+
+        # x=1
+        [[t]]
+        x = 1
+        """)
     doc = tomlrt.parse(src)
     doc.aot("t").sort(key=lambda e: e["x"])
     assert tomlrt.dumps(doc) == (
-        "# x=1\n[[t]]\nx = 1\n\n# x=2\n[[t]]\nx = 2\n\n# x=3\n[[t]]\nx = 3\n"
+        td("""
+            # x=1
+            [[t]]
+            x = 1
+
+            # x=2
+            [[t]]
+            x = 2
+
+            # x=3
+            [[t]]
+            x = 3
+            """)
     )
 
 
@@ -637,14 +814,45 @@ def test_aot_reverse_with_partial_leading_comments() -> None:
     # Only the middle entry has a leading comment; reversing should
     # carry it with that entry and leave the new first/last entries
     # commentless.
-    src = "[[t]]\nx = 1\n\n# B\n[[t]]\nx = 2\n\n[[t]]\nx = 3\n"
+    src = td("""
+        [[t]]
+        x = 1
+
+        # B
+        [[t]]
+        x = 2
+
+        [[t]]
+        x = 3
+        """)
     doc = tomlrt.parse(src)
     doc.aot("t").reverse()
-    assert tomlrt.dumps(doc) == ("[[t]]\nx = 3\n\n# B\n[[t]]\nx = 2\n\n[[t]]\nx = 1\n")
+    assert tomlrt.dumps(doc) == (
+        td("""
+        [[t]]
+        x = 3
+
+        # B
+        [[t]]
+        x = 2
+
+        [[t]]
+        x = 1
+        """)
+    )
 
 
 def test_aot_remove_drops_first_matching_entry_from_cst() -> None:
-    doc = tomlrt.parse("[[t]]\nx = 1\n[[t]]\nx = 2\n[[t]]\nx = 3\n")
+    doc = tomlrt.parse(
+        td("""
+        [[t]]
+        x = 1
+        [[t]]
+        x = 2
+        [[t]]
+        x = 3
+        """)
+    )
     aot = doc.aot("t")
     aot.remove(aot[1])
     assert _reparses(tomlrt.dumps(doc))["t"] == [{"x": 1}, {"x": 3}]
@@ -865,7 +1073,13 @@ def test_table_to_dict_isinstance_dict() -> None:
 
 
 def test_table_to_dict_independent_of_document_mutations() -> None:
-    doc = tomlrt.parse("a = 1\n[t]\nb = 2\n")
+    doc = tomlrt.parse(
+        td("""
+        a = 1
+        [t]
+        b = 2
+        """)
+    )
     snap = doc.to_dict()
     doc["a"] = 99
     doc.table("t")["b"] = 99
@@ -1026,7 +1240,13 @@ def test_chained_subscripts_typecheck_and_work() -> None:
 
 
 def test_table_is_mutablemapping_str_any() -> None:
-    doc = tomlrt.parse("a = 1\n[t]\nb = 2\n")
+    doc = tomlrt.parse(
+        td("""
+        a = 1
+        [t]
+        b = 2
+        """)
+    )
     # Consumers typed against MutableMapping[str, Any] (which is most of
     # the ecosystem) now compose with Table without a cast.
     sink: MutableMapping[str, Any] = doc

@@ -17,6 +17,8 @@ from __future__ import annotations
 import sys
 from typing import TYPE_CHECKING, Any
 
+from _toml_str import td
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -43,7 +45,12 @@ def _reparses(src: str) -> dict[str, Any]:
 
 
 def test_table_with_sub_section_iter_includes_subtable() -> None:
-    src = "[a]\nx = 1\n[a.sub]\ny = 2\n"
+    src = td("""
+        [a]
+        x = 1
+        [a.sub]
+        y = 2
+        """)
     doc = tomlrt.parse(src)
     a = doc["a"]
     assert isinstance(a, tomlrt.Table)
@@ -54,7 +61,12 @@ def test_table_with_sub_section_iter_includes_subtable() -> None:
 
 
 def test_table_with_sub_section_modify_subtable_value() -> None:
-    src = "[a]\nx = 1\n[a.sub]\ny = 2\n"
+    src = td("""
+        [a]
+        x = 1
+        [a.sub]
+        y = 2
+        """)
     doc = tomlrt.parse(src)
     a = doc["a"]
     assert isinstance(a, tomlrt.Table)
@@ -62,11 +74,21 @@ def test_table_with_sub_section_modify_subtable_value() -> None:
     assert isinstance(sub, tomlrt.Table)
     sub["y"] = 99
     out = tomlrt.dumps(doc)
-    assert out == "[a]\nx = 1\n[a.sub]\ny = 99\n"
+    assert out == td("""
+        [a]
+        x = 1
+        [a.sub]
+        y = 99
+        """)
 
 
 def test_table_with_sub_section_add_to_parent_appends_in_parent_block() -> None:
-    src = "[a]\nx = 1\n[a.sub]\ny = 2\n"
+    src = td("""
+        [a]
+        x = 1
+        [a.sub]
+        y = 2
+        """)
     doc = tomlrt.parse(src)
     a = doc["a"]
     assert isinstance(a, tomlrt.Table)
@@ -75,7 +97,13 @@ def test_table_with_sub_section_add_to_parent_appends_in_parent_block() -> None:
     # New parent-level key must land in the [a] block, BEFORE [a.sub] —
     # putting it after would make it semantically belong to [a.sub] under
     # TOML's "headers terminate a section" rule.
-    assert out == "[a]\nx = 1\nz = 3\n[a.sub]\ny = 2\n"
+    assert out == td("""
+        [a]
+        x = 1
+        z = 3
+        [a.sub]
+        y = 2
+        """)
     assert _reparses(out) == {"a": {"x": 1, "z": 3, "sub": {"y": 2}}}
 
 
@@ -100,7 +128,11 @@ def test_dotted_key_table_set_via_subtable_adds_dotted_entry() -> None:
     assert isinstance(a, tomlrt.Table)
     a["d"] = 3
     assert dict(a) == {"b": 1, "c": 2, "d": 3}
-    assert tomlrt.dumps(doc) == "a.b = 1\na.c = 2\na.d = 3\n"
+    assert tomlrt.dumps(doc) == td("""
+        a.b = 1
+        a.c = 2
+        a.d = 3
+        """)
 
 
 def test_dotted_key_table_overwrite_via_subtable() -> None:
@@ -113,7 +145,11 @@ def test_dotted_key_table_overwrite_via_subtable() -> None:
 
 
 def test_dotted_key_table_delete_via_subtable() -> None:
-    src = "a.b = 1\na.c = 2\na.d = 3\n"
+    src = td("""
+        a.b = 1
+        a.c = 2
+        a.d = 3
+        """)
     doc = tomlrt.parse(src)
     a = doc["a"]
     assert isinstance(a, tomlrt.Table)
@@ -132,7 +168,11 @@ def test_dotted_key_table_delete_missing_raises() -> None:
 
 
 def test_dotted_key_table_set_overwrites_subtree() -> None:
-    src = "a.b.x = 1\na.b.y = 2\na.c = 3\n"
+    src = td("""
+        a.b.x = 1
+        a.b.y = 2
+        a.c = 3
+        """)
     doc = tomlrt.parse(src)
     a = doc["a"]
     assert isinstance(a, tomlrt.Table)
@@ -150,7 +190,11 @@ def test_dotted_key_nested_subtable_set() -> None:
     assert isinstance(b, tomlrt.Table)
     b["z"] = 3
     assert dict(b) == {"x": 1, "y": 2, "z": 3}
-    assert tomlrt.dumps(doc) == "a.b.x = 1\na.b.y = 2\na.b.z = 3\n"
+    assert tomlrt.dumps(doc) == td("""
+        a.b.x = 1
+        a.b.y = 2
+        a.b.z = 3
+        """)
 
 
 def test_inline_dotted_subtable_set() -> None:
@@ -183,7 +227,12 @@ def test_inline_dotted_subtable_delete() -> None:
 
 
 def test_aot_basic_iteration() -> None:
-    src = '[[users]]\nname = "alice"\n[[users]]\nname = "bob"\n'
+    src = td("""
+        [[users]]
+        name = "alice"
+        [[users]]
+        name = "bob"
+        """)
     doc = tomlrt.parse(src)
     users = doc["users"]
     assert isinstance(users, tomlrt.AoT)
@@ -201,30 +250,61 @@ def test_aot_append_entry_via_dict() -> None:
 
 
 def test_aot_modify_field_in_first_entry() -> None:
-    src = '[[users]]\nname = "alice"\n[[users]]\nname = "bob"\n'
+    src = td("""
+        [[users]]
+        name = "alice"
+        [[users]]
+        name = "bob"
+        """)
     doc = tomlrt.parse(src)
     users = doc["users"]
     assert isinstance(users, tomlrt.AoT)
     users[0]["name"] = "ALICE"
     out = tomlrt.dumps(doc)
-    assert out == '[[users]]\nname = "ALICE"\n[[users]]\nname = "bob"\n'
+    assert out == td("""
+        [[users]]
+        name = "ALICE"
+        [[users]]
+        name = "bob"
+        """)
 
 
 def test_aot_modify_field_in_middle_entry() -> None:
-    src = '[[users]]\nname = "a"\n[[users]]\nname = "b"\n[[users]]\nname = "c"\n'
+    src = td("""
+        [[users]]
+        name = "a"
+        [[users]]
+        name = "b"
+        [[users]]
+        name = "c"
+        """)
     doc = tomlrt.parse(src)
     users = doc["users"]
     assert isinstance(users, tomlrt.AoT)
     users[1]["name"] = "B"
     out = tomlrt.dumps(doc)
-    assert (
-        out == '[[users]]\nname = "a"\n[[users]]\nname = "B"\n[[users]]\nname = "c"\n'
-    )
+    assert out == td("""
+            [[users]]
+            name = "a"
+            [[users]]
+            name = "B"
+            [[users]]
+            name = "c"
+            """)
 
 
 def test_aot_entry_sub_section_read() -> None:
     """[[arr]] / [arr.sub] — sub belongs to the AoT entry."""
-    src = "[[arr]]\nx = 1\n[arr.sub]\ny = 2\n[[arr]]\nx = 10\n[arr.sub]\ny = 20\n"
+    src = td("""
+        [[arr]]
+        x = 1
+        [arr.sub]
+        y = 2
+        [[arr]]
+        x = 10
+        [arr.sub]
+        y = 20
+        """)
     doc = tomlrt.parse(src)
     arr = doc["arr"]
     assert isinstance(arr, tomlrt.AoT)
@@ -240,7 +320,16 @@ def test_aot_entry_sub_section_read() -> None:
 
 
 def test_aot_entry_sub_section_modify_value() -> None:
-    src = "[[arr]]\nx = 1\n[arr.sub]\ny = 2\n[[arr]]\nx = 10\n[arr.sub]\ny = 20\n"
+    src = td("""
+        [[arr]]
+        x = 1
+        [arr.sub]
+        y = 2
+        [[arr]]
+        x = 10
+        [arr.sub]
+        y = 20
+        """)
     doc = tomlrt.parse(src)
     arr = doc["arr"]
     assert isinstance(arr, tomlrt.AoT)
@@ -249,7 +338,16 @@ def test_aot_entry_sub_section_modify_value() -> None:
     sub["y"] = 999
     out = tomlrt.dumps(doc)
     assert out == (
-        "[[arr]]\nx = 1\n[arr.sub]\ny = 2\n[[arr]]\nx = 10\n[arr.sub]\ny = 999\n"
+        td("""
+            [[arr]]
+            x = 1
+            [arr.sub]
+            y = 2
+            [[arr]]
+            x = 10
+            [arr.sub]
+            y = 999
+            """)
     )
     assert _reparses(out) == {
         "arr": [
@@ -323,7 +421,11 @@ def test_array_insert_then_pop_round_trips() -> None:
 
 
 def test_cross_doc_table_assign_deep_clones() -> None:
-    src1 = '[srv]\nhost = "a.example"\nport = 80\n'
+    src1 = td("""
+        [srv]
+        host = "a.example"
+        port = 80
+        """)
     src2 = ""
     a = tomlrt.parse(src1)
     b = tomlrt.parse(src2)
@@ -339,7 +441,12 @@ def test_cross_doc_table_assign_deep_clones() -> None:
 
 
 def test_cross_doc_aot_assign_deep_clones() -> None:
-    src1 = '[[users]]\nname = "alice"\n[[users]]\nname = "bob"\n'
+    src1 = td("""
+        [[users]]
+        name = "alice"
+        [[users]]
+        name = "bob"
+        """)
     src2 = ""
     a = tomlrt.parse(src1)
     b = tomlrt.parse(src2)
@@ -401,7 +508,13 @@ def test_cross_doc_table_assign_with_nested_aot() -> None:
 
 def test_cross_doc_table_assign_preserves_comments() -> None:
     """Cross-doc copy of a section preserves its comments and layout."""
-    src = '# top comment\n[srv]\n# inner\nhost = "a.example"\nport = 80\n'
+    src = td("""
+        # top comment
+        [srv]
+        # inner
+        host = "a.example"
+        port = 80
+        """)
     a = tomlrt.parse(src)
     b = tomlrt.document()
     b["srv"] = a["srv"]
@@ -418,7 +531,14 @@ def test_cross_doc_assign_whole_document() -> None:
     the new host section, and any ``[X]`` / ``[[X]]`` sections must be
     re-rooted under the destination key.
     """
-    src = 'top = 1\nlit = "x"\n[s]\nx = 1\n[[a]]\nn = 1\n'
+    src = td("""
+        top = 1
+        lit = "x"
+        [s]
+        x = 1
+        [[a]]
+        n = 1
+        """)
     a = tomlrt.parse(src)
     b = tomlrt.document()
     b["wrap"] = a
@@ -437,7 +557,11 @@ def test_cross_doc_table_assign_dotted_kv_only_source() -> None:
     the source's contents live entirely as dotted KVs under an ancestor
     section, so the cloned block has to synthesise a host section.
     """
-    src = "[a]\nb.c = 1\nb.d = 2\n"
+    src = td("""
+        [a]
+        b.c = 1
+        b.d = 2
+        """)
     a = tomlrt.parse(src)
     b = tomlrt.document()
     inner = a["a"]["b"]
@@ -456,7 +580,11 @@ def test_cross_doc_table_assign_merges_dotted_and_own_section() -> None:
     pre-header entries become extras, while a top-level ``[k]`` section
     in the source clones to the host at the destination's ``[k]``.
     """
-    src = "pre = 1\n[k]\nx = 2\n"
+    src = td("""
+        pre = 1
+        [k]
+        x = 2
+        """)
     a = tomlrt.parse(src)
     b = tomlrt.document()
     b["k"] = a
@@ -473,13 +601,29 @@ def test_self_overlap_assign_replaces_with_child_block() -> None:
     the inline-table synth path. With a nested AoT in the subtree this
     crashed; otherwise the section silently flattened to ``a = { ... }``.
     """
-    doc = tomlrt.parse("[a]\nx = 1\n[a.b]\ny = 2\n[[a.b.list]]\nn = 1\n")
+    doc = tomlrt.parse(
+        td("""
+        [a]
+        x = 1
+        [a.b]
+        y = 2
+        [[a.b.list]]
+        n = 1
+        """)
+    )
     doc["a"] = doc["a"]["b"]
     out = tomlrt.dumps(doc)
     assert _reparses(out) == {"a": {"y": 2, "list": [{"n": 1}]}}
     assert "[[a.list]]" in out
     # And the simple (no-AoT) variant stays a section, not an inline table.
-    doc2 = tomlrt.parse("[a]\nx = 1\n[a.b]\ny = 2\n")
+    doc2 = tomlrt.parse(
+        td("""
+        [a]
+        x = 1
+        [a.b]
+        y = 2
+        """)
+    )
     doc2["a"] = doc2["a"]["b"]
     assert tomlrt.dumps(doc2).startswith("[a]\n")
 
@@ -490,11 +634,25 @@ def test_cross_doc_splice_no_doubled_blank_lines() -> None:
     Cloned sections retain their original leading blank-line trivia;
     ``_insert_section_block`` must avoid prepending another one.
     """
-    src = tomlrt.parse("[a]\nx = 1\n\n[b]\ny = 2\n")
+    src = tomlrt.parse(
+        td("""
+        [a]
+        x = 1
+
+        [b]
+        y = 2
+        """)
+    )
     dst = tomlrt.document()
     for k, v in src.items():
         dst[k] = v
-    assert tomlrt.dumps(dst) == "[a]\nx = 1\n\n[b]\ny = 2\n"
+    assert tomlrt.dumps(dst) == td("""
+        [a]
+        x = 1
+
+        [b]
+        y = 2
+        """)
 
 
 def test_delete_first_section_strips_top_blank() -> None:
@@ -504,13 +662,38 @@ def test_delete_first_section_strips_top_blank() -> None:
     from the now-removed first section; after removal it must not show
     up as a top-of-file blank line.
     """
-    doc = tomlrt.parse("[a]\nx = 1\n\n[b]\ny = 2\n")
+    doc = tomlrt.parse(
+        td("""
+        [a]
+        x = 1
+
+        [b]
+        y = 2
+        """)
+    )
     del doc["a"]
     assert tomlrt.dumps(doc) == "[b]\ny = 2\n"
     # Deleting a middle section preserves separation between survivors.
-    doc2 = tomlrt.parse("[a]\nx = 1\n\n[b]\ny = 2\n\n[c]\nz = 3\n")
+    doc2 = tomlrt.parse(
+        td("""
+        [a]
+        x = 1
+
+        [b]
+        y = 2
+
+        [c]
+        z = 3
+        """)
+    )
     del doc2["b"]
-    assert tomlrt.dumps(doc2) == "[a]\nx = 1\n\n[c]\nz = 3\n"
+    assert tomlrt.dumps(doc2) == td("""
+        [a]
+        x = 1
+
+        [c]
+        z = 3
+        """)
 
 
 def test_delete_first_aot_entry_strips_top_blank() -> None:
@@ -522,7 +705,13 @@ def test_delete_first_aot_entry_strips_top_blank() -> None:
     once that neighbour is gone the blank renders as a top-of-file
     artefact unless the removal path normalises it.
     """
-    src = "[[items]]\nn = 1\n\n[[items]]\nn = 2\n"
+    src = td("""
+        [[items]]
+        n = 1
+
+        [[items]]
+        n = 2
+        """)
     expected = "[[items]]\nn = 2\n"
 
     doc = tomlrt.parse(src)
@@ -546,7 +735,15 @@ def test_delete_first_aot_entry_strips_top_blank() -> None:
     # next entry — now first in the document — must still render
     # flush against the top.
     doc = tomlrt.parse(
-        "[[items]]\nn = 1\n[items.sub]\nv = 1\n\n[[items]]\nn = 2\n",
+        td("""
+            [[items]]
+            n = 1
+            [items.sub]
+            v = 1
+
+            [[items]]
+            n = 2
+            """),
     )
     doc.aot("items").pop(0)
     assert tomlrt.dumps(doc) == "[[items]]\nn = 2\n"
@@ -559,17 +756,36 @@ def test_delete_first_top_level_kv_strips_top_blank() -> None:
     from the now-removed first KV; after removal it must not show up
     as a top-of-file blank line.
     """
-    doc = tomlrt.parse("x = 1\n\ny = 2\n")
+    doc = tomlrt.parse(
+        td("""
+        x = 1
+
+        y = 2
+        """)
+    )
     del doc["x"]
     assert tomlrt.dumps(doc) == "y = 2\n"
 
     # Same when the survivor is a section, not a KV.
-    doc = tomlrt.parse("x = 1\n\n[a]\ny = 2\n")
+    doc = tomlrt.parse(
+        td("""
+        x = 1
+
+        [a]
+        y = 2
+        """)
+    )
     del doc["x"]
     assert tomlrt.dumps(doc) == "[a]\ny = 2\n"
 
     # Same via Table.pop.
-    doc = tomlrt.parse("x = 1\n\ny = 2\n")
+    doc = tomlrt.parse(
+        td("""
+        x = 1
+
+        y = 2
+        """)
+    )
     doc.pop("x")
     assert tomlrt.dumps(doc) == "y = 2\n"
 
@@ -584,11 +800,28 @@ def test_aot_imul_inserts_blank_separator_when_no_sibling_to_sample() -> None:
     """
     doc = tomlrt.parse("[[t]]\nn = 1\n")
     doc.aot("t").__imul__(2)
-    assert tomlrt.dumps(doc) == "[[t]]\nn = 1\n\n[[t]]\nn = 1\n"
+    assert tomlrt.dumps(doc) == td("""
+        [[t]]
+        n = 1
+
+        [[t]]
+        n = 1
+        """)
 
     doc = tomlrt.parse("[[t]]\nn = 1\n")
     doc.aot("t").__imul__(3)
-    assert tomlrt.dumps(doc) == ("[[t]]\nn = 1\n\n[[t]]\nn = 1\n\n[[t]]\nn = 1\n")
+    assert tomlrt.dumps(doc) == (
+        td("""
+        [[t]]
+        n = 1
+
+        [[t]]
+        n = 1
+
+        [[t]]
+        n = 1
+        """)
+    )
 
 
 def test_install_through_aot_rejects_cleanly() -> None:
@@ -636,12 +869,23 @@ def test_chained_supertable_assignment_drops_empty_parent() -> None:
     doc3 = tomlrt.document()
     doc3["tool"] = Table.section({"extra": 1})
     doc3["tool"]["poetry"] = Table.section({"name": "foo"})
-    assert tomlrt.dumps(doc3) == '[tool]\nextra = 1\n\n[tool.poetry]\nname = "foo"\n'
+    assert tomlrt.dumps(doc3) == td("""
+        [tool]
+        extra = 1
+
+        [tool.poetry]
+        name = "foo"
+        """)
 
     # Parser-authored empty header must be preserved.
     doc4 = tomlrt.parse("[product]\n")
     doc4.table("product")["variant"] = AoT([{"sku": "X"}])
-    assert tomlrt.dumps(doc4) == '[product]\n\n[[product.variant]]\nsku = "X"\n'
+    assert tomlrt.dumps(doc4) == td("""
+        [product]
+
+        [[product.variant]]
+        sku = "X"
+        """)
 
     # An empty parent installed alone (no child) stays as the user wrote it.
     doc5 = tomlrt.document()
@@ -691,7 +935,13 @@ def test_ior_on_subscripted_table_preserves_position() -> None:
     value`` short-circuits that round-trip.
     """
     doc = tomlrt.loads(
-        "[tool.black]\nline-length = 88\n\n[other]\nx = 1\n",
+        td("""
+            [tool.black]
+            line-length = 88
+
+            [other]
+            x = 1
+            """),
     )
     addition = tomlrt.loads('[tool.poetry]\nname = "foo"\n')
     doc["tool"] |= addition["tool"]
@@ -711,7 +961,14 @@ def test_self_assignment_is_a_noop() -> None:
     backing (via ``old._detach()``) and rebuilt it, which both lost
     formatting and silently invalidated any held reference.
     """
-    doc = tomlrt.parse("[t]\na = 1\n[u]\nb = 2\n")
+    doc = tomlrt.parse(
+        td("""
+        [t]
+        a = 1
+        [u]
+        b = 2
+        """)
+    )
     t = doc["t"]
     before = tomlrt.dumps(doc)
     doc["t"] = doc["t"]
@@ -730,9 +987,29 @@ def test_section_replace_preserves_position() -> None:
     The slot lookup now remembers the position of the first matching
     section before purge and reuses that index.
     """
-    doc = tomlrt.loads("[a]\nx = 1\n\n[b]\ny = 2\n\n[c]\nz = 3\n")
+    doc = tomlrt.loads(
+        td("""
+        [a]
+        x = 1
+
+        [b]
+        y = 2
+
+        [c]
+        z = 3
+        """)
+    )
     doc["b"] = Table.section({"q": 9})
-    assert tomlrt.dumps(doc) == "[a]\nx = 1\n\n[b]\nq = 9\n\n[c]\nz = 3\n"
+    assert tomlrt.dumps(doc) == td("""
+        [a]
+        x = 1
+
+        [b]
+        q = 9
+
+        [c]
+        z = 3
+        """)
 
 
 def test_section_replace_preserves_position_for_implicit_parent() -> None:
@@ -742,9 +1019,29 @@ def test_section_replace_preserves_position_for_implicit_parent() -> None:
     ``Table.section`` to ``b`` purges the implicit subtree and lands a
     fresh ``[b]`` block where ``[b.c]`` used to live.
     """
-    doc = tomlrt.loads("[a]\nx = 1\n\n[b.c]\ny = 2\n\n[d]\nz = 3\n")
+    doc = tomlrt.loads(
+        td("""
+        [a]
+        x = 1
+
+        [b.c]
+        y = 2
+
+        [d]
+        z = 3
+        """)
+    )
     doc["b"] = Table.section({"q": 9})
-    assert tomlrt.dumps(doc) == "[a]\nx = 1\n\n[b]\nq = 9\n\n[d]\nz = 3\n"
+    assert tomlrt.dumps(doc) == td("""
+        [a]
+        x = 1
+
+        [b]
+        q = 9
+
+        [d]
+        z = 3
+        """)
 
 
 def test_aot_assign_purges_implicit_supertable_aot_subtree() -> None:
@@ -756,15 +1053,39 @@ def test_aot_assign_purges_implicit_supertable_aot_subtree() -> None:
     and the source ``[[a.b]]`` sections leaked into the result, where
     they were silently re-attributed as a child of the new last entry.
     """
-    src = tomlrt.loads("[[a.b]]\nx = 1\n[[a.b]]\nx = 2\n")
+    src = tomlrt.loads(
+        td("""
+        [[a.b]]
+        x = 1
+        [[a.b]]
+        x = 2
+        """)
+    )
     src["a"] = src.aot("a.b")
-    assert tomlrt.dumps(src) == "[[a]]\nx = 1\n[[a]]\nx = 2\n"
+    assert tomlrt.dumps(src) == td("""
+        [[a]]
+        x = 1
+        [[a]]
+        x = 2
+        """)
     assert src.to_dict() == {"a": [{"x": 1}, {"x": 2}]}
 
     dst = tomlrt.loads("[[a.b]]\nx = 1\n")
-    other = tomlrt.loads("[[t]]\nz = 99\n[[t]]\nz = 100\n")
+    other = tomlrt.loads(
+        td("""
+        [[t]]
+        z = 99
+        [[t]]
+        z = 100
+        """)
+    )
     dst["a"] = other.aot("t")
-    assert tomlrt.dumps(dst) == "[[a]]\nz = 99\n[[a]]\nz = 100\n"
+    assert tomlrt.dumps(dst) == td("""
+        [[a]]
+        z = 99
+        [[a]]
+        z = 100
+        """)
     assert dst.to_dict() == {"a": [{"z": 99}, {"z": 100}]}
 
 
@@ -780,9 +1101,21 @@ def test_install_aot_same_doc_overlap_preserves_source() -> None:
     result. Aligning the AoT install ordering with the table install
     (clone-before-purge) closes the gap.
     """
-    src = tomlrt.loads("[[a.inner]]\nx = 1\n[[a.inner]]\nx = 2\n")
+    src = tomlrt.loads(
+        td("""
+        [[a.inner]]
+        x = 1
+        [[a.inner]]
+        x = 2
+        """)
+    )
     src.install("a", src.aot("a.inner"))
-    assert tomlrt.dumps(src) == "[[a]]\nx = 1\n[[a]]\nx = 2\n"
+    assert tomlrt.dumps(src) == td("""
+        [[a]]
+        x = 1
+        [[a]]
+        x = 2
+        """)
     assert src.to_dict() == {"a": [{"x": 1}, {"x": 2}]}
 
 
@@ -828,11 +1161,35 @@ def test_aot_entry_subsection_replace_preserves_position() -> None:
     sub-section sat, not at the end of the entry's owned range.
     """
     doc = tomlrt.loads(
-        "[[pkg]]\nn = 1\n\n[pkg.a]\nx = 1\n\n[pkg.b]\ny = 2\n\n[pkg.c]\nz = 3\n",
+        td("""
+            [[pkg]]
+            n = 1
+
+            [pkg.a]
+            x = 1
+
+            [pkg.b]
+            y = 2
+
+            [pkg.c]
+            z = 3
+            """),
     )
     doc["pkg"][0]["b"] = Table.section({"q": 9})
     assert tomlrt.dumps(doc) == (
-        "[[pkg]]\nn = 1\n\n[pkg.a]\nx = 1\n\n[pkg.b]\nq = 9\n\n[pkg.c]\nz = 3\n"
+        td("""
+            [[pkg]]
+            n = 1
+
+            [pkg.a]
+            x = 1
+
+            [pkg.b]
+            q = 9
+
+            [pkg.c]
+            z = 3
+            """)
     )
 
 
@@ -952,19 +1309,41 @@ def test_install_attached_aot_preserves_comments() -> None:
     # `install` implementation always routed through `to_dict()`, which
     # silently stripped comments and formatting, diverging from the
     # subscript path.
-    src = "[[t]]\n# leading\na = 1  # eol\n[[t]]\nb = 2\n"
+    src = td("""
+        [[t]]
+        # leading
+        a = 1  # eol
+        [[t]]
+        b = 2
+        """)
     a = tomlrt.parse(src)
     b = tomlrt.parse("")
     b.install("y", a["t"])
-    assert tomlrt.dumps(b) == ("[[y]]\n# leading\na = 1  # eol\n[[y]]\nb = 2\n")
+    assert tomlrt.dumps(b) == (
+        td("""
+        [[y]]
+        # leading
+        a = 1  # eol
+        [[y]]
+        b = 2
+        """)
+    )
 
 
 def test_install_attached_aot_at_dotted_path_preserves_comments() -> None:
-    src = "[[t]]\n# leading\na = 1\n"
+    src = td("""
+        [[t]]
+        # leading
+        a = 1
+        """)
     a = tomlrt.parse(src)
     b = tomlrt.parse("")
     b.install("p.q", a["t"])
-    assert tomlrt.dumps(b) == "[[p.q]]\n# leading\na = 1\n"
+    assert tomlrt.dumps(b) == td("""
+        [[p.q]]
+        # leading
+        a = 1
+        """)
 
 
 def test_install_attached_aot_is_independent_of_source() -> None:
@@ -988,29 +1367,56 @@ def test_set_value_overwriting_existing_subsection() -> None:
     under it) is silently removed and replaced with ``b = 99`` inside
     ``[a]``.
     """
-    src = "[a]\nx = 1\n[a.b]\ny = 2\n[a.b.c]\nz = 3\n"
+    src = td("""
+        [a]
+        x = 1
+        [a.b]
+        y = 2
+        [a.b.c]
+        z = 3
+        """)
     doc = tomlrt.parse(src)
     a = doc["a"]
     assert isinstance(a, tomlrt.Table)
     a["b"] = 99
     out = tomlrt.dumps(doc)
-    assert out == "[a]\nx = 1\nb = 99\n"
+    assert out == td("""
+        [a]
+        x = 1
+        b = 99
+        """)
     assert _reparses(out) == {"a": {"x": 1, "b": 99}}
 
 
 def test_set_value_overwriting_existing_aot() -> None:
-    src = '[a]\nx = 1\n[[a.items]]\nname = "first"\n[[a.items]]\nname = "second"\n'
+    src = td("""
+        [a]
+        x = 1
+        [[a.items]]
+        name = "first"
+        [[a.items]]
+        name = "second"
+        """)
     doc = tomlrt.parse(src)
     a = doc["a"]
     assert isinstance(a, tomlrt.Table)
     a["items"] = 5
     out = tomlrt.dumps(doc)
-    assert out == "[a]\nx = 1\nitems = 5\n"
+    assert out == td("""
+        [a]
+        x = 1
+        items = 5
+        """)
     assert _reparses(out) == {"a": {"x": 1, "items": 5}}
 
 
 def test_set_value_overwriting_dotted_subtree() -> None:
-    src = "[a]\nb.c = 1\nb.d = 2\nx = 9\n"
+    src = td("""
+        [a]
+        b.c = 1
+        b.d = 2
+        x = 9
+        """)
     doc = tomlrt.parse(src)
     a = doc["a"]
     assert isinstance(a, tomlrt.Table)
@@ -1020,7 +1426,12 @@ def test_set_value_overwriting_dotted_subtree() -> None:
 
 
 def test_set_value_overwriting_top_level_table() -> None:
-    src = "[a]\nx = 1\n[b]\ny = 2\n"
+    src = td("""
+        [a]
+        x = 1
+        [b]
+        y = 2
+        """)
     doc = tomlrt.parse(src)
     doc["a"] = 99
     out = tomlrt.dumps(doc)
@@ -1028,7 +1439,16 @@ def test_set_value_overwriting_top_level_table() -> None:
 
 
 def test_del_subtable() -> None:
-    src = "[a]\nx = 1\n[a.b]\ny = 2\n[a.b.c]\nz = 3\n[other]\nq = 1\n"
+    src = td("""
+        [a]
+        x = 1
+        [a.b]
+        y = 2
+        [a.b.c]
+        z = 3
+        [other]
+        q = 1
+        """)
     doc = tomlrt.parse(src)
     a = doc["a"]
     assert isinstance(a, tomlrt.Table)
@@ -1038,7 +1458,14 @@ def test_del_subtable() -> None:
 
 
 def test_del_aot() -> None:
-    src = '[a]\nx = 1\n[[a.items]]\nname = "first"\n[[a.items]]\nname = "second"\n'
+    src = td("""
+        [a]
+        x = 1
+        [[a.items]]
+        name = "first"
+        [[a.items]]
+        name = "second"
+        """)
     doc = tomlrt.parse(src)
     a = doc["a"]
     assert isinstance(a, tomlrt.Table)
@@ -1048,7 +1475,12 @@ def test_del_aot() -> None:
 
 
 def test_del_dotted_subtree() -> None:
-    src = "[a]\nb.c = 1\nb.d = 2\nx = 9\n"
+    src = td("""
+        [a]
+        b.c = 1
+        b.d = 2
+        x = 9
+        """)
     doc = tomlrt.parse(src)
     a = doc["a"]
     assert isinstance(a, tomlrt.Table)
@@ -1066,7 +1498,14 @@ def test_del_missing_raises_keyerror() -> None:
 
 
 def test_pop_returns_subtable_snapshot() -> None:
-    src = "[a]\nx = 1\n[a.b]\ny = 2\n[a.b.c]\nz = 3\n"
+    src = td("""
+        [a]
+        x = 1
+        [a.b]
+        y = 2
+        [a.b.c]
+        z = 3
+        """)
     doc = tomlrt.parse(src)
     a = doc["a"]
     assert isinstance(a, tomlrt.Table)
@@ -1076,7 +1515,14 @@ def test_pop_returns_subtable_snapshot() -> None:
 
 
 def test_pop_returns_aot_snapshot() -> None:
-    doc = tomlrt.parse('[[items]]\nname = "a"\n[[items]]\nname = "b"\n')
+    doc = tomlrt.parse(
+        td("""
+        [[items]]
+        name = "a"
+        [[items]]
+        name = "b"
+        """)
+    )
     popped = doc.pop("items")
     assert popped == [{"name": "a"}, {"name": "b"}]
     assert tomlrt.dumps(doc) == ""
@@ -1090,7 +1536,13 @@ def test_pop_with_default() -> None:
 
 
 def test_popitem_is_lifo() -> None:
-    doc = tomlrt.parse("a = 1\nb = 2\nc = 3\n")
+    doc = tomlrt.parse(
+        td("""
+        a = 1
+        b = 2
+        c = 3
+        """)
+    )
     assert doc.popitem() == ("c", 3)
     assert doc.popitem() == ("b", 2)
     assert _reparses(tomlrt.dumps(doc)) == {"a": 1}
@@ -1158,7 +1610,14 @@ def test_aot_entry_owned_scope_isolates_sibling_sub_sections() -> None:
     Each entry's sub.x must be independent; mutating arr[0].sub.x must
     not affect arr[1].sub.x.
     """
-    src = "[[arr]]\n[arr.sub]\nx = 1\n[[arr]]\n[arr.sub]\nx = 2\n"
+    src = td("""
+        [[arr]]
+        [arr.sub]
+        x = 1
+        [[arr]]
+        [arr.sub]
+        x = 2
+        """)
     doc = tomlrt.parse(src)
     arr = doc["arr"]
     assert isinstance(arr, tomlrt.AoT)
@@ -1184,12 +1643,26 @@ def test_array_set_multiline_true_wraps_with_default_indent() -> None:
     arr = doc.array("a")
     assert not arr.multiline
     arr.set_multiline(multiline=True)
-    assert tomlrt.dumps(doc) == "a = [\n    1,\n    2,\n    3,\n]\n"
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+            1,
+            2,
+            3,
+        ]
+        """)
     assert arr.multiline
 
 
 def test_array_set_multiline_false_collapses() -> None:
-    doc = tomlrt.loads("a = [\n    1,\n    2,\n    3,\n]\n")
+    doc = tomlrt.loads(
+        td("""
+        a = [
+            1,
+            2,
+            3,
+        ]
+        """)
+    )
     arr = doc.array("a")
     assert arr.multiline
     arr.set_multiline(multiline=False)
@@ -1198,23 +1671,56 @@ def test_array_set_multiline_false_collapses() -> None:
 
 
 def test_array_set_multiline_false_with_eol_comment_raises() -> None:
-    doc = tomlrt.loads("a = [\n    1,  # one\n    2,\n]\n")
+    doc = tomlrt.loads(
+        td("""
+        a = [
+            1,  # one
+            2,
+        ]
+        """)
+    )
     arr = doc.array("a")
     with pytest.raises(tomlrt.TOMLError, match="comments"):
         arr.set_multiline(multiline=False)
-    assert tomlrt.dumps(doc) == "a = [\n    1,  # one\n    2,\n]\n"
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+            1,  # one
+            2,
+        ]
+        """)
 
 
 def test_array_set_multiline_false_with_leading_comment_raises() -> None:
-    doc = tomlrt.loads("a = [\n    # leading\n    1,\n    2,\n]\n")
+    doc = tomlrt.loads(
+        td("""
+        a = [
+            # leading
+            1,
+            2,
+        ]
+        """)
+    )
     arr = doc.array("a")
     with pytest.raises(tomlrt.TOMLError, match="comments"):
         arr.set_multiline(multiline=False)
-    assert tomlrt.dumps(doc) == "a = [\n    # leading\n    1,\n    2,\n]\n"
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+            # leading
+            1,
+            2,
+        ]
+        """)
 
 
 def test_array_set_multiline_false_after_clearing_comments_works() -> None:
-    doc = tomlrt.loads("a = [\n    1,  # one\n    2,\n]\n")
+    doc = tomlrt.loads(
+        td("""
+        a = [
+            1,  # one
+            2,
+        ]
+        """)
+    )
     arr = doc.array("a")
     del arr.comments[0]
     arr.set_multiline(multiline=False)
@@ -1222,7 +1728,14 @@ def test_array_set_multiline_false_after_clearing_comments_works() -> None:
 
 
 def test_array_set_multiline_false_refuses_when_inner_inline_has_comment() -> None:
-    src = "a = [\n    {\n        # inner\n        x = 1,\n    },\n]\n"
+    src = td("""
+        a = [
+            {
+                # inner
+                x = 1,
+            },
+        ]
+        """)
     doc = tomlrt.loads(src)
     arr = doc.array("a")
     with pytest.raises(tomlrt.TOMLError, match="EOL or leading comments"):
@@ -1233,14 +1746,24 @@ def test_array_set_multiline_false_refuses_when_inner_inline_has_comment() -> No
 def test_array_set_multiline_custom_indent() -> None:
     doc = tomlrt.loads("a = [1, 2]\n")
     doc.array("a").set_multiline(multiline=True, indent="  ")
-    assert tomlrt.dumps(doc) == "a = [\n  1,\n  2,\n]\n"
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+          1,
+          2,
+        ]
+        """)
 
 
 def test_array_multiline_property_setter() -> None:
     doc = tomlrt.loads("a = [1, 2]\n")
     arr = doc.array("a")
     arr.multiline = True
-    assert tomlrt.dumps(doc) == "a = [\n    1,\n    2,\n]\n"
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+            1,
+            2,
+        ]
+        """)
     arr.multiline = False
     assert tomlrt.dumps(doc) == "a = [1, 2]\n"
 
@@ -1250,7 +1773,12 @@ def test_array_set_multiline_then_append() -> None:
     arr = doc.array("a")
     arr.set_multiline(multiline=True)
     arr.append(2)
-    assert tomlrt.dumps(doc) == "a = [\n    1,\n    2,\n]\n"
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+            1,
+            2,
+        ]
+        """)
 
 
 def test_array_set_multiline_returns_self() -> None:
@@ -1265,7 +1793,11 @@ def test_array_set_multiline_survives_view_refetch() -> None:
     refetched = doc.array("a")
     assert refetched.multiline
     refetched.append(1)
-    assert tomlrt.dumps(doc) == "a = [\n    1,\n]\n"
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+            1,
+        ]
+        """)
 
 
 def test_array_set_multiline_indent_preserved_on_install() -> None:
@@ -1276,7 +1808,13 @@ def test_array_set_multiline_indent_preserved_on_install() -> None:
     arr.set_multiline(multiline=True, indent="  ")
     doc = tomlrt.document()
     doc["x"] = arr
-    assert tomlrt.dumps(doc) == "x = [\n  1,\n  2,\n  3,\n]\n"
+    assert tomlrt.dumps(doc) == td("""
+        x = [
+          1,
+          2,
+          3,
+        ]
+        """)
 
 
 def test_append_to_multiline_array_with_eol_comments() -> None:
@@ -1286,10 +1824,23 @@ def test_append_to_multiline_array_with_eol_comments() -> None:
     # item's trailing comment into the close-pad. Newly appended
     # items must instead inherit the structural indent and leave
     # the existing comments alone.
-    src = "a = [\n    1,  # one\n    2,  # two\n]\n"
+    src = td("""
+        a = [
+            1,  # one
+            2,  # two
+        ]
+        """)
     doc = tomlrt.loads(src)
     doc.array("a").append(3)
-    assert tomlrt.dumps(doc) == ("a = [\n    1,  # one\n    2,  # two\n    3,\n]\n")
+    assert tomlrt.dumps(doc) == (
+        td("""
+        a = [
+            1,  # one
+            2,  # two
+            3,
+        ]
+        """)
+    )
 
 
 def test_array_parsed_empty_with_newline_is_multiline() -> None:
@@ -1297,44 +1848,83 @@ def test_array_parsed_empty_with_newline_is_multiline() -> None:
     arr = doc.array("a")
     assert arr.multiline
     arr.append(1)
-    assert tomlrt.dumps(doc) == "a = [\n    1,\n]\n"
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+            1,
+        ]
+        """)
 
 
 def test_array_parsed_empty_with_newline_indent_is_inferred() -> None:
     doc = tomlrt.loads("a = [\n  ]\n")
     arr = doc.array("a")
     arr.append(1)
-    assert tomlrt.dumps(doc) == "a = [\n  1,\n]\n"
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+          1,
+        ]
+        """)
 
 
 def test_append_preserves_empty_array_inner_comment() -> None:
     # An empty multiline array with only a comment inside used to lose
     # the comment entirely on first append. The comment should survive
     # as leading trivia of the newly inserted first item.
-    src = "a = [\n    # placeholder\n]\n"
+    src = td("""
+        a = [
+            # placeholder
+        ]
+        """)
     doc = tomlrt.loads(src)
     doc.array("a").append(1)
-    assert tomlrt.dumps(doc) == "a = [\n    # placeholder\n    1,\n]\n"
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+            # placeholder
+            1,
+        ]
+        """)
 
 
 def test_append_preserves_trailing_comment_in_single_item_array() -> None:
     # A single-item multiline array whose last-item post-comma slot
     # carries a comment used to have that comment collapse onto the
     # same line as the new item, producing valid-but-ugly output.
-    src = "a = [\n    1,\n    # tail\n]\n"
+    src = td("""
+        a = [
+            1,
+            # tail
+        ]
+        """)
     doc = tomlrt.loads(src)
     doc.array("a").append(2)
-    assert tomlrt.dumps(doc) == "a = [\n    1,\n    # tail\n    2,\n]\n"
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+            1,
+            # tail
+            2,
+        ]
+        """)
 
 
 def test_append_preserves_leading_comment_in_single_item_array() -> None:
     # A single-item multiline array with a leading comment used to
     # collapse to single-line layout on append because the inter-item
     # separator could not be sampled from items[:-1] (which is empty).
-    src = "a = [\n    # head\n    1,\n]\n"
+    src = td("""
+        a = [
+            # head
+            1,
+        ]
+        """)
     doc = tomlrt.loads(src)
     doc.array("a").append(2)
-    assert tomlrt.dumps(doc) == "a = [\n    # head\n    1,\n    2,\n]\n"
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+            # head
+            1,
+            2,
+        ]
+        """)
 
 
 # ---------------------------------------------------------------------------
@@ -1382,19 +1972,42 @@ def test_set_aot_nested_path() -> None:
 def test_set_aot_blank_separated_entries() -> None:
     doc = tomlrt.loads("")
     doc["p"] = AoT([{"x": 1}, {"x": 2}, {"x": 3}])
-    assert tomlrt.dumps(doc) == ("[[p]]\nx = 1\n\n[[p]]\nx = 2\n\n[[p]]\nx = 3\n")
+    assert tomlrt.dumps(doc) == (
+        td("""
+        [[p]]
+        x = 1
+
+        [[p]]
+        x = 2
+
+        [[p]]
+        x = 3
+        """)
+    )
 
 
 def test_set_aot_blank_before_first_when_preceded_by_content() -> None:
     doc = tomlrt.loads("top = 1\n")
     doc["p"] = AoT([{"x": 1}])
-    assert tomlrt.dumps(doc) == "top = 1\n\n[[p]]\nx = 1\n"
+    assert tomlrt.dumps(doc) == td("""
+        top = 1
+
+        [[p]]
+        x = 1
+        """)
 
 
 def test_set_aot_blank_after_section_header() -> None:
     doc = tomlrt.loads("[product]\n")
     doc.table("product")["variant"] = AoT([{"sku": "X"}])
-    assert tomlrt.dumps(doc) == ('[product]\n\n[[product.variant]]\nsku = "X"\n')
+    assert tomlrt.dumps(doc) == (
+        td("""
+        [product]
+
+        [[product.variant]]
+        sku = "X"
+        """)
+    )
 
 
 def test_promote_array_converts_inline_to_aot() -> None:
@@ -1472,7 +2085,11 @@ def test_set_table_dotted_omits_super_table_headers() -> None:
     doc.install("tool.poetry", Table.section({"name": "x", "version": "0.1"}))
     rendered = tomlrt.dumps(doc)
     assert "[tool]\n" not in rendered
-    assert rendered == '[tool.poetry]\nname = "x"\nversion = "0.1"\n'
+    assert rendered == td("""
+        [tool.poetry]
+        name = "x"
+        version = "0.1"
+        """)
 
 
 def test_set_table_implicit_super_table_navigable() -> None:
@@ -1492,12 +2109,25 @@ def test_set_table_sibling_section_does_not_disturb_existing() -> None:
     doc.install("tool.poetry", Table.section({"name": "x"}))
     doc.install("tool.poetry.dependencies", Table.section({"requests": "^2.0"}))
     assert tomlrt.dumps(doc) == (
-        '[tool.poetry]\nname = "x"\n\n[tool.poetry.dependencies]\nrequests = "^2.0"\n'
+        td("""
+            [tool.poetry]
+            name = "x"
+
+            [tool.poetry.dependencies]
+            requests = "^2.0"
+            """)
     )
 
 
 def test_set_table_replaces_existing_section_and_purges_children() -> None:
-    doc = tomlrt.loads('[tool.poetry]\nname = "x"\n[tool.poetry.foo]\nbar = 1\n')
+    doc = tomlrt.loads(
+        td("""
+        [tool.poetry]
+        name = "x"
+        [tool.poetry.foo]
+        bar = 1
+        """)
+    )
     doc.install("tool.poetry", Table.section({"version": "2.0"}))
     rendered = tomlrt.dumps(doc)
     assert "name" not in rendered
@@ -1533,7 +2163,13 @@ def test_ensure_table_navigates_existing_explicit_section() -> None:
     doc = tomlrt.loads('[tool.poetry]\nname = "x"\n')
     t = doc.ensure_table("tool.poetry")
     t["version"] = "0.1"
-    assert tomlrt.dumps(doc) == ('[tool.poetry]\nname = "x"\nversion = "0.1"\n')
+    assert tomlrt.dumps(doc) == (
+        td("""
+        [tool.poetry]
+        name = "x"
+        version = "0.1"
+        """)
+    )
 
 
 def test_ensure_table_navigates_implicit_super_table() -> None:
@@ -1549,7 +2185,13 @@ def test_ensure_table_creates_only_missing_tail() -> None:
     t = doc.ensure_table("tool.poetry.dependencies")
     t["requests"] = "^2.0"
     assert tomlrt.dumps(doc) == (
-        '[tool.poetry]\nname = "x"\n\n[tool.poetry.dependencies]\nrequests = "^2.0"\n'
+        td("""
+            [tool.poetry]
+            name = "x"
+
+            [tool.poetry.dependencies]
+            requests = "^2.0"
+            """)
     )
 
 
@@ -1660,13 +2302,26 @@ def test_set_array_creates_inline_array() -> None:
 def test_set_array_multiline_lays_out_one_per_line() -> None:
     doc = tomlrt.loads("")
     doc["authors"] = Array(["A", "B", "C"], multiline=True)
-    assert tomlrt.dumps(doc) == ('authors = [\n    "A",\n    "B",\n    "C",\n]\n')
+    assert tomlrt.dumps(doc) == (
+        td("""
+        authors = [
+            "A",
+            "B",
+            "C",
+        ]
+        """)
+    )
 
 
 def test_set_array_custom_indent() -> None:
     doc = tomlrt.loads("")
     doc["x"] = Array([1, 2], multiline=True, indent="  ")
-    assert tomlrt.dumps(doc) == "x = [\n  1,\n  2,\n]\n"
+    assert tomlrt.dumps(doc) == td("""
+        x = [
+          1,
+          2,
+        ]
+        """)
 
 
 def test_set_array_empty_multiline_appendable() -> None:
@@ -1674,7 +2329,11 @@ def test_set_array_empty_multiline_appendable() -> None:
     doc["x"] = Array(multiline=True)
     arr = doc["x"]
     arr.append(1)
-    assert tomlrt.dumps(doc) == "x = [\n    1,\n]\n"
+    assert tomlrt.dumps(doc) == td("""
+        x = [
+            1,
+        ]
+        """)
 
 
 def test_set_array_dotted_path_creates_parent_section() -> None:
@@ -1682,13 +2341,27 @@ def test_set_array_dotted_path_creates_parent_section() -> None:
     doc.install("tool.poetry.authors", Array(["A", "B"], multiline=True))
     rendered = tomlrt.dumps(doc)
     assert "[tool]\n" not in rendered
-    assert rendered == ('[tool.poetry]\nauthors = [\n    "A",\n    "B",\n]\n')
+    assert rendered == (
+        td("""
+        [tool.poetry]
+        authors = [
+            "A",
+            "B",
+        ]
+        """)
+    )
 
 
 def test_set_array_dotted_path_uses_existing_section() -> None:
     doc = tomlrt.loads('[tool.poetry]\nname = "x"\n')
     doc.install("tool.poetry.authors", Array(["A", "B"]))
-    assert tomlrt.dumps(doc) == ('[tool.poetry]\nname = "x"\nauthors = ["A", "B"]\n')
+    assert tomlrt.dumps(doc) == (
+        td("""
+        [tool.poetry]
+        name = "x"
+        authors = ["A", "B"]
+        """)
+    )
 
 
 def test_set_array_replaces_existing_value() -> None:
@@ -1712,7 +2385,15 @@ def test_detached_aot_preserves_entry_array_multiline_layout() -> None:
     pkg["files"] = Array([1, 2, 3], multiline=True)
     doc["package"] = aot
     assert tomlrt.dumps(doc) == (
-        '[[package]]\nname = "foo"\nfiles = [\n    1,\n    2,\n    3,\n]\n'
+        td("""
+            [[package]]
+            name = "foo"
+            files = [
+                1,
+                2,
+                3,
+            ]
+            """)
     )
 
 
@@ -1722,12 +2403,26 @@ def test_install_detached_aot_preserves_entry_array_multiline_layout() -> None:
     pkg = aot.add({"name": "bar"})
     pkg["files"] = Array([1, 2], multiline=True, indent="  ")
     doc.install("pkgs", aot)
-    assert tomlrt.dumps(doc) == ('[[pkgs]]\nname = "bar"\nfiles = [\n  1,\n  2,\n]\n')
+    assert tomlrt.dumps(doc) == (
+        td("""
+        [[pkgs]]
+        name = "bar"
+        files = [
+          1,
+          2,
+        ]
+        """)
+    )
 
 
 def test_assign_over_aot_keeps_dict_view_in_sync() -> None:
     """Regression: the dict view used to keep a stale AoT after an assign."""
-    src = '[tool]\n\n[[tool.source]]\nname = "foo"\n'
+    src = td("""
+        [tool]
+
+        [[tool.source]]
+        name = "foo"
+        """)
     doc = tomlrt.loads(src)
     doc["tool"]["source"] = {}
     assert isinstance(doc["tool"]["source"], tomlrt.Table)
@@ -1737,7 +2432,12 @@ def test_assign_over_aot_keeps_dict_view_in_sync() -> None:
 
 def test_del_then_assign_keeps_dict_view_in_sync() -> None:
     """Regression: re-assigning a key after del used to revive the old AoT."""
-    src = '[tool]\n\n[[tool.source]]\nname = "foo"\n'
+    src = td("""
+        [tool]
+
+        [[tool.source]]
+        name = "foo"
+        """)
     doc = tomlrt.loads(src)
     del doc["tool"]["source"]
     doc["tool"]["source"] = {}
@@ -1748,9 +2448,14 @@ def test_del_then_assign_keeps_dict_view_in_sync() -> None:
 
 def test_pop_then_assign_keeps_dict_view_in_sync() -> None:
     """Regression: dict view returned the old sub-table's keys after re-assign."""
-    src = (
-        '[tool.poetry]\nname = "x"\n\n[tool.poetry.extras]\na = ["one"]\nb = ["two"]\n'
-    )
+    src = td("""
+            [tool.poetry]
+            name = "x"
+
+            [tool.poetry.extras]
+            a = ["one"]
+            b = ["two"]
+            """)
     doc = tomlrt.loads(src)
     poetry = doc["tool"]["poetry"]
     poetry.pop("extras")
@@ -1765,7 +2470,13 @@ def test_pop_inherited_dotted_key_from_ancestor_section() -> None:
     but ``pop('name')`` used to KeyError because the mutation paths ignored
     inherited (extras) entries.
     """
-    src = '[tool]\npoetry.name = "x"\n\n[tool.poetry.extras]\na = ["one"]\n'
+    src = td("""
+        [tool]
+        poetry.name = "x"
+
+        [tool.poetry.extras]
+        a = ["one"]
+        """)
     doc = tomlrt.loads(src)
     poetry = doc["tool"]["poetry"]
     assert poetry["name"] == "x"
@@ -1797,7 +2508,11 @@ def test_preamble_set_on_empty_doc_renders_before_added_content() -> None:
     doc.preamble = ("This is a comment",)
     doc["x"] = 1
     rendered = tomlrt.dumps(doc)
-    assert rendered == "# This is a comment\n\nx = 1\n"
+    assert rendered == td("""
+        # This is a comment
+
+        x = 1
+        """)
     # The migrated comment must remain visible as preamble for round-trip.
     assert doc.preamble == ("This is a comment",)
     assert tomlrt.loads(rendered).preamble == ("This is a comment",)
@@ -1830,7 +2545,13 @@ def test_aot_insert_on_empty_doc_migrates_preamble() -> None:
     aot = doc["products"]
     aot.insert(0, {"name": "x"})
     rendered = tomlrt.dumps(doc)
-    assert rendered.startswith("# Copyright\n\n[[products]]\n"), rendered
+    assert rendered.startswith(
+        td("""
+        # Copyright
+
+        [[products]]
+        """)
+    ), rendered
     assert tomlrt.loads(rendered).preamble == ("Copyright",)
 
 
@@ -1839,7 +2560,11 @@ def test_promote_array_preserves_source_kv_leading_and_trailing() -> None:
     comments / blank lines and trailing EOL comment. Carry them over
     onto the first new ``[[..]]`` header and the last entry's tail.
     """
-    src = '# header comment\n\nservers = [{ name = "a" }, { name = "b" }]  # tail\n'
+    src = td("""
+        # header comment
+
+        servers = [{ name = "a" }, { name = "b" }]  # tail
+        """)
     doc = tomlrt.loads(src)
     doc.promote_array("servers")
     rendered = tomlrt.dumps(doc)
@@ -1856,12 +2581,32 @@ def test_aot_insert_at_zero_separates_from_following_entry() -> None:
     """
     doc = tomlrt.loads("[[a]]\nx = 1\n")
     doc["a"].insert(0, {"x": 0})
-    assert tomlrt.dumps(doc) == "[[a]]\nx = 0\n\n[[a]]\nx = 1\n"
+    assert tomlrt.dumps(doc) == td("""
+        [[a]]
+        x = 0
+
+        [[a]]
+        x = 1
+        """)
 
     # Tight existing layout: don't impose a blank.
-    doc = tomlrt.loads("[[a]]\nx = 1\n[[a]]\nx = 2\n")
+    doc = tomlrt.loads(
+        td("""
+        [[a]]
+        x = 1
+        [[a]]
+        x = 2
+        """)
+    )
     doc["a"].insert(0, {"x": 0})
-    assert tomlrt.dumps(doc) == "[[a]]\nx = 0\n[[a]]\nx = 1\n[[a]]\nx = 2\n"
+    assert tomlrt.dumps(doc) == td("""
+        [[a]]
+        x = 0
+        [[a]]
+        x = 1
+        [[a]]
+        x = 2
+        """)
 
 
 def test_replace_section_preserves_leading_comments() -> None:
@@ -1871,33 +2616,89 @@ def test_replace_section_preserves_leading_comments() -> None:
     trivia was not. Now the prior header's leading is transplanted onto
     the replacement so the surrounding visual context survives.
     """
-    src = "# leader\n[a]\nx=1\n[b]\ny=2\n"
+    src = td("""
+        # leader
+        [a]
+        x=1
+        [b]
+        y=2
+        """)
     doc = tomlrt.loads(src)
     doc["a"] = tomlrt.Table.section({"new": 99})
-    assert tomlrt.dumps(doc) == "# leader\n[a]\nnew = 99\n[b]\ny=2\n"
+    assert tomlrt.dumps(doc) == td("""
+        # leader
+        [a]
+        new = 99
+        [b]
+        y=2
+        """)
 
     # Mid-document, multi-line comment block: also preserved.
-    src = "[a]\nx=1\n\n# big\n# block\n[b]\ny=2\n"
+    src = td("""
+        [a]
+        x=1
+
+        # big
+        # block
+        [b]
+        y=2
+        """)
     doc = tomlrt.loads(src)
     doc["b"] = tomlrt.Table.section({"new": 99})
-    assert tomlrt.dumps(doc) == "[a]\nx=1\n\n# big\n# block\n[b]\nnew = 99\n"
+    assert tomlrt.dumps(doc) == td("""
+        [a]
+        x=1
+
+        # big
+        # block
+        [b]
+        new = 99
+        """)
 
 
 def test_replace_aot_preserves_leading_comments() -> None:
     """Same shape for ``doc[k] = AoT([...])`` over an existing AoT."""
-    src = "# top\n# block\n[[a]]\nn=1\n[[a]]\nn=2\n[b]\nx=1\n"
+    src = td("""
+        # top
+        # block
+        [[a]]
+        n=1
+        [[a]]
+        n=2
+        [b]
+        x=1
+        """)
     doc = tomlrt.loads(src)
     doc["a"] = tomlrt.AoT([{"n": 9}])
-    assert tomlrt.dumps(doc) == "# top\n# block\n[[a]]\nn = 9\n[b]\nx=1\n"
+    assert tomlrt.dumps(doc) == td("""
+        # top
+        # block
+        [[a]]
+        n = 9
+        [b]
+        x=1
+        """)
 
 
 def test_replace_section_with_aot_preserves_leading_comments() -> None:
     """Cross-flavour replacement still preserves the prior header's
     leading: the slot is the same, only the body changes shape."""
-    src = "# block\n[a]\nx=1\n[b]\ny=2\n"
+    src = td("""
+        # block
+        [a]
+        x=1
+        [b]
+        y=2
+        """)
     doc = tomlrt.loads(src)
     doc["a"] = tomlrt.AoT([{"n": 1}])
-    assert tomlrt.dumps(doc) == "# block\n[[a]]\nn = 1\n[b]\ny=2\n"
+    assert tomlrt.dumps(doc) == td("""
+        # block
+        [[a]]
+        n = 1
+        [b]
+        y=2
+        """)
 
 
 def test_array_reverse_with_eol_comments_keeps_close_bracket_unindented() -> None:
@@ -1905,10 +2706,22 @@ def test_array_reverse_with_eol_comments_keeps_close_bracket_unindented() -> Non
     "indent-for-next-item" trivia onto the new last item, indenting the
     closing bracket. The shared trivia rewriter now strips that tail
     whenever the trailing slot carries a comment."""
-    src = "a = [\n  1, # one\n  2, # two\n  3, # three\n]\n"
+    src = td("""
+        a = [
+          1, # one
+          2, # two
+          3, # three
+        ]
+        """)
     doc = tomlrt.loads(src)
     doc["a"].reverse()
-    assert tomlrt.dumps(doc) == "a = [\n  3, # three\n  2, # two\n  1, # one\n]\n"
+    assert tomlrt.dumps(doc) == td("""
+        a = [
+          3, # three
+          2, # two
+          1, # one
+        ]
+        """)
     doc = tomlrt.loads(src)
     doc["a"].sort()
     assert tomlrt.dumps(doc) == src
@@ -1917,36 +2730,101 @@ def test_array_reverse_with_eol_comments_keeps_close_bracket_unindented() -> Non
 def test_array_reverse_with_leading_comments_follows_items() -> None:
     """Leading comments are anchored to their item, not their slot:
     reversing the array reverses the comments alongside the values."""
-    src = "a = [\n  # for 1\n  1,\n  # for 2\n  2,\n  # for 3\n  3,\n]\n"
+    src = td("""
+        a = [
+          # for 1
+          1,
+          # for 2
+          2,
+          # for 3
+          3,
+        ]
+        """)
     doc = tomlrt.loads(src)
     doc["a"].reverse()
-    expected = "a = [\n  # for 3\n  3,\n  # for 2\n  2,\n  # for 1\n  1,\n]\n"
+    expected = td("""
+        a = [
+          # for 3
+          3,
+          # for 2
+          2,
+          # for 1
+          1,
+        ]
+        """)
     assert tomlrt.dumps(doc) == expected
 
 
 def test_array_sort_with_leading_comments_follows_items() -> None:
-    src = "a = [\n  # for c\n  3,\n  # for a\n  1,\n  # for b\n  2,\n]\n"
+    src = td("""
+        a = [
+          # for c
+          3,
+          # for a
+          1,
+          # for b
+          2,
+        ]
+        """)
     doc = tomlrt.loads(src)
     doc["a"].sort()
-    expected = "a = [\n  # for a\n  1,\n  # for b\n  2,\n  # for c\n  3,\n]\n"
+    expected = td("""
+        a = [
+          # for a
+          1,
+          # for b
+          2,
+          # for c
+          3,
+        ]
+        """)
     assert tomlrt.dumps(doc) == expected
 
 
 def test_array_insert_zero_pushes_existing_leading_comment_to_new_position() -> None:
     """``insert(0, x)`` must not duplicate the leading-of-(formerly) item-0
     onto both the new item and its old (now position-1) item."""
-    src = "a = [\n  # above 1\n  1,\n  2,\n]\n"
+    src = td("""
+        a = [
+          # above 1
+          1,
+          2,
+        ]
+        """)
     doc = tomlrt.loads(src)
     doc["a"].insert(0, 99)
-    expected = "a = [\n  99,\n  # above 1\n  1,\n  2,\n]\n"
+    expected = td("""
+        a = [
+          99,
+          # above 1
+          1,
+          2,
+        ]
+        """)
     assert tomlrt.dumps(doc) == expected
 
 
 def test_array_pop_drops_the_popped_items_leading_comment() -> None:
-    src = "a = [\n  # for 1\n  1,\n  # for 2\n  2,\n  # for 3\n  3,\n]\n"
+    src = td("""
+        a = [
+          # for 1
+          1,
+          # for 2
+          2,
+          # for 3
+          3,
+        ]
+        """)
     doc = tomlrt.loads(src)
     doc["a"].pop(1)
-    expected = "a = [\n  # for 1\n  1,\n  # for 3\n  3,\n]\n"
+    expected = td("""
+        a = [
+          # for 1
+          1,
+          # for 3
+          3,
+        ]
+        """)
     assert tomlrt.dumps(doc) == expected
 
 
@@ -1955,7 +2833,13 @@ def test_leading_comments_view_does_not_bleed_eol_comment() -> None:
     ``items[i-1].post_comma_trivia``, which also holds item ``i-1``'s
     EOL comment. The reader used to consume the EOL line as part of the
     leading block, so users saw a phantom extra line."""
-    src = "a = [\n  1, # eol\n  # above 2\n  2,\n]\n"
+    src = td("""
+        a = [
+          1, # eol
+          # above 2
+          2,
+        ]
+        """)
     doc = tomlrt.loads(src)
     assert dict(doc["a"].leading_comments) == {1: ("above 2",)}
     assert dict(doc["a"].comments) == {0: "eol"}
@@ -1968,7 +2852,14 @@ def test_aot_clear_renders_empty_but_keeps_key() -> None:
     have no syntax in TOML. A subsequent re-parse will not see the
     key — that's an acceptable mutation-time cost; held references
     keep working as plain (now-empty) lists."""
-    doc = tomlrt.loads("[[a]]\nn=1\n[[a]]\nn=2\n")
+    doc = tomlrt.loads(
+        td("""
+        [[a]]
+        n=1
+        [[a]]
+        n=2
+        """)
+    )
     doc["a"].clear()
     assert "a" in doc
     assert len(doc["a"]) == 0
@@ -1976,7 +2867,13 @@ def test_aot_clear_renders_empty_but_keeps_key() -> None:
 
 
 def test_aot_pop_last_renders_empty_but_keeps_key() -> None:
-    doc = tomlrt.loads("x=0\n[[a]]\nn=1\n")
+    doc = tomlrt.loads(
+        td("""
+        x=0
+        [[a]]
+        n=1
+        """)
+    )
     doc["a"].pop()
     assert "a" in doc
     assert tomlrt.dumps(doc) == "x=0\n"
@@ -1987,18 +2884,44 @@ def test_replace_section_preserves_blank_before_next_section() -> None:
     line from the *next* section. The purge step normalised the doc's
     top-blank before the replacement was spliced in, which silently ate
     the inter-section separator carried on the next section's header."""
-    src = "[a]\nx=1\n\n# next section\n[b]\ny=2\n"
+    src = td("""
+        [a]
+        x=1
+
+        # next section
+        [b]
+        y=2
+        """)
     doc = tomlrt.loads(src)
     doc["a"] = tomlrt.Table.section({"new": 1})
-    assert tomlrt.dumps(doc) == "[a]\nnew = 1\n\n# next section\n[b]\ny=2\n"
+    assert tomlrt.dumps(doc) == td("""
+        [a]
+        new = 1
+
+        # next section
+        [b]
+        y=2
+        """)
 
 
 def test_replace_section_with_aot_preserves_blank_before_next_section() -> None:
     """Same shape for the section -> AoT replacement path."""
-    src = "[a]\nx=1\n\n[b]\ny=2\n"
+    src = td("""
+        [a]
+        x=1
+
+        [b]
+        y=2
+        """)
     doc = tomlrt.loads(src)
     doc["a"] = tomlrt.AoT([{"n": 99}])
-    assert tomlrt.dumps(doc) == "[[a]]\nn = 99\n\n[b]\ny=2\n"
+    assert tomlrt.dumps(doc) == td("""
+        [[a]]
+        n = 99
+
+        [b]
+        y=2
+        """)
 
 
 def test_replace_dotted_subtable_with_value_no_stray_top_blank() -> None:
@@ -2019,16 +2942,42 @@ def test_setting_eol_comment_does_not_double_indent_next_item() -> None:
     comment-setter then unconditionally seeded ``next_item.leading``
     with another indent run, so the next item rendered at double the
     original indent."""
-    doc = tomlrt.loads("arr = [\n  1,\n  2,\n  3,\n]\n")
+    doc = tomlrt.loads(
+        td("""
+        arr = [
+          1,
+          2,
+          3,
+        ]
+        """)
+    )
     doc["arr"].comments[0] = "z"
-    assert tomlrt.dumps(doc) == "arr = [\n  1, # z\n  2,\n  3,\n]\n"
+    assert tomlrt.dumps(doc) == td("""
+        arr = [
+          1, # z
+          2,
+          3,
+        ]
+        """)
 
 
 def test_setting_eol_comment_on_consecutive_items_keeps_indent() -> None:
-    doc = tomlrt.loads("arr = [\n  1,\n  2,\n]\n")
+    doc = tomlrt.loads(
+        td("""
+        arr = [
+          1,
+          2,
+        ]
+        """)
+    )
     doc["arr"].comments[0] = "zero"
     doc["arr"].comments[1] = "one"
-    assert tomlrt.dumps(doc) == "arr = [\n  1, # zero\n  2, # one\n]\n"
+    assert tomlrt.dumps(doc) == td("""
+        arr = [
+          1, # zero
+          2, # one
+        ]
+        """)
 
 
 def test_aot_pop_preserves_owned_sub_sections_in_orphan() -> None:
@@ -2042,12 +2991,27 @@ def test_aot_pop_preserves_owned_sub_sections_in_orphan() -> None:
     installing the popped entry elsewhere therefore silently lost
     every nested ``[a.sub]`` section.
     """
-    src = "[[a]]\nx = 1\n\n[a.sub]\ny = 2\n\n[[a]]\nx = 9\n"
+    src = td("""
+        [[a]]
+        x = 1
+
+        [a.sub]
+        y = 2
+
+        [[a]]
+        x = 9
+        """)
     doc = tomlrt.loads(src)
     popped = doc["a"].pop(0)
     new_doc = tomlrt.loads("")
     new_doc["a"] = popped
-    assert tomlrt.dumps(new_doc) == "[a]\nx = 1\n\n[a.sub]\ny = 2\n"
+    assert tomlrt.dumps(new_doc) == td("""
+        [a]
+        x = 1
+
+        [a.sub]
+        y = 2
+        """)
 
 
 def test_aot_clear_preserves_owned_sub_sections_in_cached_views() -> None:
@@ -2057,13 +3021,28 @@ def test_aot_clear_preserves_owned_sub_sections_in_cached_views() -> None:
     detach must run while the live doc still indexes the owned range,
     or the cached Table view loses its nested ``[a.sub]`` sections.
     """
-    src = "[[a]]\nx = 1\n\n[a.sub]\ny = 2\n\n[[a]]\nx = 9\n"
+    src = td("""
+        [[a]]
+        x = 1
+
+        [a.sub]
+        y = 2
+
+        [[a]]
+        x = 9
+        """)
     doc = tomlrt.loads(src)
     e0 = doc["a"][0]
     doc["a"].clear()
     new_doc = tomlrt.loads("")
     new_doc["a"] = e0
-    assert tomlrt.dumps(new_doc) == "[a]\nx = 1\n\n[a.sub]\ny = 2\n"
+    assert tomlrt.dumps(new_doc) == td("""
+        [a]
+        x = 1
+
+        [a.sub]
+        y = 2
+        """)
 
 
 def test_inline_table_rejects_section_table_value() -> None:
@@ -2077,7 +3056,14 @@ def test_inline_table_rejects_section_table_value() -> None:
     Reject all three uniformly so the inline / standard split stays
     on the producing side, never hidden in a quiet flatten.
     """
-    src = tomlrt.loads("[b]\nx = 1\n[b.sub]\ny = 2\n")
+    src = tomlrt.loads(
+        td("""
+        [b]
+        x = 1
+        [b.sub]
+        y = 2
+        """)
+    )
     nd = tomlrt.loads("")
     nd["a"] = {}
     with pytest.raises(tomlrt.TOMLError, match="inline-style table"):

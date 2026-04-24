@@ -14,25 +14,26 @@ import json
 import pytest
 
 import tomlrt
+from _toml_str import td
 from tomlrt import AoT, Table
 
 
 def _src() -> str:
-    return """\
-title = "demo"
+    return td("""
+        title = "demo"
 
-[tool]
-name = "x"
+        [tool]
+        name = "x"
 
-[tool.poetry]
-version = "0.1"
+        [tool.poetry]
+        version = "0.1"
 
-[[entries]]
-k = 1
+        [[entries]]
+        k = 1
 
-[[entries]]
-k = 2
-"""
+        [[entries]]
+        k = 2
+        """)
 
 
 def test_document_is_dict() -> None:
@@ -54,7 +55,14 @@ def test_dict_unpack_spread() -> None:
 
 
 def test_json_dumps_via_to_dict() -> None:
-    doc = tomlrt.parse('a = 1\nb = "two"\n[c]\nx = 3\n')
+    doc = tomlrt.parse(
+        td("""
+        a = 1
+        b = "two"
+        [c]
+        x = 3
+        """)
+    )
     # Direct json.dumps still needs to_dict for datetime-free trees,
     # but now the result of to_dict is interchangeable with a plain dict.
     assert json.loads(json.dumps(doc.to_dict())) == {"a": 1, "b": "two", "c": {"x": 3}}
@@ -183,7 +191,13 @@ def test_pop_default_when_missing() -> None:
 
 
 def test_popitem_lifo() -> None:
-    doc = tomlrt.parse("a = 1\nb = 2\nc = 3\n")
+    doc = tomlrt.parse(
+        td("""
+        a = 1
+        b = 2
+        c = 3
+        """)
+    )
     k, v = doc.popitem()
     assert (k, v) == ("c", 3)
 
@@ -252,7 +266,13 @@ def test_del_then_set_table_does_not_revive_held_ref() -> None:
 
 
 def test_table_equals_plain_dict_with_same_keys() -> None:
-    doc = tomlrt.parse("[a]\nx = 1\ny = 2\n")
+    doc = tomlrt.parse(
+        td("""
+        [a]
+        x = 1
+        y = 2
+        """)
+    )
     assert doc["a"] == {"x": 1, "y": 2}
 
 
@@ -281,7 +301,14 @@ def test_detached_set_table_does_not_revive_in_doc() -> None:
 
 
 def test_detached_aot_add_does_not_revive_in_doc() -> None:
-    doc = tomlrt.parse("[[entries]]\nk = 1\n[[entries]]\nk = 2\n")
+    doc = tomlrt.parse(
+        td("""
+        [[entries]]
+        k = 1
+        [[entries]]
+        k = 2
+        """)
+    )
     held = doc.aot("entries")
     del doc["entries"]
     held.add({"k": 999})

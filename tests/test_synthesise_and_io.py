@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 import tomlrt
+from _toml_str import td
 from tomlrt import Table
 
 if TYPE_CHECKING:
@@ -283,7 +284,12 @@ def test_assign_unsupported_type_raises() -> None:
 
 def test_assign_aot_over_scalar() -> None:
     src = tomlrt.parse(
-        "[[products]]\nname = 'a'\n[[products]]\nname = 'b'\n",
+        td("""
+            [[products]]
+            name = 'a'
+            [[products]]
+            name = 'b'
+            """),
     )
     dest = tomlrt.parse("dest = 0\n")
     dest["dest"] = src.aot("products")
@@ -396,7 +402,15 @@ def test_document_factory_with_data_does_not_share_mutable_state() -> None:
 
 def test_deepcopy_preserves_document_structure() -> None:
 
-    src = "[a]\nx = 1\n\n[[b]]\ny = 2\n[[b]]\ny = 3\n"
+    src = td("""
+        [a]
+        x = 1
+
+        [[b]]
+        y = 2
+        [[b]]
+        y = 3
+        """)
     doc1 = tomlrt.loads(src)
     doc2 = deepcopy(doc1)
     assert tomlrt.dumps(doc2) == src
@@ -425,7 +439,11 @@ def test_copy_yields_independent_document() -> None:
 
 def test_deepcopy_table_subview_is_independent_and_round_trips() -> None:
 
-    src = "[t]\nx = 1\ny = 2\n"
+    src = td("""
+        [t]
+        x = 1
+        y = 2
+        """)
     doc = tomlrt.loads(src)
     t = doc.table("t")
     t2 = deepcopy(t)
@@ -455,7 +473,12 @@ def test_deepcopy_array_subview_does_not_double_cst() -> None:
 
 def test_deepcopy_aot_subview_preserves_length() -> None:
 
-    src = "[[t]]\nx = 1\n[[t]]\nx = 2\n"
+    src = td("""
+        [[t]]
+        x = 1
+        [[t]]
+        x = 2
+        """)
     doc = tomlrt.loads(src)
     aot = doc.aot("t")
     aot2 = deepcopy(aot)
@@ -480,7 +503,12 @@ def test_copy_array_subview_does_not_double_cst() -> None:
 
 def test_copy_aot_subview_preserves_length() -> None:
 
-    src = "[[t]]\nx = 1\n[[t]]\nx = 2\n"
+    src = td("""
+        [[t]]
+        x = 1
+        [[t]]
+        x = 2
+        """)
     doc = tomlrt.loads(src)
     aot = doc.aot("t")
     aot2 = copy(aot)
@@ -489,7 +517,11 @@ def test_copy_aot_subview_preserves_length() -> None:
 
 def test_deepcopy_table_subview_supports_nested_mutation() -> None:
 
-    src = "[t]\n[t.inner]\nx = 1\n"
+    src = td("""
+        [t]
+        [t.inner]
+        x = 1
+        """)
     doc = tomlrt.loads(src)
     t = doc.table("t")
     t2 = deepcopy(t)
