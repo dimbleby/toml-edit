@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import operator
 import sys
-from collections.abc import Iterable, Iterator, Mapping, MutableMapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping
 from copy import deepcopy
 from datetime import date, datetime, time
 from types import MappingProxyType
@@ -3029,28 +3029,8 @@ class _StdTable(Table):
         parts: tuple[str, ...],
         value: AoT,
     ) -> AoT:
-        """Deep-clone an attached source AoT into ``parts``.
-
-        Used by both ``__setitem__`` (single-segment key) and
-        ``install`` (possibly dotted path). Cloned sections retain
-        their original inter-header trivia, so we let
-        ``_insert_section_block`` handle only the leading separation.
-
-        We snapshot the source CST *before* purging the destination slot
-        so same-document calls where ``parts`` overlaps ``value._path``
-        (e.g. ``doc.install("a", doc.aot("a.inner"))``) still work.
-        Mirrors the ordering of :meth:`_install_attached_table`.
-        """
-        full_path = (*self._path, *parts)
-        new_secs = _clone_aot_sections(value, full_path)
-        _full_path, insert_at, prior_leading = self._prepare_section_slot(parts)
-        _apply_prior_leading(new_secs, prior_leading)
-        _insert_section_block(
-            self._doc_node,
-            insert_at,
-            new_secs,
-            separate_within=False,
-        )
+        """Deep-clone an attached source AoT into ``parts``."""
+        full_path = self._splice_attached(parts, value, _clone_aot_sections)
         aot = AoT._attached_to(self._doc_node, full_path, [])  # noqa: SLF001
         aot._resync()  # noqa: SLF001
         self._install_at_path(parts, aot)
@@ -3114,19 +3094,31 @@ class _StdTable(Table):
     ) -> _StdTable:
         """Deep-clone an attached source ``_StdTable`` into ``parts``.
 
-        Mirrors :meth:`_install_attached_aot` for the table case: deep-clones
-        the source's contributing CST sections (and any ancestor-section
-        dotted KVs) and rewrites their headers to the target prefix, so all
-        comments, formatting, and per-value layout survive the move.
         Implicit super-tables in the source remain implicit in the target —
         no empty intermediate ``[a]`` / ``[a.b]`` headers are emitted.
+        """
+        full_path = self._splice_attached(parts, value, _clone_table_sections)
+        view = _StdTable(self._doc_node, full_path, owner_anchor=self._owner_anchor)
+        self._install_at_path(parts, view)
+        return view
 
-        We snapshot the source CST *before* purging the destination slot so
-        same-document assignments where ``parts`` overlaps ``value._path``
-        (e.g. ``doc["a"] = doc["a"]["b"]``) still work.
+    def _splice_attached(
+        self,
+        parts: tuple[str, ...],
+        value: _StdTable | AoT,
+        cloner: Callable[[Any, tuple[str, ...]], list[SectionNode]],
+    ) -> tuple[str, ...]:
+        """Common purge-and-splice for both attached-section installers.
+
+        Snapshots the source CST *before* purging the destination slot so
+        same-document calls where ``parts`` overlaps ``value._path``
+        (e.g. ``doc["a"] = doc["a"]["b"]``,
+        ``doc.install("a", doc.aot("a.inner"))``) still see their source.
+        Returns the absolute target path, ready for the caller to wrap
+        in a view.
         """
         full_path = (*self._path, *parts)
-        new_secs = _clone_table_sections(value, full_path)
+        new_secs = cloner(value, full_path)
         _full_path, insert_at, prior_leading = self._prepare_section_slot(parts)
         if new_secs:
             _apply_prior_leading(new_secs, prior_leading)
@@ -3136,9 +3128,7 @@ class _StdTable(Table):
                 new_secs,
                 separate_within=False,
             )
-        view = _StdTable(self._doc_node, full_path, owner_anchor=self._owner_anchor)
-        self._install_at_path(parts, view)
-        return view
+        return full_path
 
     def _install_at_path(self, parts: tuple[str, ...], obj: object) -> None:
         """Install ``obj`` at the leaf of ``parts``, materialising any
