@@ -93,10 +93,35 @@ def test_del_eol_comment_removes_it() -> None:
         del doc.comments["name"]
 
 
-def test_set_eol_comment_accepts_text_with_hash_prefix() -> None:
+def test_set_eol_comment_round_trips_text_with_hash_prefix() -> None:
+    # The API takes comment *content*, never the '#' marker. A user
+    # whose content genuinely starts with '#' (e.g. "#hashtag") gets
+    # exactly that back on read; the renderer prepends its own marker.
     doc = tomlrt.parse("a = 1\n")
     doc.comments["a"] = "## emphasised"
-    assert tomlrt.dumps(doc) == "a = 1 ## emphasised\n"
+    assert tomlrt.dumps(doc) == "a = 1 # ## emphasised\n"
+    assert doc.comments["a"] == "## emphasised"
+
+
+def test_comment_views_are_idempotent_under_self_assignment() -> None:
+    # A comment view's getter and setter must round-trip: writing back
+    # what we read must be a no-op for any present key. Previously the
+    # writer had a 'user already supplied the marker' branch that broke
+    # this for any comment whose content starts with '#'.
+    src = (
+        'a = 1  # plain\nb = 2  # "quoted"\nc = 3  # #hashtag\nd = 4  # ## emphasised\n'
+    )
+    doc = tomlrt.parse(src)
+    for key in ("a", "b", "c", "d"):
+        doc.comments[key] = doc.comments[key]
+    re = tomlrt.parse(tomlrt.dumps(doc))
+    assert dict(re.comments) == dict(doc.comments)
+    assert dict(doc.comments) == {
+        "a": "plain",
+        "b": '"quoted"',
+        "c": "#hashtag",
+        "d": "## emphasised",
+    }
 
 
 def test_set_eol_comment_rejects_newline() -> None:
@@ -613,13 +638,13 @@ def test_array_comments_out_of_range_raises() -> None:
         del arr.comments[5]
 
 
-def test_array_comment_with_hash_prefix_normalised() -> None:
+def test_array_comment_with_hash_prefix_round_trips() -> None:
     doc = tomlrt.parse("arr = [1, 2]\n")
     arr = doc.array("arr")
-    arr.comments[0] = "# already-prefixed"
+    arr.comments[0] = "#hashtag"
     re = tomlrt.parse(tomlrt.dumps(doc))
-    # We don't double-up the `#`.
-    assert dict(re.array("arr").comments) == {0: "already-prefixed"}
+    # Content that happens to start with '#' is preserved verbatim.
+    assert dict(re.array("arr").comments) == {0: "#hashtag"}
 
 
 def test_array_set_value_via_indexing_preserves_eol_comment() -> None:
