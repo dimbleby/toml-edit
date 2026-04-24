@@ -1029,10 +1029,38 @@ def _build_promoted_aot_section(
     return section
 
 
+def _clone_sections_rebased(
+    sections: Iterable[SectionNode],
+    src_path: tuple[str, ...],
+    full_path: tuple[str, ...],
+) -> list[SectionNode]:
+    """Deep-clone every header section under ``src_path``, rebasing the prefix.
+
+    Implicit pre-header sections (``header is None``) and headers
+    whose path doesn't extend ``src_path`` are skipped. Other sections
+    are deep-cloned with their key rebased: relative depth below
+    ``src_path`` is preserved, so ``[a.sub.deep]`` cloned at
+    ``("t",)`` becomes ``[t.sub.deep]``. Shared rebase primitive
+    behind :func:`_clone_aot_sections` and :func:`_clone_table_sections`.
+    """
+    splen = len(src_path)
+    out: list[SectionNode] = []
+    for sec in sections:
+        hdr = sec.header
+        if hdr is None or len(hdr.key.path) < splen or hdr.key.path[:splen] != src_path:
+            continue
+        cloned = deepcopy(sec)
+        assert cloned.header is not None
+        new_path = (*full_path, *hdr.key.path[splen:])
+        cloned.header.key = _make_dotted_key(new_path)
+        out.append(cloned)
+    return out
+
+
 def _clone_aot_sections(
     value: AoT,
     full_path: tuple[str, ...],
-) -> Iterator[SectionNode]:
+) -> list[SectionNode]:
     """Deep-clone every CST section that contributes to ``value``, rebased.
 
     Each AoT entry contributes its ``[[path]]`` header *and* any
@@ -1042,16 +1070,13 @@ def _clone_aot_sections(
     replaced by ``full_path``. Surrounding placement (insert index,
     blank-line policy, dict-storage sync) is the caller's job.
     """
-    src_path = value._path  # noqa: SLF001
-    splen = len(src_path)
-    for header in value._own_sections():  # noqa: SLF001
-        block = [header, *value._doc_node.aot_owned_range(header)]  # noqa: SLF001
-        for src_sec in block:
-            cloned = deepcopy(src_sec)
-            assert cloned.header is not None
-            new_path = (*full_path, *cloned.header.key.path[splen:])
-            cloned.header.key = _make_dotted_key(new_path)
-            yield cloned
+    doc_node = value._doc_node  # noqa: SLF001
+    blocks = (
+        [header, *doc_node.aot_owned_range(header)]
+        for header in value._own_sections()  # noqa: SLF001
+    )
+    sections = [sec for block in blocks for sec in block]
+    return _clone_sections_rebased(sections, value._path, full_path)  # noqa: SLF001
 
 
 def _new_host_section(path: tuple[str, ...]) -> SectionNode:
@@ -1099,28 +1124,22 @@ def _clone_table_sections(
     versa).
     """
     src_path = value._path  # noqa: SLF001
-    splen = len(src_path)
     fplen = len(full_path)
     doc = value._doc_node  # noqa: SLF001
 
     src_scope = value._scope()  # noqa: SLF001
     src_sections = src_scope if src_scope is not None else doc.sections
+    new_secs = _clone_sections_rebased(src_sections, src_path, full_path)
+    head = next(
+        (
+            s
+            for s in new_secs
+            if s.header is not None and len(s.header.key.path) == fplen
+        ),
+        None,
+    )
 
-    new_secs: list[SectionNode] = []
-    head: SectionNode | None = None  # cloned section whose header path == full_path
-    for sec in src_sections:
-        hdr = sec.header
-        if hdr is None or len(hdr.key.path) < splen or hdr.key.path[:splen] != src_path:
-            continue
-        cloned = deepcopy(sec)
-        assert cloned.header is not None
-        new_path = (*full_path, *hdr.key.path[splen:])
-        cloned.header.key = _make_dotted_key(new_path)
-        if head is None and len(new_path) == fplen:
-            head = cloned
-        new_secs.append(cloned)
-
-    if splen == 0:
+    if len(src_path) == 0:
         extras = [
             (kv.key.path, kv)
             for sec in doc.sections
@@ -3019,7 +3038,7 @@ class _StdTable(Table):
         ``_insert_section_block`` handle only the leading separation.
         """
         full_path, insert_at, prior_leading = self._prepare_section_slot(parts)
-        new_secs = list(_clone_aot_sections(value, full_path))
+        new_secs = _clone_aot_sections(value, full_path)
         _apply_prior_leading(new_secs, prior_leading)
         _insert_section_block(
             self._doc_node,
