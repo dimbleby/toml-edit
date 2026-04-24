@@ -577,6 +577,46 @@ def test_subsection_under_non_last_aot_entry_lands_in_owned_range() -> None:
     assert "source" not in parsed["package"][2]
 
 
+def test_section_subkey_across_aot_entries_keeps_values_separate() -> None:
+    """Setting the *same* sub-section key on multiple AoT entries does not
+    leak values across entries.
+
+    The freshly inserted ``[aot.k]`` view used to be created without an
+    ``owner_anchor``, so its scope spanned the whole document. When two
+    entries set the same sub-key, scalar writes through the second view
+    found the first entry's section as a "direct" hit and silently
+    overwrote it — corrupting earlier entries and leaving the later
+    [aot.k] section partly empty.
+    """
+    doc = tomlrt.document()
+    doc["package"] = AoT(
+        [{"n": "git1"}, {"n": "git2"}, {"n": "url1"}, {"n": "url2"}],
+    )
+    doc["package"][0]["source"] = Table.section(
+        {"type": "git", "url": "g1", "ref": "develop"},
+    )
+    doc["package"][1]["source"] = Table.section(
+        {"type": "git", "url": "g2", "subdir": "s"},
+    )
+    doc["package"][2]["source"] = Table.section({"type": "url", "url": "u1"})
+    doc["package"][3]["source"] = Table.section({"type": "url", "url": "u2"})
+
+    expected_sources = [
+        {"type": "git", "url": "g1", "ref": "develop"},
+        {"type": "git", "url": "g2", "subdir": "s"},
+        {"type": "url", "url": "u1"},
+        {"type": "url", "url": "u2"},
+    ]
+    for i, want in enumerate(expected_sources):
+        assert dict(doc["package"][i]["source"]) == want
+
+    # Round-trip parses the same way: each [package.source] stays
+    # attached to its own [[package]] entry.
+    parsed = tomlrt.parse(tomlrt.dumps(doc))
+    for i, want in enumerate(expected_sources):
+        assert dict(parsed["package"][i]["source"]) == want
+
+
 def test_del_after_emptying_descendant_succeeds() -> None:
     """A cached implicit-table view stays deletable after its only descendant
     is removed.

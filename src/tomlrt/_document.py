@@ -2718,7 +2718,11 @@ class _StdTable(Table):
         new_sec = _new_section(full_path)
         new_sec.synthesised_placeholder = True
         _insert_section_block(self._doc_node, insert_at, [new_sec])
-        view = _StdTable(self._doc_node, full_path)
+        # Inherit ``owner_anchor`` from the parent so a sub-section
+        # installed inside an AoT entry stays scoped to that entry —
+        # otherwise reads/writes through ``view`` see same-named
+        # sections in sibling entries and silently merge their values.
+        view = _StdTable(self._doc_node, full_path, owner_anchor=self._owner_anchor)
         self._install_at_path(parts, view)
         for k, v in value.items():
             view[k] = v
@@ -2782,7 +2786,7 @@ class _StdTable(Table):
                 new_secs,
                 separate_within=False,
             )
-        view = _StdTable(self._doc_node, full_path)
+        view = _StdTable(self._doc_node, full_path, owner_anchor=self._owner_anchor)
         self._install_at_path(parts, view)
         return view
 
