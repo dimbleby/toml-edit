@@ -18,22 +18,22 @@ help:
 
 .PHONY: test
 test:
-	$(UV) run pytest -q
+	pytest -q
 
 .PHONY: coverage
 coverage:
-	$(UV) run pytest --cov
+	pytest --cov
 
 .PHONY: lint
 lint: ruff mypy
 
 .PHONY: ruff
 ruff:
-	$(UV) run ruff check .
+	ruff check .
 
 .PHONY: mypy
 mypy:
-	$(UV) run mypy
+	mypy
 
 .PHONY: docs
 docs:
