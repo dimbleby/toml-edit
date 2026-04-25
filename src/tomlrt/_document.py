@@ -67,6 +67,7 @@ from tomlrt._section_build import (
     _make_dotted_key,
     _new_section,
     _parse_key_path,
+    _rebase_aot_sections_inplace,
     _section_insert_index,
 )
 from tomlrt._separator import (
@@ -1904,17 +1905,13 @@ class _StdTable(Table):
             self._install_section(parts, value)
             return True
         if isinstance(value, AoT):
-            # Unattached AoT (e.g. ``AoT([{...}])`` or freshly detached):
-            # re-path orphan sections from ``value._path`` to the
-            # destination, splice them into the live doc, and rehome
-            # the user's view so ``self[k] is value`` and later
-            # mutations on ``value`` flow through one consistent view.
-            # An already-attached source is deep-cloned (``_install_attached_aot``)
-            # so two slots never share CST sections.
-            if not value._attached:  # noqa: SLF001
-                self._install_unattached_aot(parts, value)
-            else:
-                self._install_attached_aot(parts, value)
+            # An unattached AoT (e.g. ``AoT([{...}])`` or freshly
+            # detached) live-attaches: its orphan section nodes
+            # migrate into the live doc with their headers rebased
+            # in place, and the user's ``value`` becomes the view at
+            # this slot. An already-attached source is deep-cloned so
+            # two slots never share CST sections.
+            self._install_aot(parts, value)
             return True
         if isinstance(value, _StdTable) and not (
             value._doc_node is self._doc_node  # noqa: SLF001
@@ -2016,64 +2013,36 @@ class _StdTable(Table):
             None,
         )
 
-    def _install_attached_aot(
-        self,
-        parts: tuple[str, ...],
-        value: AoT,
-    ) -> AoT:
-        """Deep-clone an attached source AoT into ``parts``."""
-        full_path = self._splice_attached(parts, value, _clone_aot_sections)
-        aot = AoT._attached_to(self._doc_node, full_path, [])  # noqa: SLF001
-        aot._resync()  # noqa: SLF001
-        self._install_at_path(parts, aot)
-        return aot
-
-    def _install_unattached_aot(
+    def _install_aot(
         self,
         parts: tuple[str, ...],
         value: AoT,
     ) -> None:
-        """Live-attach an unattached AoT at ``parts``.
+        """Install ``value`` (attached or unattached) at ``parts``.
 
-        Rebases each orphan section's header path from ``value._path``
-        (typically ``("_",)``) to ``self._path + parts`` *in place*,
-        splices the sections into ``self._doc_node``, and re-homes
-        ``value`` and its entry views onto the live document. The
-        user's ``value`` reference becomes the live view at the
-        destination.
+        Attached source: deep-clone and splice; the destination gets a
+        fresh view, the source is unchanged.
+
+        Unattached source: rebase the source's section nodes in place
+        and splice them into the live document, then rehome the user's
+        ``value`` so it *is* the live view at the destination.
+
+        The two paths share the slot-prep / blank-line-policy / splice
+        mechanics in :meth:`_splice_attached`; only the source-section
+        provider and the post-splice "wire up the view" step diverge.
         """
-        full_path = (*self._path, *parts)
-        src_path = value._path  # noqa: SLF001
-        splen = len(src_path)
-        sections = list(value._doc_node.sections)  # noqa: SLF001
-        for sec in sections:
-            hdr = sec.header
-            if (
-                hdr is None
-                or len(hdr.key.path) < splen
-                or hdr.key.path[:splen] != src_path
-            ):
-                continue
-            new_path = (*full_path, *hdr.key.path[splen:])
-            hdr.key = _make_dotted_key(new_path)
-        _full_path, insert_at, prior_leading = self._prepare_section_slot(parts)
-        if sections:
-            _apply_prior_leading(sections, prior_leading)
-            _insert_section_block(
-                self._doc_node,
-                insert_at,
-                sections,
-                separate_within=False,
-            )
-        value._doc_node = self._doc_node  # noqa: SLF001
-        value._path = full_path  # noqa: SLF001
-        value._attached = True  # noqa: SLF001
-        for entry in value:
-            if isinstance(entry, _StdTable):
-                entry._doc_node = self._doc_node  # noqa: SLF001
-                entry._path = full_path  # noqa: SLF001
-        value._resync()  # noqa: SLF001
-        self._install_at_path(parts, value)
+        was_attached = value._attached  # noqa: SLF001
+        sources = _clone_aot_sections if was_attached else _rebase_aot_sections_inplace
+        full_path = self._splice_attached(parts, value, sources)
+        if was_attached:
+            view: AoT = AoT._attached_to(self._doc_node, full_path, [])  # noqa: SLF001
+        else:
+            value._doc_node = self._doc_node  # noqa: SLF001
+            value._path = full_path  # noqa: SLF001
+            value._attached = True  # noqa: SLF001
+            view = value
+        view._resync()  # rehomes cached entries  # noqa: SLF001
+        self._install_at_path(parts, view)
 
     @override
     def _install_section(
@@ -2811,7 +2780,7 @@ class AoT(list[Table]):
 
     def _resync(self) -> None:
         # Preserve identity for entries whose anchor section is unchanged.
-        existing: dict[int, Table] = {}
+        existing: dict[int, _StdTable] = {}
         for entry in self:
             if isinstance(entry, _StdTable) and entry._anchor is not None:  # noqa: SLF001
                 existing[id(entry._anchor)] = entry  # noqa: SLF001
@@ -2821,6 +2790,11 @@ class AoT(list[Table]):
         for s in own:
             cached = existing.get(id(s))
             if cached is not None:
+                # A cached entry is, by construction, an entry of *this*
+                # AoT, so it shares our home. Reconcile in case the AoT
+                # was just rehomed (e.g. live-attached into a document).
+                cached._doc_node = self._doc_node  # noqa: SLF001
+                cached._path = self._path  # noqa: SLF001
                 kept.add(id(cached))
                 new_entries.append(cached)
             else:
