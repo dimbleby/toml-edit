@@ -392,6 +392,76 @@ def _apply_separator_style(
                 _strip_trailing_indent(item.trailing)
 
 
+def _apply_separator_after_append(
+    container: ArrayNode | InlineTableNode,
+    style: _SeparatorStyle,
+    n_added: int = 1,
+) -> None:
+    """Incremental separator update after appending ``n_added`` items.
+
+    Cheaper than :func:`_apply_separator_style` for the common bulk-
+    append case: only the previously-last item (now interior) and the
+    newly appended items need touching, leaving the rest untouched.
+    """
+    items: Sequence[_Separated] = (
+        container.items if isinstance(container, ArrayNode) else container.entries
+    )
+    n = len(items)
+    if n == n_added:
+        # Container was empty before: defer to the bulk path which
+        # owns the open_pad / trailing-comma corner cases.
+        _apply_separator_style(container, style)
+        return
+
+    inter_render = style.inter_separator.render()
+    inter_indent = _indent_after_last_newline(style.inter_separator)
+
+    # The previously-last item must now look like an interior item. The
+    # logic mirrors the per-interior-item branch in
+    # :func:`_apply_separator_style` so user comments lodged in
+    # ``trailing`` / ``post_comma_trivia`` are preserved.
+    prev_tail = items[n - n_added - 1]
+    if not prev_tail.has_comma:
+        eol = _extract_eol_comment(prev_tail.trailing)
+        prev_tail.trailing = Trivia()
+        prev_tail.has_comma = True
+        prev_tail.post_comma_trivia = _clone_trivia(style.inter_separator)
+        if eol is not None:
+            _replace_eol_comment(
+                prev_tail.post_comma_trivia,
+                eol,
+                force_newline=True,
+            )
+    elif _is_pure_whitespace(prev_tail.post_comma_trivia):
+        if prev_tail.post_comma_trivia.render() != inter_render:
+            prev_tail.post_comma_trivia = _clone_trivia(style.inter_separator)
+    else:
+        _ensure_trailing_indent(prev_tail.post_comma_trivia, inter_indent)
+    if _is_pure_whitespace(prev_tail.trailing) and prev_tail.trailing.pieces:
+        prev_tail.trailing = Trivia()
+
+    # Newly appended items at indices [n - n_added .. n - 2] are interior.
+    for i in range(n - n_added, n - 1):
+        item = items[i]
+        item.leading = Trivia()
+        item.has_comma = True
+        item.post_comma_trivia = _clone_trivia(style.inter_separator)
+        item.trailing = Trivia()
+
+    # The genuinely new tail item gets the close-pad / trailing-comma
+    # treatment.
+    new_tail = items[-1]
+    new_tail.leading = Trivia()
+    if style.trailing_comma:
+        new_tail.has_comma = True
+        new_tail.post_comma_trivia = _clone_trivia(style.close_pad)
+        new_tail.trailing = Trivia()
+    else:
+        new_tail.has_comma = False
+        new_tail.post_comma_trivia = Trivia()
+        new_tail.trailing = _clone_trivia(style.close_pad)
+
+
 def _array_indent(arr: ArrayNode) -> str:
     """Best-guess per-item indent for inserting comment lines."""
     for item in arr.items:

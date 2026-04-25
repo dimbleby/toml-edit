@@ -72,6 +72,7 @@ from tomlrt._section_build import (
     _section_insert_index,
 )
 from tomlrt._separator import (
+    _apply_separator_after_append,
     _apply_separator_style,
     _sample_separator_style,
     _SeparatorStyle,
@@ -2458,14 +2459,16 @@ class Array(list[Any]):
     def append(self, value: object) -> None:
         new_item = self._make_item(value, with_comma=False)
         self._node.items.append(new_item)
-        self._rebuild_separators()
+        _apply_separator_after_append(self._node, self._style)
         list.append(self, _value_for(new_item.value))
 
     @override
     def extend(self, values: Iterable[object]) -> None:
         new_items = [self._make_item(v, with_comma=False) for v in list(values)]
+        if not new_items:
+            return
         self._node.items.extend(new_items)
-        self._rebuild_separators()
+        _apply_separator_after_append(self._node, self._style, len(new_items))
         list.extend(self, [_value_for(it.value) for it in new_items])
 
     @override
