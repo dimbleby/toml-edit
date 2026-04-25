@@ -921,6 +921,45 @@ def test_subsection_under_non_last_aot_entry_lands_in_owned_range() -> None:
     assert "source" not in parsed["package"][2]
 
 
+def test_aot_constructor_preserves_nested_section_specs() -> None:
+    """``AoT([Table.section({..., k: Table.section({...})})])`` must
+    install the nested section as ``[path.k]`` under the entry, not
+    silently inline it via the synthesiser."""
+    doc = tomlrt.document()
+    doc["package"] = AoT(
+        [
+            Table.section(
+                {"name": "A", "dependencies": Table.section({"b": "*"})},
+            ),
+            Table.section(
+                {"name": "B", "dependencies": Table.section({"c": "*"})},
+            ),
+        ],
+    )
+    rendered = tomlrt.dumps(doc)
+    expected = (
+        '[[package]]\nname = "A"\n\n'
+        '[package.dependencies]\nb = "*"\n\n'
+        '[[package]]\nname = "B"\n\n'
+        '[package.dependencies]\nc = "*"\n'
+    )
+    assert rendered == expected
+    assert tomlrt.loads(rendered).render() == rendered
+
+
+def test_aot_constructor_preserves_nested_aot() -> None:
+    doc = tomlrt.document()
+    doc["pkg"] = AoT(
+        [
+            Table.section({"name": "A", "tags": AoT([{"k": 1}, {"k": 2}])}),
+        ],
+    )
+    rendered = tomlrt.dumps(doc)
+    assert "tags = [" not in rendered
+    assert rendered.count("[[pkg.tags]]") == 2
+    assert tomlrt.loads(rendered).render() == rendered
+
+
 def test_ior_on_subscripted_table_preserves_position() -> None:
     """``doc[k] |= other`` keeps ``[k]``'s position in the document.
 
