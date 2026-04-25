@@ -2959,31 +2959,14 @@ class AoT(list[Table]):
             self._append_entry(value)
             return
         own = self._own_sections()
-        sections = self._doc_node.sections
-        insert_idx = sections.index(own[py_index])
-        new_block = self._build_entry_block(value)
-        new_sec = new_block[0]
+        insert_idx = self._doc_node.sections.index(own[py_index])
         # Mirror the user's spacing if there's a sibling gap to read;
         # otherwise default to blank-separated (canonical TOML style).
         add_blank = _first_gap_is_blank(self._sibling_leadings(), default=True)
-        preceding_has_content = any(
-            s.header is not None or s.entries for s in sections[:insert_idx]
-        )
-        assert new_sec.header is not None
-        if preceding_has_content and add_blank:
-            _prepend_blank_line(new_sec.header.leading)
-        # Symmetric: when inserting before existing content, ensure the
-        # next section's header carries a blank-line separator from the
-        # new one so two ``[[..]]`` headers don't render glued together.
-        if add_blank:
-            next_hdr = sections[insert_idx].header
-            if next_hdr is not None:
-                _prepend_blank_line(next_hdr.leading)
-        self._doc_node.adopt_preamble_into(new_sec.header.leading)
-        sections[insert_idx:insert_idx] = new_block
-        if not isinstance(value, _StdTable):
-            assert isinstance(value, Mapping)
-            self._populate_via_view(new_sec, value)
+        # Inserting between existing entries of the same series: bump
+        # the now-following entry too so two ``[[..]]`` headers don't
+        # render glued together.
+        self._splice_entry(insert_idx, value, add_blank=add_blank, bump_next=add_blank)
         self._resync()
 
     def _entry_anchor(self, i: int) -> SectionNode:
@@ -3026,6 +3009,44 @@ class AoT(list[Table]):
                 return new_block
         return [self._make_header_section()]
 
+    def _splice_entry(
+        self,
+        insert_idx: int,
+        value: Table | Mapping[str, object],
+        *,
+        add_blank: bool,
+        bump_next: bool = False,
+    ) -> SectionNode:
+        """Build the entry block and splice it in at ``insert_idx``.
+
+        Shared spine of ``_insert_at`` and ``_append_entry``: builds
+        the ``[[path]]`` block, delegates the splice (with its
+        blank-line policy) to ``_insert_section_block``, and
+        materialises any plain-Mapping value through the new view.
+        Returns the anchor section so callers can hook the new entry
+        into ``self``.
+
+        Pass ``bump_next=True`` when inserting between existing AoT
+        entries, so two ``[[..]]`` headers don't render glued
+        together.  Append-at-end and append-after-last-entry-block
+        leave it ``False``: any section that follows the new block is
+        unrelated content, and its authored leading is the user's
+        choice.
+        """
+        new_block = self._build_entry_block(value)
+        new_sec = new_block[0]
+        _insert_section_block(
+            self._doc_node,
+            insert_idx,
+            new_block,
+            add_blank=add_blank,
+            bump_next=bump_next,
+        )
+        if not isinstance(value, _StdTable):
+            assert isinstance(value, Mapping)
+            self._populate_via_view(new_sec, value)
+        return new_sec
+
     def _append_entry(self, value: Table | Mapping[str, object]) -> None:
         """Append a new entry without rebuilding the entry list.
 
@@ -3051,19 +3072,7 @@ class AoT(list[Table]):
             # Sample the first sibling gap to mirror the user's style;
             # default to blank-separated when there's no gap to read.
             add_blank = _first_gap_is_blank(self._sibling_leadings(), default=True)
-        new_block = self._build_entry_block(value)
-        new_sec = new_block[0]
-        assert new_sec.header is not None
-        preceding_has_content = any(
-            s.header is not None or s.entries for s in sections[:insert_idx]
-        )
-        if preceding_has_content and add_blank:
-            _prepend_blank_line(new_sec.header.leading)
-        self._doc_node.adopt_preamble_into(new_sec.header.leading)
-        sections[insert_idx:insert_idx] = new_block
-        if not isinstance(value, _StdTable):
-            assert isinstance(value, Mapping)
-            self._populate_via_view(new_sec, value)
+        new_sec = self._splice_entry(insert_idx, value, add_blank=add_blank)
         list.append(
             self,
             _StdTable(self._doc_node, self._path, anchor=new_sec),
