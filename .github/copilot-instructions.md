@@ -48,8 +48,11 @@ must pass before any commit. CI runs the same set on Python 3.10–3.14.
   per-line `# noqa` without a strong reason.
 - **`ruff format`** is the source of truth for formatting. Run it
   before committing.
-- **No runtime dependencies.** The project is and will remain pure
-  stdlib. Only `dependency-groups.dev` may grow, and only with care.
+- **No runtime dependencies beyond conditional stdlib backports.**
+  The only declared runtime dep is `typing_extensions` on
+  Python < 3.12 (for `Self` / `override`), behind a `python_version`
+  marker. Don't add others. `dependency-groups.dev` and
+  `dependency-groups.docs` may grow, but only with care.
 - **No `cast()` in user-facing code paths.** Tests should not need
   `cast()` either; the typed accessors `Table.array(k)`,
   `Table.table(k)`, `Table.aot(k)`, `Array.array(i)`, `Array.table(i)`
@@ -122,14 +125,33 @@ usually right; a change that has to touch all of them is usually wrong.
   break round-tripping, this will usually catch it; add new strategies
   here when you add a new construct.
 - `tests/test_mutation.py` — the dict/list mutation API.
+- `tests/test_live_attach.py` — live-attach semantics for
+  `Table.inline`, `Array`, and `AoT` when assigned into a document.
 - `tests/test_synthesise_and_io.py` — value synthesis and binary I/O.
 
 When adding behaviour, add a focused unit test in the relevant file
 **and** consider whether the property tests should grow.
 
+## Documentation
+
+User-facing prose docs live under `docs/` and are published as a
+MkDocs site at <https://dimbleby.github.io/tomlrt/>. The dependency
+group is `docs`:
+
+```bash
+uv run --group docs mkdocs serve              # preview locally
+uv run --group docs mkdocs build --strict     # what CI runs
+```
+
+The API reference page (`docs/api.md`) is generated from docstrings
+via `mkdocstrings`, so docstring changes flow through automatically.
+The task-oriented pages (`quickstart.md`, `building.md`, `editing.md`,
+`access.md`, `comments.md`, `errors.md`) are hand-written — update
+them when you add, rename, or change behaviour of any public API.
+
 ## Things to avoid
 
-- Adding a runtime dependency.
+- Adding an unconditional runtime dependency.
 - Reaching into `_nodes` from user-facing code instead of going through
   `_document`.
 - "Fixing" formatting differences in the writer's output without
