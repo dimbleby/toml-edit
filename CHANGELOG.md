@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `AoT.sort()` now requires the `key=` argument, since `Table` entries
   are not orderable.
 
+### Removed
+
+- The legacy `SectionSpec` tag type.
+
 ### Fixed
 
 - `Table.inline()` now renders with spaced braces (`{ k = v }`),

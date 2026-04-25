@@ -1168,7 +1168,7 @@ def test_replacing_value_detaches_old_view_for_all_setters() -> None:
     the document under its old path. ``Document.install`` skipped the
     detach entirely. Both now detach before installing.
     """
-    # __setitem__ with a SectionSpec
+    # __setitem__ with a Table.section
     doc = tomlrt.loads("[a]\nx = 1\n")
     old = doc["a"]
     doc["a"] = Table.section({"z": 99})
@@ -3115,7 +3115,7 @@ def test_aot_clear_preserves_owned_sub_sections_in_cached_views() -> None:
 
 
 def test_inline_table_rejects_section_table_value() -> None:
-    """Foreign section-Table into an inline-table key raises like SectionSpec/AoT.
+    """Foreign section-Table into an inline-table key raises like AoT.
 
     The three flavour-bearing "give me a [section] here" requests
     (``Table.section({})``, ``AoT(...)``, an attached section-backed

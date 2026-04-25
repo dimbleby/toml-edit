@@ -17,7 +17,6 @@ The complete public surface, generated from the docstrings in the source.
 ::: tomlrt.Table
 ::: tomlrt.Array
 ::: tomlrt.AoT
-::: tomlrt.SectionSpec
 
 ## Type aliases
 
