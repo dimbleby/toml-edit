@@ -120,6 +120,26 @@ def _build_promoted_aot_section(
     return section
 
 
+def _iter_rebased(
+    sections: Iterable[SectionNode],
+    src_path: tuple[str, ...],
+    full_path: tuple[str, ...],
+) -> Iterable[tuple[SectionNode, tuple[str, ...]]]:
+    """Yield ``(sec, new_path)`` for every section whose header path is
+    rooted at ``src_path``, with ``new_path`` rebased onto ``full_path``.
+
+    Skips implicit (header-less) sections and sections whose key falls
+    outside ``src_path``. The clone-and-rebase and rebase-in-place
+    helpers consume this in one shape so they cannot drift apart.
+    """
+    splen = len(src_path)
+    for sec in sections:
+        hdr = sec.header
+        if hdr is None or len(hdr.key.path) < splen or hdr.key.path[:splen] != src_path:
+            continue
+        yield sec, (*full_path, *hdr.key.path[splen:])
+
+
 def _clone_sections_rebased(
     sections: Iterable[SectionNode],
     src_path: tuple[str, ...],
@@ -134,15 +154,10 @@ def _clone_sections_rebased(
     ``("t",)`` becomes ``[t.sub.deep]``. Shared rebase primitive
     behind :func:`_clone_aot_sections` and :func:`_clone_table_sections`.
     """
-    splen = len(src_path)
     out: list[SectionNode] = []
-    for sec in sections:
-        hdr = sec.header
-        if hdr is None or len(hdr.key.path) < splen or hdr.key.path[:splen] != src_path:
-            continue
+    for sec, new_path in _iter_rebased(sections, src_path, full_path):
         cloned = deepcopy(sec)
         assert cloned.header is not None
-        new_path = (*full_path, *hdr.key.path[splen:])
         cloned.header.key = _make_dotted_key(new_path)
         out.append(cloned)
     return out
@@ -174,21 +189,17 @@ def _rebase_aot_sections_inplace(
     Used when live-attaching an unattached AoT: the orphan section
     nodes themselves migrate into the destination document, so we
     rewrite their header paths in place rather than producing
-    independent copies. Returns the same sections, ready to splice.
+    independent copies. Only sections rooted at ``value._path`` are
+    returned (matching the clone path's filter), so the two helpers
+    are interchangeable shapes.
     """
     sections = _aot_owned_sections(value)
-    splen = len(value._path)  # noqa: SLF001
-    for sec in sections:
-        hdr = sec.header
-        if (
-            hdr is None
-            or len(hdr.key.path) < splen
-            or hdr.key.path[:splen] != value._path  # noqa: SLF001
-        ):
-            continue
-        new_path = (*full_path, *hdr.key.path[splen:])
-        hdr.key = _make_dotted_key(new_path)
-    return sections
+    out: list[SectionNode] = []
+    for sec, new_path in _iter_rebased(sections, value._path, full_path):  # noqa: SLF001
+        assert sec.header is not None
+        sec.header.key = _make_dotted_key(new_path)
+        out.append(sec)
+    return out
 
 
 def _aot_owned_sections(value: AoT) -> list[SectionNode]:
