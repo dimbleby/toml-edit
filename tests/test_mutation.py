@@ -169,18 +169,21 @@ def test_inline_table_delete_last_clears_trailing_comma() -> None:
     assert _reparses(out) == {"obj": {"a": 1}}
 
 
-def test_inline_table_accepts_standalone_array_as_plain_list() -> None:
-    # Standalone Array assigned into an inline table is installed as a
-    # plain list value; the multiline layout request is dropped, since
-    # inline tables cannot contain multi-line arrays.
+def test_inline_table_accepts_standalone_array_with_live_attach() -> None:
+    # Standalone Array assigned into an inline table attaches live:
+    # the user's reference is the value at the assignment site, and
+    # the requested multiline layout is preserved (TOML 1.1 admits
+    # multi-line arrays inside inline tables).
     src = "obj = { a = 1 }\n"
     doc = tomlrt.parse(src)
     obj = doc["obj"]
     assert isinstance(obj, tomlrt.Table)
-    obj["xs"] = Array([1, 2, 3], multiline=True)
+    arr = Array([1, 2, 3], multiline=True)
+    obj["xs"] = arr
+    assert obj["xs"] is arr
+    arr.append(4)
     out = tomlrt.dumps(doc)
-    assert _reparses(out) == {"obj": {"a": 1, "xs": [1, 2, 3]}}
-    assert "\n" not in out.rstrip("\n")
+    assert _reparses(out) == {"obj": {"a": 1, "xs": [1, 2, 3, 4]}}
 
 
 def test_inline_table_rejects_section_spec() -> None:

@@ -22,7 +22,7 @@ else:
 import pytest
 
 import tomlrt
-from tomlrt import Table
+from tomlrt import Array, Table
 
 
 def _reparses(src: str) -> dict[str, Any]:
@@ -210,3 +210,128 @@ def test_reassign_after_detach_attaches_again() -> None:
 def test_inline_factory_rejects_non_string_keys() -> None:
     with pytest.raises(TypeError):
         Table.inline({1: "no"})  # type: ignore[dict-item]
+
+
+# ---------------------------------------------------------------------------
+# Array live attach
+# ---------------------------------------------------------------------------
+
+
+def test_array_factory_returns_array_view() -> None:
+    arr = Array([1, 2, 3])
+    assert isinstance(arr, list)
+    assert list(arr) == [1, 2, 3]
+
+
+def test_array_mutation_after_assignment_visible_in_document() -> None:
+    doc = tomlrt.parse("")
+    arr = Array([1, 2, 3])
+    doc["xs"] = arr
+    arr.append(4)
+    arr[0] = 99
+    assert _reparses(tomlrt.dumps(doc)) == {"xs": [99, 2, 3, 4]}
+
+
+def test_assigned_array_is_user_reference() -> None:
+    doc = tomlrt.parse("")
+    arr = Array([1, 2, 3])
+    doc["xs"] = arr
+    assert doc["xs"] is arr
+
+
+def test_incremental_array_population_then_assign_then_more() -> None:
+    doc = tomlrt.parse("")
+    arr = Array()
+    arr.append(1)
+    arr.append(2)
+    doc["xs"] = arr
+    arr.extend([3, 4])
+    assert _reparses(tomlrt.dumps(doc)) == {"xs": [1, 2, 3, 4]}
+
+
+def test_mutation_through_doc_visible_on_user_reference_array() -> None:
+    doc = tomlrt.parse("")
+    arr = Array([1, 2])
+    doc["xs"] = arr
+    doc["xs"].append(3)
+    assert list(arr) == [1, 2, 3]
+
+
+def test_array_double_assign_clones_second_slot() -> None:
+    doc = tomlrt.parse("")
+    arr = Array([1, 2])
+    doc["p"] = arr
+    doc["q"] = arr
+    assert doc["p"] is arr
+    assert doc["q"] is not arr
+    arr.append(99)
+    parsed = _reparses(tomlrt.dumps(doc))
+    assert parsed == {"p": [1, 2, 99], "q": [1, 2]}
+
+
+def test_array_cross_document_assignment_clones() -> None:
+    d1 = tomlrt.parse("")
+    d2 = tomlrt.parse("")
+    arr = Array([1, 2, 3])
+    d1["xs"] = arr
+    d2["xs"] = d1["xs"]
+    assert d2["xs"] is not d1["xs"]
+    d1["xs"].append(99)
+    assert _reparses(tomlrt.dumps(d1)) == {"xs": [1, 2, 3, 99]}
+    assert _reparses(tomlrt.dumps(d2)) == {"xs": [1, 2, 3]}
+
+
+def test_array_multiline_layout_preserved_through_live_attach() -> None:
+    doc = tomlrt.parse("")
+    arr = Array([1, 2, 3], multiline=True)
+    doc["xs"] = arr
+    assert doc["xs"] is arr
+    out = tomlrt.dumps(doc)
+    # Multiline format: items each on their own line.
+    assert "\n    1" in out
+    assert "\n    2" in out
+
+
+def test_plain_list_assignment_is_snapshot() -> None:
+    doc = tomlrt.parse("")
+    plain = [1, 2, 3]
+    doc["xs"] = plain
+    plain.append(99)
+    assert _reparses(tomlrt.dumps(doc))["xs"] == [1, 2, 3]
+
+
+def test_detached_array_still_writable() -> None:
+    doc = tomlrt.parse("")
+    arr = Array([1, 2])
+    doc["xs"] = arr
+    doc["xs"] = Array([10, 20])  # arr is now detached
+    arr.append(3)
+    assert list(arr) == [1, 2, 3]
+    assert _reparses(tomlrt.dumps(doc))["xs"] == [10, 20]
+
+
+def test_reassign_array_after_detach_attaches_again() -> None:
+    doc = tomlrt.parse("")
+    arr = Array([1, 2])
+    doc["xs"] = arr
+    doc["xs"] = Array([99])
+    doc["ys"] = arr  # arr is detached, so re-attaches live here
+    assert doc["ys"] is arr
+    arr.append(3)
+    assert _reparses(tomlrt.dumps(doc))["ys"] == [1, 2, 3]
+
+
+# ---------------------------------------------------------------------------
+# Mixed: Array inside an inline table, both live-attached
+# ---------------------------------------------------------------------------
+
+
+def test_array_inside_inline_table_both_live() -> None:
+    doc = tomlrt.parse("")
+    arr = Array([1, 2])
+    inline = Table.inline({"xs": arr})
+    doc["t"] = inline
+    inline["k"] = "added"
+    arr.append(3)
+    parsed = _reparses(tomlrt.dumps(doc))
+    assert parsed == {"t": {"xs": [1, 2, 3], "k": "added"}}
