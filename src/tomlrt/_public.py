@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import IO
+from typing import IO, Any
 
 from tomlrt._document import Document, Table
 from tomlrt._nodes import DocumentNode
 from tomlrt._parser import parse as _parse_to_cst
 
 
-def _populate(table: Table, data: Mapping[str, object]) -> None:
+def _populate(table: Table, data: Mapping[str, Any]) -> None:
     """Recursively pour ``data`` into ``table`` using section/AoT shapes
     for nested mappings and lists-of-mappings, scalars for leaves."""
     from tomlrt._document import AoT  # noqa: PLC0415
@@ -32,7 +32,7 @@ def _populate(table: Table, data: Mapping[str, object]) -> None:
             table[key] = value
 
 
-def document(data: Mapping[str, object] | None = None) -> Document:
+def document(data: Mapping[str, Any] | None = None) -> Document:
     """Return a fresh [`Document`][tomlrt.Document], optionally populated from ``data``.
 
     Without arguments, returns an empty document — equivalent to

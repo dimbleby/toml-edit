@@ -10,7 +10,7 @@ view layer in `tomlrt._document`.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from tomlrt._nodes import ArrayNode, NewlineNode, Trivia, WhitespaceNode
 from tomlrt._trivia import (
@@ -29,7 +29,7 @@ from tomlrt._trivia import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from tomlrt._nodes import InlineTableNode
+    from tomlrt._nodes import InlineTableNode, TriviaPiece
 
 
 class _SeparatorStyle:
@@ -239,7 +239,7 @@ def _sample_separator_style(
         for it in items[:-1]:
             if it.has_comma and "\n" in it.post_comma_trivia.render():
                 indent = _indent_after_last_newline(it.post_comma_trivia)
-                pieces: list[Any] = [NewlineNode("\n")]
+                pieces: list[TriviaPiece] = [NewlineNode("\n")]
                 if indent:
                     pieces.append(WhitespaceNode(indent))
                 sep = Trivia(pieces)

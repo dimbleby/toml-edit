@@ -108,6 +108,8 @@ from tomlrt._trivia import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, MutableMapping, Sequence
 
+    from _typeshed import SupportsKeysAndGetItem, SupportsRichComparison
+
     from tomlrt._nodes import (
         TableHeaderNode,
     )
@@ -125,7 +127,23 @@ if TYPE_CHECKING:
 
 
 Scalar: TypeAlias = str | int | float | bool | datetime | date | time
+
 TomlValue: TypeAlias = "Scalar | Array | AoT | Table"
+
+# The nested ``list``/``Mapping`` arms intentionally use ``Any`` for
+# elements: tightening to a recursive alias would trip over Python's
+# invariant container generics (a ``list[int]`` is not assignable to
+# ``list[TomlInput]``). Element validity is enforced at runtime by
+# ``value_to_node``.
+TomlInput: TypeAlias = "Scalar | Array | AoT | Table | Mapping[str, Any] | list[Any]"
+"""What you can pass *in* to mutators and factories: any
+[`Table`][tomlrt.Table], [`Array`][tomlrt.Array], or
+[`AoT`][tomlrt.AoT], any TOML scalar (`str`, `int`, `float`, `bool`,
+`datetime`, `date`, `time`), or any plain `Mapping[str, Any]` /
+`list[Any]` — the latter two become an inline table/section or
+inline array respectively."""
+
+_TableOrAoT = TypeVar("_TableOrAoT", "_StdTable", "AoT")
 
 _MISSING: Any = object()
 _T = TypeVar("_T")
@@ -271,7 +289,7 @@ class Table(dict[str, Any]):
     @classmethod
     def section(
         cls,
-        mapping: Mapping[str, object] | None = None,
+        mapping: Mapping[str, TomlInput] | None = None,
     ) -> Table:
         """Return a detached ``[k]`` standard-section table.
 
@@ -308,7 +326,7 @@ class Table(dict[str, Any]):
     @classmethod
     def inline(
         cls,
-        mapping: Mapping[str, object] | None = None,
+        mapping: Mapping[str, TomlInput] | None = None,
     ) -> _InlineTable:
         """Return a fresh inline table that *attaches live* on assignment.
 
@@ -431,7 +449,7 @@ class Table(dict[str, Any]):
             dict.__setitem__(self, key, new_v)
 
     @override
-    def __setitem__(self, key: str, value: object) -> None:
+    def __setitem__(self, key: str, value: Any) -> None:
         # Detach any container at ``key`` so user-held references stop
         # tracking later edits. ``old is value`` is the augmented-
         # assignment case (``d[k] |= ...``); skip detach.
@@ -450,7 +468,7 @@ class Table(dict[str, Any]):
     def install(
         self,
         path: str | tuple[str, ...],
-        value: object,
+        value: Any,
     ) -> Any:
         """Install ``value`` at ``path``, descending dotted segments.
 
@@ -605,11 +623,12 @@ class Table(dict[str, Any]):
         return super().__getitem__(key)
 
     @override
-    def __ior__(self, other: object) -> Self:  # type: ignore[override]
-        if isinstance(other, Mapping):
-            self.update(other)
-        else:
-            self.update(dict(other))  # type: ignore[call-overload]
+    def __ior__(  # type: ignore[override]
+        self,
+        other: SupportsKeysAndGetItem[str, Any] | Iterable[tuple[str, Any]],
+        /,
+    ) -> Self:
+        self.update(other)
         return self
 
     @override
@@ -882,7 +901,7 @@ class Table(dict[str, Any]):
     def _install_section(
         self,
         parts: tuple[str, ...],  # noqa: ARG002
-        value: Mapping[str, object] = MappingProxyType({}),  # noqa: ARG002
+        value: Mapping[str, TomlInput] = MappingProxyType({}),  # noqa: ARG002
     ) -> Table:
         msg = (
             "cannot install a standard table here: this table flavour "
@@ -2068,7 +2087,7 @@ class _StdTable(Table):
     def _install_section(
         self,
         parts: tuple[str, ...],
-        value: Mapping[str, object] = MappingProxyType({}),
+        value: Mapping[str, TomlInput] = MappingProxyType({}),
     ) -> Table:
         # Build a detached ``[__tomlrt_detached__]`` placeholder, populate
         # it via the standard structural-dispatch path, then route through
@@ -2125,26 +2144,12 @@ class _StdTable(Table):
         self._install_at_path(parts, view)
         return view
 
-    @overload
     def _install_detached(
         self,
         parts: tuple[str, ...],
-        value: _StdTable,
-        rebase: Callable[[_StdTable, tuple[str, ...]], list[SectionNode]],
-    ) -> _StdTable: ...
-    @overload
-    def _install_detached(
-        self,
-        parts: tuple[str, ...],
-        value: AoT,
-        rebase: Callable[[AoT, tuple[str, ...]], list[SectionNode]],
-    ) -> AoT: ...
-    def _install_detached(
-        self,
-        parts: tuple[str, ...],
-        value: _StdTable | AoT,
-        rebase: Callable[[Any, tuple[str, ...]], list[SectionNode]],
-    ) -> _StdTable | AoT:
+        value: _TableOrAoT,
+        rebase: Callable[[_TableOrAoT, tuple[str, ...]], list[SectionNode]],
+    ) -> _TableOrAoT:
         """Live-attach an unattached ``_StdTable`` or ``AoT``.
 
         The orphan section nodes migrate from ``value._doc_node`` into
@@ -2165,8 +2170,8 @@ class _StdTable(Table):
     def _splice_attached(
         self,
         parts: tuple[str, ...],
-        value: _StdTable | AoT,
-        cloner: Callable[[Any, tuple[str, ...]], list[SectionNode]],
+        value: _TableOrAoT,
+        cloner: Callable[[_TableOrAoT, tuple[str, ...]], list[SectionNode]],
     ) -> tuple[str, ...]:
         """Common purge-and-splice for both attached-section installers.
 
@@ -2190,7 +2195,7 @@ class _StdTable(Table):
             )
         return full_path
 
-    def _install_at_path(self, parts: tuple[str, ...], obj: object) -> None:
+    def _install_at_path(self, parts: tuple[str, ...], obj: _StdTable | AoT) -> None:
         """Install ``obj`` at the leaf of ``parts``, materialising any
         intermediate implicit super-tables in dict storage as we go.
 
@@ -2212,7 +2217,7 @@ class _StdTable(Table):
 
 
 def _rehome_table_subtree(
-    view: object,
+    view: _StdTable | AoT,
     new_doc: DocumentNode,
     src_path: tuple[str, ...],
     full_path: tuple[str, ...],
@@ -2235,8 +2240,9 @@ def _rehome_table_subtree(
         view._owner_anchor = owner_anchor  # noqa: SLF001
         view._attached = True  # noqa: SLF001
         for child in dict.values(view):
-            _rehome_table_subtree(child, new_doc, src_path, full_path, owner_anchor)
-    elif isinstance(view, AoT):
+            if isinstance(child, (_StdTable, AoT)):
+                _rehome_table_subtree(child, new_doc, src_path, full_path, owner_anchor)
+    else:
         rel = view._path[splen:]  # noqa: SLF001
         view._doc_node = new_doc  # noqa: SLF001
         view._path = (*full_path, *rel)  # noqa: SLF001
@@ -2249,13 +2255,14 @@ def _rehome_table_subtree(
         for entry in view:
             assert isinstance(entry, _StdTable)
             for child in dict.values(entry):
-                _rehome_table_subtree(
-                    child,
-                    new_doc,
-                    src_path,
-                    full_path,
-                    entry._anchor,  # noqa: SLF001
-                )
+                if isinstance(child, (_StdTable, AoT)):
+                    _rehome_table_subtree(
+                        child,
+                        new_doc,
+                        src_path,
+                        full_path,
+                        entry._anchor,  # noqa: SLF001
+                    )
 
 
 class Document(_StdTable):
@@ -2396,7 +2403,7 @@ class Array(list[Any]):
 
     def __init__(
         self,
-        items: Iterable[object] | ArrayNode = (),
+        items: Iterable[TomlInput] | ArrayNode = (),
         *,
         multiline: bool = False,
         indent: str = "    ",
@@ -2417,7 +2424,7 @@ class Array(list[Any]):
         else:
             from tomlrt._synthesise import _list_to_array_node  # noqa: PLC0415
 
-            self._node = _list_to_array_node(list(items))  # type: ignore[arg-type]
+            self._node = _list_to_array_node(list(items))
             self._attached = False
         self._style = _sample_separator_style(
             self._node.items,
@@ -2790,7 +2797,7 @@ class AoT(list[Table]):
 
     def __init__(
         self,
-        entries: Iterable[Mapping[str, object]] = (),
+        entries: Iterable[Mapping[str, TomlInput]] = (),
     ) -> None:
         """Construct a standalone array-of-tables.
 
@@ -2805,11 +2812,10 @@ class AoT(list[Table]):
         ``tables``) used by the parser/CST walkers remains available
         via `_attached_to`.
         """
-        path: tuple[str, ...] = ("_",)
         doc_node = DocumentNode(sections=[])
         super().__init__()
         self._doc_node: DocumentNode = doc_node
-        self._path = path
+        self._path: tuple[str, ...] = ("_",)
         self._attached = False
         for entry in entries:
             self._insert_at(len(self), entry)
@@ -2932,7 +2938,7 @@ class AoT(list[Table]):
     def _populate_via_view(
         self,
         header: SectionNode,
-        value: Mapping[str, object],
+        value: Mapping[str, TomlInput],
     ) -> None:
         """Install ``value``'s items into the AoT entry rooted at ``header``.
 
@@ -2958,10 +2964,10 @@ class AoT(list[Table]):
     # ------------------------------------------------------------------
 
     @override
-    def append(self, value: Table | Mapping[str, object]) -> None:
+    def append(self, value: Table | Mapping[str, TomlInput]) -> None:
         self._insert_at(len(self), value)
 
-    def add(self, entry: Mapping[str, object] = MappingProxyType({})) -> Table:
+    def add(self, entry: Mapping[str, TomlInput] = MappingProxyType({})) -> Table:
         """Append ``entry`` and return the new [`Table`][tomlrt.Table] view.
 
         Convenience over `append` for the common build-and-mutate
@@ -2985,14 +2991,14 @@ class AoT(list[Table]):
     def insert(
         self,
         index: SupportsIndex,
-        value: Table | Mapping[str, object],
+        value: Table | Mapping[str, TomlInput],
     ) -> None:
         self._insert_at(operator.index(index), value)
 
     @override
     def extend(
         self,
-        values: Iterable[Table | Mapping[str, object]],
+        values: Iterable[Table | Mapping[str, TomlInput]],
     ) -> None:
         for v in list(values):
             self._insert_at(len(self), v)
@@ -3000,7 +3006,7 @@ class AoT(list[Table]):
     def _insert_at(
         self,
         py_index: int,
-        value: Table | Mapping[str, object],
+        value: Table | Mapping[str, TomlInput],
     ) -> None:
         self._validate_entry(value)
         n = len(self)
@@ -3049,7 +3055,7 @@ class AoT(list[Table]):
 
     def _build_entry_block(
         self,
-        value: Table | Mapping[str, object],
+        value: Table | Mapping[str, TomlInput],
     ) -> list[SectionNode]:
         """Build the [header, *owned-subsections] block for a new entry.
 
@@ -3069,7 +3075,7 @@ class AoT(list[Table]):
     def _splice_entry(
         self,
         insert_idx: int,
-        value: Table | Mapping[str, object],
+        value: Table | Mapping[str, TomlInput],
         *,
         add_blank: bool,
         bump_next: bool = False,
@@ -3104,7 +3110,7 @@ class AoT(list[Table]):
             self._populate_via_view(new_sec, value)
         return new_sec
 
-    def _append_entry(self, value: Table | Mapping[str, object]) -> None:
+    def _append_entry(self, value: Table | Mapping[str, TomlInput]) -> None:
         """Append a new entry without rebuilding the entry list.
 
         Avoids ``_own_sections`` (O(total sections)) and ``_resync``
@@ -3193,19 +3199,19 @@ class AoT(list[Table]):
 
     @overload
     def __setitem__(
-        self, index: SupportsIndex, value: Mapping[str, object]
+        self, index: SupportsIndex, value: Mapping[str, TomlInput]
     ) -> None: ...
     @overload
     def __setitem__(
         self,
         index: slice,
-        value: Iterable[Mapping[str, object]],
+        value: Iterable[Mapping[str, TomlInput]],
     ) -> None: ...
     @override
     def __setitem__(
         self,
         index: SupportsIndex | slice,
-        value: Mapping[str, object] | Iterable[Mapping[str, object]],
+        value: Mapping[str, TomlInput] | Iterable[Mapping[str, TomlInput]],
     ) -> None:
         if isinstance(index, slice):
             new_values: list[Any] = list(value)
@@ -3249,12 +3255,12 @@ class AoT(list[Table]):
         _apply_prior_leading([self._own_sections()[i]], prior_leading)
 
     @override
-    def __iadd__(self, values: Iterable[Mapping[str, object]]) -> Self:  # type: ignore[override]
+    def __iadd__(self, values: Iterable[Mapping[str, TomlInput]]) -> Self:  # type: ignore[override]
         self.extend(values)
         return self
 
     @override
-    def remove(self, value: Mapping[str, object]) -> None:
+    def remove(self, value: Mapping[str, TomlInput]) -> None:
         for i, entry in enumerate(self):
             if entry == value:
                 del self[i]
@@ -3310,19 +3316,17 @@ class AoT(list[Table]):
         self._reorder_blocks(start, blocks, range(len(blocks) - 1, -1, -1))
 
     @override
-    def sort(
+    def sort(  # type: ignore[override]
         self,
         *,
-        key: Callable[[Table], object] | None = None,
+        key: Callable[[Table], SupportsRichComparison],
         reverse: bool = False,
     ) -> None:
         start, blocks = self._own_blocks()
         if not blocks:
             return
         entries = list(self)
-        sort_key: Callable[[int], Any] = (
-            (lambda i: entries[i]) if key is None else (lambda i: key(entries[i]))
-        )
+        sort_key: Callable[[int], SupportsRichComparison] = lambda i: key(entries[i])  # noqa: E731
         self._reorder_blocks(
             start,
             blocks,
@@ -3532,7 +3536,6 @@ __all__ = [
     "AoT",
     "Array",
     "Document",
-    "Scalar",
     "Table",
-    "TomlValue",
+    "TomlInput",
 ]

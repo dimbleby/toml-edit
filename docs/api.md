@@ -19,6 +19,10 @@ The complete public surface, generated from the docstrings in the source.
 ::: tomlrt.AoT
 ::: tomlrt.SectionSpec
 
+## Type aliases
+
+::: tomlrt.TomlInput
+
 ## Errors
 
 ::: tomlrt.TOMLError

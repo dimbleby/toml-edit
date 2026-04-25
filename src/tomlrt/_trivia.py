@@ -10,6 +10,7 @@ bracket walking logic.
 
 from __future__ import annotations
 
+import dataclasses
 from typing import TYPE_CHECKING, Protocol
 
 from tomlrt._errors import TOMLError
@@ -46,10 +47,8 @@ def _walk_newline_nodes(node: object) -> Iterator[NewlineNode]:
             yield current
         elif isinstance(current, list):
             stack.extend(current)
-        elif hasattr(current, "__dataclass_fields__"):
-            stack.extend(
-                getattr(current, name) for name in current.__dataclass_fields__
-            )
+        elif dataclasses.is_dataclass(current) and not isinstance(current, type):
+            stack.extend(getattr(current, f.name) for f in dataclasses.fields(current))
 
 
 def _detect_newline(node: DocumentNode) -> str:

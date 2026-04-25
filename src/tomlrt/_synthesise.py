@@ -38,7 +38,7 @@ from tomlrt._nodes import (
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from tomlrt._document import TomlValue
+    from tomlrt._document import Array, _InlineTable
     from tomlrt._nodes import DateLikeKind, ValueNode
 
 
@@ -120,21 +120,18 @@ def _float_to_node(value: float) -> FloatNode:
 
 
 def _datetime_to_node(value: datetime | date | time) -> DateTimeNode:
-
     raw = value.isoformat()
-    kind: str
+    kind: DateLikeKind
     if isinstance(value, datetime):
         kind = "offset-datetime" if value.tzinfo is not None else "local-datetime"
     elif isinstance(value, date):
         kind = "local-date"
     else:
         kind = "local-time"
-    from typing import cast  # noqa: PLC0415
-
-    return DateTimeNode(raw=raw, value=value, kind=cast("DateLikeKind", kind))
+    return DateTimeNode(raw=raw, value=value, kind=kind)
 
 
-def _list_to_array_node(items: Iterable[TomlValue]) -> ArrayNode:
+def _list_to_array_node(items: Iterable[object]) -> ArrayNode:
     items_list = list(items)
     array_items: list[ArrayItem] = []
     n = len(items_list)
@@ -154,7 +151,7 @@ def _list_to_array_node(items: Iterable[TomlValue]) -> ArrayNode:
     return ArrayNode(items=array_items, final_trivia=Trivia())
 
 
-def _mapping_to_inline_table_node(mapping: Mapping[str, TomlValue]) -> InlineTableNode:
+def _mapping_to_inline_table_node(mapping: Mapping[str, object]) -> InlineTableNode:
     entries: list[InlineTableEntry] = []
     items_list = list(mapping.items())
     n = len(items_list)
@@ -178,10 +175,10 @@ def _mapping_to_inline_table_node(mapping: Mapping[str, TomlValue]) -> InlineTab
     return InlineTableNode(entries=entries, final_trivia=final_trivia)
 
 
-def _attach_or_clone(value: object, node: ValueNode) -> ValueNode:
+def _attach_or_clone(value: Array | _InlineTable, node: ValueNode) -> ValueNode:
     """Return ``node`` live if ``value`` is unattached, else a deep clone."""
-    if not value._attached:  # type: ignore[attr-defined]  # noqa: SLF001
-        value._attached = True  # type: ignore[attr-defined]  # noqa: SLF001
+    if not value._attached:  # noqa: SLF001
+        value._attached = True  # noqa: SLF001
         return node
     return deepcopy(node)
 
@@ -195,7 +192,12 @@ def value_to_node(value: object) -> ValueNode:
     Tuples are not accepted — wrap with ``list``.
     """
     # Local import avoids a circular dependency with _document.
-    from tomlrt._document import AoT, Array, Table  # noqa: PLC0415
+    from tomlrt._document import (  # noqa: PLC0415
+        AoT,
+        Array,
+        Table,
+        _InlineTable,
+    )
 
     if isinstance(value, Array):
         return _attach_or_clone(value, value._node)  # noqa: SLF001
@@ -206,10 +208,9 @@ def value_to_node(value: object) -> ValueNode:
             "[[ ... ]] sections."
         )
         raise TOMLError(msg)
+    if isinstance(value, _InlineTable):
+        return _attach_or_clone(value, value._node)  # noqa: SLF001
     if isinstance(value, Table):
-        node = getattr(value, "_node", None)
-        if isinstance(node, InlineTableNode):
-            return _attach_or_clone(value, node)
         return _mapping_to_inline_table_node(dict(value))
     if isinstance(value, bool):
         return _bool_to_node(value=value)
