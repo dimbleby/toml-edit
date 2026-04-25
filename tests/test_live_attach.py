@@ -52,6 +52,26 @@ def test_inline_factory_can_be_populated_before_assignment() -> None:
     assert dict(t) == {"x": 1, "y": "hello"}
 
 
+def test_inline_factory_renders_with_spaced_braces() -> None:
+    # Synthesised inline tables use the same spaced ({ k = v }) style
+    # as plain dicts assigned through value_to_node. Empty stays {}.
+    doc = tomlrt.parse("")
+    doc["a"] = Table.inline({"key": "v"})
+    doc["b"] = {"key": "v"}
+    doc["c"] = Table.inline()
+    t = Table.inline()
+    t["x"] = 1
+    doc["d"] = t
+    doc["e"] = Table.inline({"k1": 1, "k2": 2})
+    assert tomlrt.dumps(doc) == (
+        'a = { key = "v" }\n'
+        'b = { key = "v" }\n'
+        "c = {}\n"
+        "d = { x = 1 }\n"
+        "e = { k1 = 1, k2 = 2 }\n"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Live attach on assignment
 # ---------------------------------------------------------------------------
