@@ -157,22 +157,23 @@ def _starts_with_blank_line(trivia: Trivia) -> bool:
 
 
 def _gaps_uniformly_blank(leadings: Iterable[Trivia]) -> bool:
-    """Decide whether existing siblings are uniformly blank-line separated.
+    """Decide whether new siblings should adopt a blank-line gap.
+
+    The first sibling gap in source order is read as the user's
+    chosen style: if they put a blank line between the first two
+    entries, new appends mimic that; if not, we leave them packed.
+    Later gaps that diverge from the first are treated as accidental
+    — we don't try to second-guess them.
 
     ``leadings`` is the leading trivia of every sibling *except the
     first* (the first has no preceding sibling, so its leading
     describes the gap to the document preamble, not an inter-sibling
-    gap). Returns ``True`` only when every such gap starts with a
-    blank line; mixed layouts fall back to ``False`` so we don't
-    impose spacing the user may have deliberately omitted.
+    gap). With no such gap (zero or one entry), returns ``False``:
+    there is no established style to follow.
     """
     it = iter(leadings)
     first = next(it, None)
-    if first is None:
-        return False
-    return _starts_with_blank_line(first) and all(
-        _starts_with_blank_line(t) for t in it
-    )
+    return first is not None and _starts_with_blank_line(first)
 
 
 def _prepend_blank_line(trivia: Trivia) -> None:
