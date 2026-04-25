@@ -4,18 +4,15 @@
 [![Python versions](https://img.shields.io/pypi/pyversions/tomlrt.svg)](https://pypi.org/project/tomlrt/)
 [![License](https://img.shields.io/pypi/l/tomlrt.svg)](https://github.com/dimbleby/tomlrt/blob/main/LICENSE)
 [![CI](https://github.com/dimbleby/tomlrt/actions/workflows/ci.yml/badge.svg)](https://github.com/dimbleby/tomlrt/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-mkdocs-informational)](https://dimbleby.github.io/tomlrt/)
 
 A format-preserving TOML parser and writer for Python.
 
-Parse a document, edit it, dump it, and the bytes you didn't touch round-trip
-exactly — comments, whitespace, string style, and number formatting all intact.
-
-## Usage
+Parse a document, edit it, dump it, and the bytes you didn't touch round-trip exactly — comments, whitespace, string style, and number formatting all intact.
 
 ```python
 import tomlrt
 
-# Files must be opened in binary mode.
 with open("pyproject.toml", "rb") as f:
     doc = tomlrt.load(f)
 
@@ -25,68 +22,32 @@ doc["project"]["dependencies"].append("requests>=2")
 print(tomlrt.dumps(doc))   # comments and layout are preserved
 ```
 
-### Structural assignment
-
-A plain `dict` value installs as an inline table; a plain `list` installs as an
-inline array.
-To pick a different shape, assign a flavoured value:
+Build a document from scratch:
 
 ```python
-from tomlrt import AoT, Array, Table
+import tomlrt
 
-doc["tool"] = Table.section({"version": 1})      # [tool] section
-doc["xy"]   = Table.inline({"x": 1, "y": 2})     # xy = { x = 1, y = 2 }
-doc["pkgs"] = AoT([{"a": 1}, {"b": 2}])          # [[pkgs]] … [[pkgs]]
-doc["tags"] = Array(["a", "b"], multiline=True)  # multi-line array
-```
-
-### Live vs snapshot containers
-
-Assigning a fresh `Table.inline(...)`, `Array(...)`, or `AoT(...)` *attaches it
-live*: the user's reference becomes the live view at the destination, and
-later mutations through that reference show up in the document.
-
-```python
-xs = Array([1, 2])
-doc["xs"] = xs
-xs.append(3)             # doc["xs"] is now [1, 2, 3]
-assert doc["xs"] is xs
-```
-
-Plain `dict` / `list` values are *snapshot* on assignment — mutating the
-original after assignment does *not* affect the document. Reach for
-`Table.inline` or `Array` when you want live semantics.
-
-A container that is already attached somewhere is deep-cloned on assignment,
-so two slots never share the same underlying CST. This applies to
-intra-document (`doc["b"] = doc["a"]`) and cross-document
-(`d2["x"] = d1["x"]`) cases alike.
-
-Use `doc.install(path, value)` for dotted-path placement.
-Plain `doc["a.b"] = …` always treats `"a.b"` as a _single literal key_, so
-`install` is the way to descend through `a` into `b`.
-Pass a tuple when one of the segments itself contains a literal `.`:
-
-```python
-doc.install("tool.poetry.version", "0.1.0")            # [tool.poetry] version = "0.1.0"
-doc.install(("tool", "weird.key"), 1)                  # [tool] "weird.key" = 1
-```
-
-### Comment API
-
-```python
-doc = tomlrt.loads("""
-[server]
-host = "localhost"  # default
-port = 8080
-""")
-
-server = doc.table("server")
-server.comments["port"] = "override with $PORT"
-server.comments["host"] = None         # clear
-
+doc = tomlrt.document({"project": {"name": "demo", "version": "0.1.0"}})
 print(tomlrt.dumps(doc))
-# [server]
-# host = "localhost"
-# port = 8080 # override with $PORT
 ```
+
+## Highlights
+
+- **Byte-exact round-trip** for any document you don't mutate.
+- **Pure stdlib at runtime** — no third-party dependencies.
+- **Typed accessors** — `table()`, `array()`, `aot()` and friends, so you rarely need `cast()` even under `mypy --strict`.
+- **First-class comment API** — read, write, and rearrange comments on keys, sections, array items, and the document as a whole.
+- **Python 3.10 – 3.14**.
+
+## Documentation
+
+Full docs at <https://dimbleby.github.io/tomlrt/>:
+
+- [Quickstart](https://dimbleby.github.io/tomlrt/quickstart/)
+- [Building documents](https://dimbleby.github.io/tomlrt/building/)
+- [Editing documents](https://dimbleby.github.io/tomlrt/editing/)
+- [Typed access](https://dimbleby.github.io/tomlrt/access/)
+- [Comments](https://dimbleby.github.io/tomlrt/comments/)
+- [API reference](https://dimbleby.github.io/tomlrt/api/)
+
+See also the [changelog](CHANGELOG.md).

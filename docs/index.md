@@ -1,0 +1,27 @@
+# tomlrt
+
+A format-preserving TOML parser and writer for Python.
+
+Parse a document, edit it, dump it, and the bytes you didn't touch round-trip exactly — comments, whitespace, string style, and number formatting all intact.
+
+```python
+import tomlrt
+
+with open("pyproject.toml", "rb") as f:
+    doc = tomlrt.load(f)
+
+doc["project"]["version"] = "0.2.0"
+doc["project"]["dependencies"].append("requests>=2")
+
+print(tomlrt.dumps(doc))   # comments and layout are preserved
+```
+
+## Where next
+
+- [Quickstart](quickstart.md) — parse, edit, dump.
+- [Building documents](building.md) — start from scratch with `document()`.
+- [Editing documents](editing.md) — structural assignment, live views, layout control.
+- [Typed access](access.md) — type-safe traversal and conversion back to plain Python.
+- [Comments](comments.md) — the comment API, end to end.
+- [Errors](errors.md) — exception types.
+- [API reference](api.md) — full public surface.
