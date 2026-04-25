@@ -979,11 +979,27 @@ class _InlineTable(Table):
             if existing is not None:
                 existing.value = value_to_node(value)
                 return
+        self._replace_prefix(path, value)
+
+    def _replace_prefix(
+        self,
+        prefix: tuple[str, ...],
+        value: object,
+    ) -> InlineTableEntry:
+        """Purge any entry under ``prefix`` and append a fresh one.
+
+        Used by both the dotted-key path on ``set_at`` and the
+        dotted-shadow branch on ``_set_value``. ``items[0]`` may shift
+        if the original head entry got purged, so the full separator
+        style must be re-stamped.
+        """
         self._node.entries[:] = [
-            e for e in self._node.entries if not _path_has_prefix(e.key.path, path)
+            e for e in self._node.entries if not _path_has_prefix(e.key.path, prefix)
         ]
-        self._node.entries.append(self._make_entry(path, value))
+        new_entry = self._make_entry(prefix, value)
+        self._node.entries.append(new_entry)
         _apply_separator_style(self._node, self._style)
+        return new_entry
 
     def del_prefix(self, prefix: tuple[str, ...]) -> bool:
         kept = [
@@ -1026,14 +1042,8 @@ class _InlineTable(Table):
         if existing is not None:
             existing.value = value_to_node(value)
             return _value_for(existing.value)
-        # Dotted shadowing: purge any entry with this prefix and append.
-        # ``items[0]`` may shift, so re-stamp the full separator style.
-        self._node.entries[:] = [
-            e for e in self._node.entries if not _path_has_prefix(e.key.path, prefix)
-        ]
-        new_entry = self._make_entry(prefix, value)
-        self._node.entries.append(new_entry)
-        _apply_separator_style(self._node, self._style)
+        # Dotted shadowing: purge entries under this prefix and append.
+        new_entry = self._replace_prefix(prefix, value)
         return _value_for(new_entry.value)
 
     @override
@@ -1993,8 +2003,8 @@ class _StdTable(Table):
         # this view, no existing section can match ``full_path`` (any
         # such section would surface as a sub-table or value in the
         # dict cache). Skip the O(total-sections) prior-match scan.
-        skip_prior_search = len(parts) == 1 and not super().__contains__(parts[0])
-        if not skip_prior_search:
+        needs_prior_search = len(parts) != 1 or super().__contains__(parts[0])
+        if needs_prior_search:
             for i, sec in enumerate(self._doc_node.sections):
                 hdr = sec.header
                 if (
@@ -2953,16 +2963,9 @@ class AoT(list[Table]):
         insert_idx = sections.index(own[py_index])
         new_block = self._build_entry_block(value)
         new_sec = new_block[0]
-        # Insert a blank-line separator before the new header iff there
-        # is already rendered content preceding it. When existing
-        # siblings already share a uniform spacing style, copy that;
+        # Mirror the user's spacing if there's a sibling gap to read;
         # otherwise default to blank-separated (canonical TOML style).
-        sibling_leadings = (
-            sec.header.leading for sec in own[1:] if sec.header is not None
-        )
-        # With only one existing sibling there's no observable gap; default
-        # to blank-separated (canonical TOML style).
-        add_blank = _first_gap_is_blank(sibling_leadings) if n >= 2 else True
+        add_blank = _first_gap_is_blank(self._sibling_leadings(), default=True)
         preceding_has_content = any(
             s.header is not None or s.entries for s in sections[:insert_idx]
         )
@@ -2982,6 +2985,27 @@ class AoT(list[Table]):
             assert isinstance(value, Mapping)
             self._populate_via_view(new_sec, value)
         self._resync()
+
+    def _entry_anchor(self, i: int) -> SectionNode:
+        """The [[path]] section that anchors entry ``i``."""
+        entry = self[i]
+        assert isinstance(entry, _StdTable)
+        anchor = entry._anchor  # noqa: SLF001
+        assert anchor is not None
+        return anchor
+
+    def _sibling_leadings(self) -> Iterator[Trivia]:
+        """Leading trivia of every entry except the first.
+
+        These are the inter-sibling gaps, in document order: the
+        leading on entry 0 describes the gap to the document
+        preamble, not a sibling gap. Used by the blank-line policy
+        for new entries.
+        """
+        for i in range(1, len(self)):
+            hdr = self._entry_anchor(i).header
+            if hdr is not None:
+                yield hdr.leading
 
     def _build_entry_block(
         self,
@@ -3015,10 +3039,7 @@ class AoT(list[Table]):
             insert_idx = len(sections)
             add_blank = True
         else:
-            entry = self[-1]
-            assert isinstance(entry, _StdTable)
-            last_anchor = entry._anchor  # noqa: SLF001
-            assert last_anchor is not None
+            last_anchor = self._entry_anchor(-1)
             # Common case: the previous entry has no owned sub-sections
             # and is the last section in the document, so we just
             # append. Otherwise we have to find the end of its block.
@@ -3027,20 +3048,9 @@ class AoT(list[Table]):
             else:
                 tail = self._doc_node.aot_entry_block(last_anchor)[-1]
                 insert_idx = sections.index(tail) + 1
-            # Sample the first sibling gap to mirror the user's style.
-            if n >= 2:
-                first_sibling = self[1]
-                assert isinstance(first_sibling, _StdTable)
-                first_sibling_anchor = first_sibling._anchor  # noqa: SLF001
-                assert first_sibling_anchor is not None
-                first_hdr = first_sibling_anchor.header
-                add_blank = (
-                    _first_gap_is_blank((first_hdr.leading,))
-                    if first_hdr is not None
-                    else True
-                )
-            else:
-                add_blank = True
+            # Sample the first sibling gap to mirror the user's style;
+            # default to blank-separated when there's no gap to read.
+            add_blank = _first_gap_is_blank(self._sibling_leadings(), default=True)
         new_block = self._build_entry_block(value)
         new_sec = new_block[0]
         assert new_sec.header is not None
