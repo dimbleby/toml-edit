@@ -412,14 +412,18 @@ class Table(dict[str, Any]):
 
     @override
     def __setitem__(self, key: str, value: object) -> None:
-        if not self._attached:
-            dict.__setitem__(self, key, value)
-            return
         # Detach any container currently at ``key`` before we overwrite
         # it, so user-held references stop reflecting later document
         # edits. ``old is value`` is the augmented-assignment / self-
         # assignment case (``d[k] |= ...`` rebinds with the same
         # object): there's nothing to detach and nothing to re-install.
+        #
+        # We intentionally route writes through the install machinery
+        # even when ``self`` is itself detached: a detached Table /
+        # _InlineTable owns a private CST (a section list in an orphan
+        # ``DocumentNode``, or just its own ``InlineTableNode``), and
+        # writes need to land there so re-attach (deep-clone or
+        # live-splice) sees them.
         if super().__contains__(key):
             old = super().__getitem__(key)
             if old is value:
@@ -553,9 +557,6 @@ class Table(dict[str, Any]):
         old = super().__getitem__(key)
         if isinstance(old, (Table, AoT, Array)):
             old._detach()  # noqa: SLF001
-        if not self._attached:
-            super().__delitem__(key)
-            return
         self._delete_value(key)
         if super().__contains__(key):
             super().__delitem__(key)
@@ -929,34 +930,6 @@ class _InlineTable(Table):
         else:
             self._eq_padding = (WhitespaceNode(" "), WhitespaceNode(" "))
         self._populate()
-
-    @override
-    def __setitem__(self, key: str, value: object) -> None:
-        # Inline tables write through to their ``_node`` whether or
-        # not they are currently installed in a document: the node
-        # is the only storage, and there is no foreign CST that an
-        # orphan view could leak into. This lets ``Table.inline()``
-        # be populated incrementally before assignment, and lets a
-        # detached (post-overwrite) inline view continue to mutate
-        # its own private subtree.
-        if super().__contains__(key):
-            old = super().__getitem__(key)
-            if old is value:
-                return
-            if isinstance(old, (Table, AoT, Array)):
-                old._detach()  # noqa: SLF001
-        self._install_flavoured((key,), value)
-
-    @override
-    def __delitem__(self, key: str) -> None:
-        if not super().__contains__(key):
-            raise KeyError(key)
-        old = super().__getitem__(key)
-        if isinstance(old, (Table, AoT, Array)):
-            old._detach()  # noqa: SLF001
-        self._delete_value(key)
-        if super().__contains__(key):
-            super().__delitem__(key)
 
     @override
     def _items(self) -> Iterator[tuple[str, TomlValue]]:
