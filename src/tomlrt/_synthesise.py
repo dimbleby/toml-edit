@@ -178,6 +178,22 @@ def _mapping_to_inline_table_node(mapping: Mapping[str, TomlValue]) -> InlineTab
     return InlineTableNode(entries=entries, final_trivia=final_trivia)
 
 
+def _attach_or_clone(value: object, node: ValueNode) -> ValueNode:
+    """Splice ``node`` live into the destination, or deep-clone it.
+
+    A typed container (:class:`Array`, :class:`_InlineTable`) lives at
+    most one CST location. If ``value`` is currently unattached, we
+    flip ``_attached`` and return its node verbatim so the user's
+    reference becomes the live view at the destination. If ``value``
+    is already attached somewhere, we deep-clone the node so the new
+    slot is independent of the old one.
+    """
+    if not value._attached:  # type: ignore[attr-defined]  # noqa: SLF001
+        value._attached = True  # type: ignore[attr-defined]  # noqa: SLF001
+        return node
+    return deepcopy(node)
+
+
 def value_to_node(value: object) -> ValueNode:
     """Convert a logical value to a fresh :class:`ValueNode`.
 
@@ -194,13 +210,7 @@ def value_to_node(value: object) -> ValueNode:
     from tomlrt._document import AoT, Array, Table  # noqa: PLC0415
 
     if isinstance(value, Array):
-        if not value._attached:  # noqa: SLF001
-            # Live attach: splice the user's node into the destination
-            # so subsequent mutations through their reference flow into
-            # the document.
-            value._attached = True  # noqa: SLF001
-            return value._node  # noqa: SLF001
-        return deepcopy(value._node)  # noqa: SLF001
+        return _attach_or_clone(value, value._node)  # noqa: SLF001
     if isinstance(value, AoT):
         msg = (
             "Cannot store an array-of-tables as an inline value; "
@@ -211,14 +221,7 @@ def value_to_node(value: object) -> ValueNode:
     if isinstance(value, Table):
         node = getattr(value, "_node", None)
         if isinstance(node, InlineTableNode):
-            if not value._attached:  # noqa: SLF001
-                # Live attach: hand the user's node straight to the
-                # destination so subsequent mutations through their
-                # reference flow into the document. The receiving
-                # container becomes its sole parent.
-                value._attached = True  # noqa: SLF001
-                return node
-            return deepcopy(node)
+            return _attach_or_clone(value, node)
         return _mapping_to_inline_table_node(dict(value))
     if isinstance(value, bool):
         return _bool_to_node(value=value)

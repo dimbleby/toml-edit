@@ -1927,19 +1927,14 @@ class _StdTable(Table):
             # the target path (e.g. during ``deepcopy`` reconstruction).
             self._install_attached_table(parts, value)
             return True
-        if isinstance(value, Array) and not value._attached:  # noqa: SLF001
-            # Standalone Array attaches live: ``value_to_node`` will
-            # splice ``value._node`` into the destination KV so the
-            # user's reference becomes the live view at this site.
-            # Multiline layout and indentation are already baked into
-            # ``_node`` by ``Array.__init__`` / ``set_multiline``, so
-            # no extra layout step is needed here.
-            if len(parts) == 1:
-                self._commit_value(parts[0], value)
-            else:
-                target = self.ensure_table(parts[:-1])
-                target[parts[-1]] = value
-            return True
+        # No bespoke Array branch: an unattached :class:`Array` falls
+        # through to the plain-value commit in ``_install_flavoured``,
+        # which routes through ``_set_value`` -> ``value_to_node``.
+        # ``value_to_node`` splices the user's ``_node`` into the
+        # destination KV (live attach), and ``_commit_value`` then
+        # swaps the user's reference into dict storage so
+        # ``self[k] is value`` holds. Attached Arrays deep-clone in
+        # ``value_to_node`` for the same reason.
         return False
 
     def _prepare_section_slot(
