@@ -1967,11 +1967,11 @@ def test_append_preserves_leading_comment_in_single_item_array() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Table.set_aot / Table.promote_array
+# AoT assignment / Table.promote_array
 # ---------------------------------------------------------------------------
 
 
-def test_set_aot_creates_repeated_headers() -> None:
+def test_assign_aot_creates_repeated_headers() -> None:
     doc = tomlrt.loads("")
     doc["packages"] = AoT([{"name": "a", "version": "1.0"}, {"name": "b"}])
     aot = doc["packages"]
@@ -1980,7 +1980,7 @@ def test_set_aot_creates_repeated_headers() -> None:
     assert "[[packages]]" in tomlrt.dumps(doc)
 
 
-def test_set_aot_with_no_entries_returns_appendable_view() -> None:
+def test_assign_empty_aot_returns_appendable_view() -> None:
     doc = tomlrt.loads("")
     doc["servers"] = AoT()
     aot = doc["servers"]
@@ -1991,7 +1991,7 @@ def test_set_aot_with_no_entries_returns_appendable_view() -> None:
     assert 'host = "localhost"' in rendered
 
 
-def test_set_aot_overwrites_existing_key() -> None:
+def test_assign_aot_overwrites_existing_key() -> None:
     doc = tomlrt.loads("foo = 1\n")
     doc["foo"] = AoT([{"x": 1}])
     rendered = tomlrt.dumps(doc)
@@ -1999,7 +1999,7 @@ def test_set_aot_overwrites_existing_key() -> None:
     assert "[[foo]]" in rendered
 
 
-def test_set_aot_nested_path() -> None:
+def test_assign_aot_nested_path() -> None:
     doc = tomlrt.loads("[product]\n")
     doc.table("product")["variant"] = AoT([{"sku": "X"}])
     rendered = tomlrt.dumps(doc)
@@ -2008,7 +2008,7 @@ def test_set_aot_nested_path() -> None:
     assert isinstance(doc.table("product").aot("variant"), tomlrt.AoT)
 
 
-def test_set_aot_blank_separated_entries() -> None:
+def test_assign_aot_blank_separated_entries() -> None:
     doc = tomlrt.loads("")
     doc["p"] = AoT([{"x": 1}, {"x": 2}, {"x": 3}])
     assert tomlrt.dumps(doc) == (
@@ -2025,7 +2025,7 @@ def test_set_aot_blank_separated_entries() -> None:
     )
 
 
-def test_set_aot_blank_before_first_when_preceded_by_content() -> None:
+def test_assign_aot_blank_before_first_when_preceded_by_content() -> None:
     doc = tomlrt.loads("top = 1\n")
     doc["p"] = AoT([{"x": 1}])
     assert tomlrt.dumps(doc) == td("""
@@ -2036,7 +2036,7 @@ def test_set_aot_blank_before_first_when_preceded_by_content() -> None:
         """)
 
 
-def test_set_aot_blank_after_section_header() -> None:
+def test_assign_aot_blank_after_section_header() -> None:
     doc = tomlrt.loads("[product]\n")
     doc.table("product")["variant"] = AoT([{"sku": "X"}])
     assert tomlrt.dumps(doc) == (
@@ -2137,11 +2137,11 @@ def test_promote_array_across_aot_entries() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Table.set_table / Table.ensure_table / dotted-path navigation
+# Section assignment / Table.ensure_table / dotted-path navigation
 # ---------------------------------------------------------------------------
 
 
-def test_set_table_creates_section_directly() -> None:
+def test_assign_section_creates_section_directly() -> None:
     doc = tomlrt.loads("")
     doc["tool"] = Table.section({"name": "x"})
     t = doc["tool"]
@@ -2149,7 +2149,7 @@ def test_set_table_creates_section_directly() -> None:
     assert tomlrt.dumps(doc) == '[tool]\nname = "x"\n'
 
 
-def test_set_table_dotted_omits_super_table_headers() -> None:
+def test_install_section_dotted_omits_super_table_headers() -> None:
     doc = tomlrt.loads("")
     doc.install("tool.poetry", Table.section({"name": "x", "version": "0.1"}))
     rendered = tomlrt.dumps(doc)
@@ -2161,7 +2161,7 @@ def test_set_table_dotted_omits_super_table_headers() -> None:
         """)
 
 
-def test_set_table_implicit_super_table_navigable() -> None:
+def test_install_section_implicit_super_table_navigable() -> None:
     doc = tomlrt.loads("")
     doc.install("tool.poetry", Table.section({"name": "x"}))
     assert doc.table("tool").table("poetry")["name"] == "x"
@@ -2173,7 +2173,7 @@ def test_set_table_implicit_super_table_navigable() -> None:
     assert doc.table("tool.poetry")["name"] == "x"
 
 
-def test_set_table_sibling_section_does_not_disturb_existing() -> None:
+def test_install_section_sibling_does_not_disturb_existing() -> None:
     doc = tomlrt.loads("")
     doc.install("tool.poetry", Table.section({"name": "x"}))
     doc.install("tool.poetry.dependencies", Table.section({"requests": "^2.0"}))
@@ -2188,7 +2188,7 @@ def test_set_table_sibling_section_does_not_disturb_existing() -> None:
     )
 
 
-def test_set_table_replaces_existing_section_and_purges_children() -> None:
+def test_install_section_replaces_existing_and_purges_children() -> None:
     doc = tomlrt.loads(
         td("""
         [tool.poetry]
@@ -2204,7 +2204,7 @@ def test_set_table_replaces_existing_section_and_purges_children() -> None:
     assert rendered == '[tool.poetry]\nversion = "2.0"\n'
 
 
-def test_set_table_overwrites_inline_value() -> None:
+def test_install_section_overwrites_inline_value() -> None:
     doc = tomlrt.loads('tool = {poetry = {name = "x"}}\n')
     doc.install("tool.poetry", Table.section({"version": "2.0"}))
     rendered = tomlrt.dumps(doc)
@@ -2213,7 +2213,7 @@ def test_set_table_overwrites_inline_value() -> None:
     assert "version" in rendered
 
 
-def test_set_table_with_empty_value_creates_empty_section() -> None:
+def test_install_empty_section() -> None:
     doc = tomlrt.loads("")
     t = doc.install("tool.poetry", Table.section())
     assert tomlrt.dumps(doc) == "[tool.poetry]\n"
@@ -2270,7 +2270,7 @@ def test_ensure_table_rejects_non_table_value() -> None:
         doc.ensure_table("tool")
 
 
-def test_set_aot_dotted_path() -> None:
+def test_install_aot_dotted_path() -> None:
     doc = tomlrt.loads("")
     doc.install(
         "tool.poetry.source",
@@ -2284,13 +2284,13 @@ def test_set_aot_dotted_path() -> None:
     assert rendered.count("[[tool.poetry.source]]") == 2
 
 
-def test_set_table_rejects_empty_path() -> None:
+def test_install_section_rejects_empty_path() -> None:
     doc = tomlrt.loads("")
     with pytest.raises(tomlrt.TOMLError, match="must not be empty"):
         doc.install("", Table.section())
 
 
-def test_set_table_rejects_empty_segment() -> None:
+def test_install_section_rejects_empty_segment() -> None:
     doc = tomlrt.loads("")
     with pytest.raises(tomlrt.TOMLError, match="empty segment"):
         doc.install("tool..poetry", Table.section())
@@ -2346,7 +2346,7 @@ def test_aot_accepts_dotted_path() -> None:
     assert aot[0]["name"] == "pypi"
 
 
-def test_set_table_round_trips() -> None:
+def test_install_section_round_trips() -> None:
     doc = tomlrt.loads("")
     doc.install("tool.poetry", Table.section({"name": "x"}))
     doc.install("tool.poetry.dependencies", Table.section({"requests": "^2.0"}))
@@ -2356,11 +2356,11 @@ def test_set_table_round_trips() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Table.set_array
+# Array assignment
 # ---------------------------------------------------------------------------
 
 
-def test_set_array_creates_inline_array() -> None:
+def test_assign_array_creates_inline_array() -> None:
     doc = tomlrt.loads("")
     doc["authors"] = Array(["A", "B"])
     arr = doc["authors"]
@@ -2368,7 +2368,7 @@ def test_set_array_creates_inline_array() -> None:
     assert tomlrt.dumps(doc) == 'authors = ["A", "B"]\n'
 
 
-def test_set_array_multiline_lays_out_one_per_line() -> None:
+def test_assign_array_multiline_lays_out_one_per_line() -> None:
     doc = tomlrt.loads("")
     doc["authors"] = Array(["A", "B", "C"], multiline=True)
     assert tomlrt.dumps(doc) == (
@@ -2382,7 +2382,7 @@ def test_set_array_multiline_lays_out_one_per_line() -> None:
     )
 
 
-def test_set_array_custom_indent() -> None:
+def test_assign_array_custom_indent() -> None:
     doc = tomlrt.loads("")
     doc["x"] = Array([1, 2], multiline=True, indent="  ")
     assert tomlrt.dumps(doc) == td("""
@@ -2393,7 +2393,7 @@ def test_set_array_custom_indent() -> None:
         """)
 
 
-def test_set_array_empty_multiline_appendable() -> None:
+def test_assign_array_empty_multiline_appendable() -> None:
     doc = tomlrt.loads("")
     doc["x"] = Array(multiline=True)
     arr = doc["x"]
@@ -2405,7 +2405,7 @@ def test_set_array_empty_multiline_appendable() -> None:
         """)
 
 
-def test_set_array_dotted_path_creates_parent_section() -> None:
+def test_install_array_dotted_path_creates_parent_section() -> None:
     doc = tomlrt.loads("")
     doc.install("tool.poetry.authors", Array(["A", "B"], multiline=True))
     rendered = tomlrt.dumps(doc)
@@ -2421,7 +2421,7 @@ def test_set_array_dotted_path_creates_parent_section() -> None:
     )
 
 
-def test_set_array_dotted_path_uses_existing_section() -> None:
+def test_install_array_dotted_path_uses_existing_section() -> None:
     doc = tomlrt.loads('[tool.poetry]\nname = "x"\n')
     doc.install("tool.poetry.authors", Array(["A", "B"]))
     assert tomlrt.dumps(doc) == (
@@ -2433,13 +2433,13 @@ def test_set_array_dotted_path_uses_existing_section() -> None:
     )
 
 
-def test_set_array_replaces_existing_value() -> None:
+def test_assign_array_replaces_existing_value() -> None:
     doc = tomlrt.loads("a = 1\n")
     doc["a"] = Array([1, 2, 3])
     assert tomlrt.dumps(doc) == "a = [1, 2, 3]\n"
 
 
-def test_set_array_round_trips() -> None:
+def test_install_array_round_trips() -> None:
     doc = tomlrt.loads("")
     doc.install("tool.poetry.authors", Array(["A", "B"], multiline=True))
     rendered = tomlrt.dumps(doc)
@@ -2587,12 +2587,12 @@ def test_preamble_set_on_empty_doc_renders_before_added_content() -> None:
     assert tomlrt.loads(rendered).preamble == ("This is a comment",)
 
 
-def test_preamble_migration_for_set_table_and_set_aot() -> None:
+def test_preamble_migration_for_install_section_and_aot() -> None:
     cases: list[tuple[str, Callable[[tomlrt.Document], object]]] = [
-        ("set_table", lambda d: d.install("a", Table.section({"k": 1}))),
-        ("set_aot", lambda d: d.install("a", AoT([{"k": 1}]))),
+        ("install_section", lambda d: d.install("a", Table.section({"k": 1}))),
+        ("install_aot", lambda d: d.install("a", AoT([{"k": 1}]))),
         ("inline_mapping", lambda d: d.__setitem__("a", {"b": 1})),
-        ("nested_set_table", lambda d: d.install("a.b", Table.section({"k": 1}))),
+        ("nested_install_section", lambda d: d.install("a.b", Table.section({"k": 1}))),
     ]
     for op_name, build in cases:
         doc = tomlrt.document()

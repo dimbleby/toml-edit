@@ -98,13 +98,13 @@ def test_held_reference_does_not_resurrect() -> None:
     assert doc["tool"]["name"] == "y"
 
 
-def test_set_table_returns_object_stored_in_dict() -> None:
+def test_install_section_returns_object_stored_in_dict() -> None:
     doc = tomlrt.parse("")
     t = doc.install("a.b", Table.section())
     assert t is doc["a"]["b"]
 
 
-def test_set_aot_returns_object_stored_in_dict() -> None:
+def test_assign_aot_returns_object_stored_in_dict() -> None:
     doc = tomlrt.parse("")
     doc["things"] = AoT()
     aot = doc["things"]
@@ -255,7 +255,7 @@ def test_aot_promotion_returns_dict_storage_object() -> None:
     assert promoted is doc["xs"]
 
 
-def test_del_then_set_table_does_not_revive_held_ref() -> None:
+def test_del_then_assign_section_does_not_revive_held_ref() -> None:
     doc = tomlrt.parse("[a]\nx = 1\n")
     held = doc["a"]
     del doc["a"]
@@ -289,7 +289,7 @@ def test_table_unhashable_like_dict() -> None:
         hash(doc)
 
 
-def test_detached_set_table_does_not_revive_in_doc() -> None:
+def test_detached_assign_section_does_not_revive_in_doc() -> None:
     doc = tomlrt.parse("[outer]\nx = 1\n")
     held = doc["outer"]
     del doc["outer"]
@@ -316,7 +316,7 @@ def test_detached_aot_add_does_not_revive_in_doc() -> None:
     assert [dict(e) for e in held] == [{"k": 1}, {"k": 2}, {"k": 999}]
 
 
-def test_detached_aot_entry_set_table_does_not_revive() -> None:
+def test_detached_aot_entry_assign_section_does_not_revive() -> None:
     doc = tomlrt.parse("[[entries]]\nk = 1\n")
     held_aot = doc.aot("entries")
     held_entry = held_aot[0]
