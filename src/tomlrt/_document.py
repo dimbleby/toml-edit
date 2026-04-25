@@ -2081,29 +2081,15 @@ class _StdTable(Table):
         parts: tuple[str, ...],
         value: Mapping[str, object] = MappingProxyType({}),
     ) -> Table:
-        full_path, insert_at, prior_leading = self._prepare_section_slot(parts)
-        new_sec = _new_section(full_path)
-        new_sec.synthesised_placeholder = True
-        _apply_prior_leading([new_sec], prior_leading)
-        _insert_section_block(self._doc_node, insert_at, [new_sec])
-        # Inherit ``owner_anchor`` from the parent so a sub-section
-        # installed inside an AoT entry stays scoped to that entry —
-        # otherwise reads/writes through ``view`` see same-named
-        # sections in sibling entries and silently merge their values.
-        # The new section is empty and has no children yet, so its
-        # construction-time pool is just itself: skip the
-        # O(total-sections) rescan that ``_populate`` would otherwise do.
-        view = _StdTable(
-            self._doc_node,
-            full_path,
-            owner_anchor=self._owner_anchor,
-            _pool=[new_sec],
-            _extras=[],
-        )
-        self._install_at_path(parts, view)
-        for k, v in value.items():
-            view[k] = v
-        return view
+        # Build a detached ``[__tomlrt_detached__]`` placeholder, populate
+        # it via the standard structural-dispatch path, then route through
+        # the live-attach machinery -- which rebases the placeholder header
+        # onto ``parts``, splices it into ``self._doc_node`` and rehomes
+        # any held nested children. The user never sees the intermediate
+        # detached view, so SectionSpec snapshot semantics are preserved.
+        detached = Table.section(value)
+        assert isinstance(detached, _StdTable)
+        return self._install_detached_table(parts, detached)
 
     def _drop_redundant_anchor(self) -> None:
         """Drop an empty placeholder ``[X]`` header at ``self._path``.
