@@ -3015,7 +3015,9 @@ class AoT(list[Table]):
             insert_idx = len(sections)
             add_blank = True
         else:
-            last_anchor = self[-1]._anchor  # noqa: SLF001
+            entry = self[-1]
+            assert isinstance(entry, _StdTable)
+            last_anchor = entry._anchor  # noqa: SLF001
             assert last_anchor is not None
             # Common case: the previous entry has no owned sub-sections
             # and is the last section in the document, so we just
@@ -3027,7 +3029,9 @@ class AoT(list[Table]):
                 insert_idx = sections.index(tail) + 1
             # Sample the first sibling gap to mirror the user's style.
             if n >= 2:
-                first_sibling_anchor = self[1]._anchor  # noqa: SLF001
+                first_sibling = self[1]
+                assert isinstance(first_sibling, _StdTable)
+                first_sibling_anchor = first_sibling._anchor  # noqa: SLF001
                 assert first_sibling_anchor is not None
                 first_hdr = first_sibling_anchor.header
                 add_blank = (
