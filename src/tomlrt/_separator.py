@@ -4,8 +4,8 @@ Used by inline arrays and inline tables to preserve (and reapply, after
 mutation) the spacing convention chosen by the source — single-line vs
 multi-line, trailing comma or not, indent width, etc. The helpers here
 operate on the CST level (``ArrayNode`` / ``InlineTableNode`` items
-satisfying :class:`_Separated`) and know nothing about the logical
-view layer in :mod:`tomlrt._document`.
+satisfying `_Separated`) and know nothing about the logical
+view layer in `tomlrt._document`.
 """
 
 from __future__ import annotations
@@ -127,7 +127,7 @@ def _snapshot_item_leadings(items: Sequence[_Separated]) -> list[tuple[str, ...]
     Reordering ``items`` (sort, reverse, insert, pop) detaches each
     block from its logical owner. Snapshot before reorder, transform the
     parallel list alongside ``items``, then re-encode with
-    :func:`_write_item_leadings`.
+    `_write_item_leadings`.
 
     A comment "stuck" to the container's opening bracket (no newline
     before it) is treated as part of the container header / ``open_pad``
@@ -152,7 +152,7 @@ def _write_item_leadings(
 ) -> None:
     """Re-encode per-item leading-comment blocks into their canonical slots.
 
-    Inverse of :func:`_snapshot_item_leadings`. Also clears any stale
+    Inverse of `_snapshot_item_leadings`. Also clears any stale
     leading-of-next residue from the *last* item's pct (no logical
     owner once the item sits at the end), and leaves a header comment
     stuck to ``[`` alone (``open_pad`` already carries it).
@@ -322,7 +322,7 @@ def _apply_separator_style(
     container: ArrayNode | InlineTableNode,
     style: _SeparatorStyle,
 ) -> None:
-    """Re-apply a sampled :class:`_SeparatorStyle` to the items.
+    """Re-apply a sampled `_SeparatorStyle` to the items.
 
     Items whose separator slot contains a non-whitespace token (e.g. an
     inline ``# comment``) are left alone so authoring intent is preserved.
@@ -396,7 +396,7 @@ def _apply_separator_after_append(
 ) -> None:
     """Incremental separator update after appending ``n_added`` items.
 
-    Cheaper than :func:`_apply_separator_style` for the common bulk-
+    Cheaper than `_apply_separator_style` for the common bulk-
     append case: only the previously-last item (now interior) and the
     newly appended items need touching, leaving the rest untouched.
     """

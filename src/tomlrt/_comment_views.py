@@ -1,13 +1,15 @@
 """Live, presence-filtered comment views for tables and arrays.
 
 These ``MutableMapping`` views are returned from
-:attr:`Table.comments`, :attr:`Table.leading_comments`,
-:attr:`Array.comments`, and :attr:`Array.leading_comments`. Each view
-is a thin facade over the CST: reads and writes go directly to the
-underlying :class:`KeyValueNode` / :class:`ArrayItem` trivia, so the
-view never holds stale state.
+[`Table.comments`][tomlrt.Table.comments],
+[`Table.leading_comments`][tomlrt.Table.leading_comments],
+[`Array.comments`][tomlrt.Array.comments], and
+[`Array.leading_comments`][tomlrt.Array.leading_comments].
+Each view is a thin facade over the CST: reads and writes go directly
+to the underlying `KeyValueNode` / `ArrayItem` trivia, so the view
+never holds stale state.
 
-The four view classes share a base, :class:`_PresenceFilteredView`,
+The four view classes share a base, `_PresenceFilteredView`,
 which implements every ``MutableMapping`` method except the
 view-specific ``__setitem__``. Subclasses provide the four small
 hooks (``_check_key``, ``_keys``, ``_read``, ``_write_absent``) and an
@@ -62,15 +64,15 @@ class _PresenceFilteredView(MutableMapping[_VK, _VV], ABC):
     currently *present* (a non-empty comment block, an EOL comment that
     actually exists, etc.). Subclasses provide:
 
-    * :meth:`_check_key` — coerce / range-check a raw key, raising
-      :class:`TypeError` for the wrong kind and :class:`KeyError` for
+    * `_check_key` — coerce / range-check a raw key, raising
+      `TypeError` for the wrong kind and `KeyError` for
       an out-of-range value. Returns the canonicalised key.
-    * :meth:`_keys` — yields every valid key (regardless of whether
+    * `_keys` — yields every valid key (regardless of whether
       its payload is present).
-    * :meth:`_read` — returns the payload, or ``None`` when absent.
-    * :meth:`_write_absent` — the deletion primitive used by
+    * `_read` — returns the payload, or ``None`` when absent.
+    * `_write_absent` — the deletion primitive used by
       ``__delitem__``.
-    * :meth:`_format_value` — used by ``__repr__``; defaults to
+    * `_format_value` — used by ``__repr__``; defaults to
       ``repr``.
 
     ``__setitem__`` is left to subclasses because each view has its own
@@ -130,7 +132,7 @@ class _PresenceFilteredView(MutableMapping[_VK, _VV], ABC):
 
 
 class _TableKVViewBase(_PresenceFilteredView[str, _VV]):
-    """Common scaffolding for :class:`_StdTable`-backed presence-filtered views.
+    """Common scaffolding for `_StdTable`-backed presence-filtered views.
 
     The table's single-segment ``KeyValueNode`` entries form the key
     universe. Subclasses provide the value-shaped methods (``_read``,
@@ -170,7 +172,7 @@ class _TableKVViewBase(_PresenceFilteredView[str, _VV]):
 class _TableCommentsView(_TableKVViewBase[str]):
     """Live mapping from key name to end-of-line comment text.
 
-    Backed by a :class:`_StdTable`; a key is "present" iff its
+    Backed by a `_StdTable`; a key is "present" iff its
     ``KeyValueNode`` currently carries a ``trailing_comment``. Setting
     an empty string removes the comment, mirroring ``del``.
     """
@@ -233,7 +235,7 @@ class _TableLeadingCommentsView(_TableKVViewBase["tuple[str, ...]"]):
 
 
 class _ArrayItemViewBase(_PresenceFilteredView[int, _VV]):
-    """Common scaffolding for :class:`Array`-item-backed views."""
+    """Common scaffolding for [`Array`][tomlrt.Array]-item-backed views."""
 
     __slots__ = ("_array",)
 
@@ -262,7 +264,7 @@ class _ArrayItemViewBase(_PresenceFilteredView[int, _VV]):
 class _ArrayCommentsView(_ArrayItemViewBase[str]):
     """Live mapping from array index to that item's end-of-line comment.
 
-    Backed by an :class:`Array`. An index is "present" iff the
+    Backed by an [`Array`][tomlrt.Array]. An index is "present" iff the
     corresponding item currently carries an EOL comment in its
     ``post_comma_trivia`` (when the item has a trailing comma) or
     its ``trailing`` trivia (last item, no trailing comma).

@@ -71,7 +71,7 @@ def _escape_basic_string(s: str) -> str:
 
 
 def make_key_part(name: str) -> KeyPart:
-    """Build a single :class:`KeyPart`, quoting if the name is not bare-safe."""
+    """Build a single `KeyPart`, quoting if the name is not bare-safe."""
     if not isinstance(name, str):
         msg = (  # type: ignore[unreachable]
             f"TOML keys must be str, not {type(name).__name__}"
@@ -87,7 +87,7 @@ def make_key_part(name: str) -> KeyPart:
 
 
 def make_simple_key(name: str) -> Key:
-    """Build a single-segment :class:`Key`."""
+    """Build a single-segment `Key`."""
     return Key(parts=[make_key_part(name)], separators=[])
 
 
@@ -187,11 +187,11 @@ def _attach_or_clone(value: object, node: ValueNode) -> ValueNode:
 
 
 def value_to_node(value: object) -> ValueNode:
-    """Convert a logical value to a fresh :class:`ValueNode`.
+    """Convert a logical value to a fresh `ValueNode`.
 
     Containers backed by an existing CST are deep-cloned so the new
-    node is independent of the source. Any :class:`Mapping` becomes an
-    inline table; a plain :class:`list` becomes an inline array.
+    node is independent of the source. Any `Mapping` becomes an
+    inline table; a plain `list` becomes an inline array.
     Tuples are not accepted — wrap with ``list``.
     """
     # Local import avoids a circular dependency with _document.

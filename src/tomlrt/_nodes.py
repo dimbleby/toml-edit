@@ -120,7 +120,7 @@ class KeyPart:
 
 @dataclass(slots=True, eq=False)
 class Key:
-    """A dotted key: one or more :class:`KeyPart` separated by ``.``.
+    """A dotted key: one or more `KeyPart` separated by ``.``.
 
     ``separators`` carries the whitespace + ``.`` between parts. It always
     has length ``len(parts) - 1``.
@@ -132,7 +132,7 @@ class Key:
 
     def __post_init__(self) -> None:
         # List-comp into tuple is measurably faster than a generator
-        # expression, and :class:`Key` is built for every key in the
+        # expression, and `Key` is built for every key in the
         # document during parsing.
         self.path = tuple([p.value for p in self.parts])
 
@@ -453,7 +453,7 @@ class DocumentNode:
         sections whose head key would steer descent into ``full_path``.
 
         Pure structural removal; caller is responsible for invoking
-        :meth:`normalise_top_blank` once the larger operation is done.
+        `normalise_top_blank` once the larger operation is done.
         """
         plen = len(full_path)
         sections = self.sections
@@ -498,7 +498,7 @@ class DocumentNode:
     def remove_entry(self, sec: SectionNode, victim: KeyValueNode) -> None:
         """Drop ``victim`` from ``sec.entries``, then renormalise.
 
-        Bundles the structural change with :meth:`normalise_top_blank`
+        Bundles the structural change with `normalise_top_blank`
         so a stray top-of-file blank can't be left behind when the
         removed entry was the document's first piece of content.
         """
@@ -508,7 +508,7 @@ class DocumentNode:
     def remove_sections(self, victims: Container[SectionNode]) -> None:
         """Drop every section in ``victims`` from this document, then renormalise.
 
-        Bundles the structural change with :meth:`normalise_top_blank`
+        Bundles the structural change with `normalise_top_blank`
         so a stray top-of-file blank can't be left behind when the
         document's first physical section is among the removed.
         """
@@ -564,7 +564,7 @@ class DocumentNode:
         """The full block of sections constituting one AoT entry.
 
         That is the ``[[..]]`` anchor followed by its owned sub-section
-        run (see :meth:`aot_owned_range`). This is the unit callers
+        run (see `aot_owned_range`). This is the unit callers
         almost always want when copying, deleting, detaching, or
         relocating an AoT entry.
         """
