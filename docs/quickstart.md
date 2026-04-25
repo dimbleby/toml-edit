@@ -28,13 +28,13 @@ For string round-trips, use `parse` / `dumps`:
 ```python
 doc = tomlrt.parse(text)
 text_again = tomlrt.dumps(doc)
-assert text == text_again        # if you didn't mutate
+assert text == text_again        # if you didn't change anything
 ```
 
 ## Reading values
 
 A `Document` behaves like a `dict`; nested tables are `Table` (also a `dict` subclass), inline arrays are `Array` (a `list` subclass), and arrays-of-tables are `AoT` (a `list` of `Table`).
-Plain reads with `doc["key"]` work as you'd expect — see [Typed access](access.md) when you want `mypy`-friendly traversal.
+Plain reads with `doc["key"]` work as you'd expect — see [Typed access](access.md) when you want typechecker-friendly traversal.
 
 ## Writing values
 
