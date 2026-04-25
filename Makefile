@@ -42,11 +42,11 @@ mypy:
 
 .PHONY: docs
 docs:
-	$(UV) run --group docs mkdocs build --strict
+	$(UV) run --group docs zensical build
 
 .PHONY: docs-serve
 docs-serve:
-	$(UV) run --group docs mkdocs serve
+	$(UV) run --group docs zensical serve
 
 .PHONY: clean
 clean:

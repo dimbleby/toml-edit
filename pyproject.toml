@@ -41,9 +41,8 @@ dev = [
   "tomli>=2; python_version < '3.11'",
 ]
 docs = [
-  "mkdocs>=1.6",
-  "mkdocs-material>=9.5",
   "mkdocstrings[python]>=0.27",
+  "zensical>=0.0.36",
 ]
 
 [build-system]

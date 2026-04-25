@@ -4,7 +4,7 @@
 [![Python versions](https://img.shields.io/pypi/pyversions/tomlrt.svg)](https://pypi.org/project/tomlrt/)
 [![License](https://img.shields.io/pypi/l/tomlrt.svg)](https://github.com/dimbleby/tomlrt/blob/main/LICENSE)
 [![CI](https://github.com/dimbleby/tomlrt/actions/workflows/ci.yml/badge.svg)](https://github.com/dimbleby/tomlrt/actions/workflows/ci.yml)
-[![Docs](https://img.shields.io/badge/docs-mkdocs-informational)](https://dimbleby.github.io/tomlrt/)
+[![Docs](https://img.shields.io/badge/docs-zensical-informational)](https://dimbleby.github.io/tomlrt/)
 
 A format-preserving TOML parser and writer for Python.
 
