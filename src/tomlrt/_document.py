@@ -451,7 +451,7 @@ class Table(dict[str, Any]):
 
         ``value`` may be any of:
 
-        * a spec from [`Table.section`][tomlrt.Table.section] — installs a
+        * a [`Table.section`][tomlrt.Table.section] result — installs a
           ``[...]`` standard section;
         * an [`AoT`][tomlrt.AoT] built standalone (``AoT([{...}])``) — installs
           ``[[...]]`` array-of-tables entries;
@@ -518,9 +518,12 @@ class Table(dict[str, Any]):
 
         Subclasses that support structural assignment (``_StdTable``,
         ``Document``) override this. The base implementation rejects
-        ``SectionSpec`` / ``AoT`` because inline-style tables cannot
-        hold ``[k]`` sections or ``[[k]]`` array-of-tables, and
-        rejects multi-segment paths for the same reason. Standalone
+        any section-flavoured value -- ``SectionSpec``, an attached
+        section-backed ``_StdTable``, or a detached
+        [`Table.section`][tomlrt.Table.section] result -- and
+        ``AoT``, because inline-style tables cannot hold ``[k]``
+        sections or ``[[k]]`` array-of-tables. Multi-segment paths
+        are rejected for the same reason. Standalone
         [`Array`][tomlrt.Array] and
         [`Table.inline`][tomlrt.Table.inline] values are accepted
         and attach live (their ``_node`` is spliced into the
@@ -533,12 +536,11 @@ class Table(dict[str, Any]):
             msg = "cannot install an array-of-tables inside an inline-style table"
             raise TOMLError(msg)
         if isinstance(value, _StdTable):
-            # An attached section-backed Table is the same kind of
-            # "give me a [section] here" request as a SectionSpec; the
-            # only difference is whether the user spelled the spec
-            # themselves or copied an existing block. Refuse it for
-            # the same reason — silently flattening it into the
-            # inline host loses the [section] semantics.
+            # A section-backed Table -- whether attached, or detached
+            # from ``Table.section()`` -- is the same kind of "give
+            # me a [section] here" request as a SectionSpec. Refuse
+            # it for the same reason: silently flattening it into
+            # the inline host would lose the [section] semantics.
             msg = "cannot install a [section]-style table inside an inline-style table"
             raise TOMLError(msg)
         if len(parts) > 1:
