@@ -5,7 +5,7 @@ tomlrt exposes comments at every level of a document: end-of-line, above an entr
 ## End-of-line comments
 
 `Table.comments` is a live `MutableMapping[str, str]` keyed by entry name.
-Setting `""` (or `del`) removes the comment.
+Assign a string to set or replace the comment; `del` removes it entirely.
 
 ```python
 doc = tomlrt.loads("""
@@ -16,7 +16,7 @@ port = 8080
 
 server = doc.table("server")
 server.comments["port"] = "override with $PORT"
-server.comments["host"] = ""               # clear
+del server.comments["host"]                 # remove the comment entirely
 
 print(tomlrt.dumps(doc))
 # [server]
