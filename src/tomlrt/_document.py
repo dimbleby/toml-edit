@@ -1882,12 +1882,17 @@ class _StdTable(Table):
             self._install_section(parts, value)
             return True
         if isinstance(value, AoT):
-            # Both attached and detached AoTs have a backing CST: deep-clone
-            # the source sections so comments, formatting, and per-value
-            # layout (e.g. multiline arrays set on entries before the AoT
-            # was installed) survive the move. Routing detached AoTs
-            # through ``to_dict()`` here would silently strip all of that.
-            self._install_attached_aot(parts, value)
+            # Unattached AoT (e.g. ``AoT([{...}])`` or freshly detached):
+            # re-path orphan sections from ``value._path`` to the
+            # destination, splice them into the live doc, and rehome
+            # the user's view so ``self[k] is value`` and later
+            # mutations on ``value`` flow through one consistent view.
+            # An already-attached source is deep-cloned (``_install_attached_aot``)
+            # so two slots never share CST sections.
+            if not value._attached:  # noqa: SLF001
+                self._install_unattached_aot(parts, value)
+            else:
+                self._install_attached_aot(parts, value)
             return True
         if isinstance(value, _StdTable) and not (
             value._doc_node is self._doc_node  # noqa: SLF001
@@ -2005,6 +2010,53 @@ class _StdTable(Table):
         aot._resync()  # noqa: SLF001
         self._install_at_path(parts, aot)
         return aot
+
+    def _install_unattached_aot(
+        self,
+        parts: tuple[str, ...],
+        value: AoT,
+    ) -> None:
+        """Live-attach an unattached AoT at ``parts``.
+
+        Rebases each orphan section's header path from ``value._path``
+        (typically ``("_",)``) to ``self._path + parts`` *in place*,
+        splices the sections into ``self._doc_node``, and re-homes
+        ``value`` and its entry views onto the live document. The
+        user's ``value`` reference becomes the live view at the
+        destination.
+        """
+        full_path = (*self._path, *parts)
+        src_path = value._path  # noqa: SLF001
+        splen = len(src_path)
+        sections = list(value._doc_node.sections)  # noqa: SLF001
+        for sec in sections:
+            hdr = sec.header
+            if (
+                hdr is None
+                or len(hdr.key.path) < splen
+                or hdr.key.path[:splen] != src_path
+            ):
+                continue
+            new_path = (*full_path, *hdr.key.path[splen:])
+            hdr.key = _make_dotted_key(new_path)
+        _full_path, insert_at, prior_leading = self._prepare_section_slot(parts)
+        if sections:
+            _apply_prior_leading(sections, prior_leading)
+            _insert_section_block(
+                self._doc_node,
+                insert_at,
+                sections,
+                separate_within=False,
+            )
+        value._doc_node = self._doc_node  # noqa: SLF001
+        value._path = full_path  # noqa: SLF001
+        value._attached = True  # noqa: SLF001
+        for entry in value:
+            if isinstance(entry, _StdTable):
+                entry._doc_node = self._doc_node  # noqa: SLF001
+                entry._path = full_path  # noqa: SLF001
+        value._resync()  # noqa: SLF001
+        self._install_at_path(parts, value)
 
     @override
     def _install_section(

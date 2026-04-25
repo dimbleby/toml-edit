@@ -335,3 +335,116 @@ def test_array_inside_inline_table_both_live() -> None:
     arr.append(3)
     parsed = _reparses(tomlrt.dumps(doc))
     assert parsed == {"t": {"xs": [1, 2, 3], "k": "added"}}
+
+
+# ---------------------------------------------------------------------------
+# AoT live attach
+# ---------------------------------------------------------------------------
+
+
+def test_aot_factory_returns_unattached() -> None:
+    aot = tomlrt.AoT([{"name": "a"}, {"name": "b"}])
+    assert isinstance(aot, list)
+    assert [dict(t) for t in aot] == [{"name": "a"}, {"name": "b"}]
+
+
+def test_aot_assignment_is_user_reference() -> None:
+    doc = tomlrt.parse("")
+    aot = tomlrt.AoT([{"name": "a"}])
+    doc["servers"] = aot
+    assert doc["servers"] is aot
+
+
+def test_aot_mutation_after_assignment_visible_in_document() -> None:
+    doc = tomlrt.parse("")
+    aot = tomlrt.AoT([{"name": "a"}])
+    doc["servers"] = aot
+    aot.append({"name": "b"})
+    parsed = _reparses(tomlrt.dumps(doc))
+    assert parsed == {"servers": [{"name": "a"}, {"name": "b"}]}
+
+
+def test_aot_entry_mutation_after_assignment_visible_in_document() -> None:
+    doc = tomlrt.parse("")
+    aot = tomlrt.AoT([{"name": "a"}])
+    doc["servers"] = aot
+    aot[0]["extra"] = 42
+    parsed = _reparses(tomlrt.dumps(doc))
+    assert parsed == {"servers": [{"name": "a", "extra": 42}]}
+
+
+def test_empty_aot_attaches_then_appends_via_user_reference() -> None:
+    doc = tomlrt.parse("")
+    aot = tomlrt.AoT()
+    doc["servers"] = aot
+    aot.append({"name": "a"})
+    aot.append({"name": "b"})
+    parsed = _reparses(tomlrt.dumps(doc))
+    assert parsed == {"servers": [{"name": "a"}, {"name": "b"}]}
+
+
+def test_aot_double_assign_clones_second_slot() -> None:
+    doc = tomlrt.parse("")
+    aot = tomlrt.AoT([{"name": "a"}])
+    doc["p"] = aot
+    doc["q"] = aot
+    assert doc["p"] is aot
+    assert doc["q"] is not aot
+    aot.append({"name": "b"})
+    parsed = _reparses(tomlrt.dumps(doc))
+    assert parsed == {"p": [{"name": "a"}, {"name": "b"}], "q": [{"name": "a"}]}
+
+
+def test_aot_cross_document_assignment_clones() -> None:
+    d1 = tomlrt.parse("")
+    aot = tomlrt.AoT([{"name": "a"}])
+    d1["servers"] = aot
+    d2 = tomlrt.parse("")
+    d2["servers"] = d1["servers"]
+    assert d1["servers"] is aot
+    assert d2["servers"] is not d1["servers"]
+    aot.append({"name": "b"})
+    assert _reparses(tomlrt.dumps(d1)) == {
+        "servers": [{"name": "a"}, {"name": "b"}],
+    }
+    assert _reparses(tomlrt.dumps(d2)) == {"servers": [{"name": "a"}]}
+
+
+def test_aot_intra_document_assignment_clones() -> None:
+    doc = tomlrt.parse("")
+    aot = tomlrt.AoT([{"name": "a"}])
+    doc["p"] = aot
+    doc["q"] = doc["p"]
+    assert doc["p"] is aot
+    assert doc["q"] is not doc["p"]
+    aot.append({"name": "b"})
+    parsed = _reparses(tomlrt.dumps(doc))
+    assert parsed == {"p": [{"name": "a"}, {"name": "b"}], "q": [{"name": "a"}]}
+
+
+def test_detached_aot_reattaches_live() -> None:
+    doc = tomlrt.parse("")
+    aot = tomlrt.AoT([{"name": "a"}])
+    doc["servers"] = aot
+    doc["servers"] = tomlrt.AoT([{"name": "z"}])  # aot now detached
+    doc["others"] = aot  # re-attaches live here
+    assert doc["others"] is aot
+    aot.append({"name": "b"})
+    parsed = _reparses(tomlrt.dumps(doc))
+    assert parsed == {
+        "servers": [{"name": "z"}],
+        "others": [{"name": "a"}, {"name": "b"}],
+    }
+
+
+def test_aot_entry_view_identity_preserved_through_attach() -> None:
+    aot = tomlrt.AoT([{"name": "a"}])
+    entry = aot[0]
+    doc = tomlrt.parse("")
+    doc["servers"] = aot
+    # The same Table view the user grabbed before assignment is still
+    # the live entry post-attach.
+    assert aot[0] is entry
+    entry["extra"] = 1
+    parsed = _reparses(tomlrt.dumps(doc))
+    assert parsed == {"servers": [{"name": "a", "extra": 1}]}
