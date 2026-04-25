@@ -324,11 +324,8 @@ class Table(dict[str, Any]):
     ) -> TomlValue | None:
         """Mutate the CST so ``key`` binds to ``value``.
 
-        Returns the new dict-storage value for ``key`` if the
-        implementation can compute it cheaply; otherwise returns
-        ``None`` to ask :meth:`__setitem__` to fall back to the full
-        :meth:`_refresh_key` walk. Returning the value short-circuits
-        an O(N) re-scan of the document for a single-key update.
+        Return the new dict-storage value if cheap to compute, else
+        ``None`` (asks the caller to fall back to :meth:`_refresh_key`).
         """
         raise NotImplementedError
 
@@ -364,12 +361,10 @@ class Table(dict[str, Any]):
         """Mark this table (and any nested containers) as orphaned.
 
         After detachment, mutations through this object only affect its
-        own (now-isolated) state; CST writeback no longer reaches the
-        original document. ``doc_node`` is supplied when the parent has
-        already created an orphan :class:`DocumentNode` covering the
-        whole detached subtree; subclasses with section-based storage
-        (:class:`_StdTable`, :class:`AoT`) use it to keep nested
-        structural mutations confined to that orphan view.
+        own (now-isolated) state. ``doc_node`` is passed in when the
+        parent already created an orphan :class:`DocumentNode` covering
+        the whole detached subtree; section-based subclasses use it to
+        keep nested structural mutations confined to that orphan view.
         """
         self._attached = False
         for v in self.values():
@@ -381,22 +376,12 @@ class Table(dict[str, Any]):
     # --- mutators ----------------------------------------------------------
 
     def _commit_value(self, key: str, value: object) -> None:
-        """Plain-value write at ``key`` + dict-storage reconcile.
+        """Plain-value write at ``key`` then sync dict storage.
 
-        Used by ``_install_flavoured`` to commit values that didn't
-        match any structural-install flavour. Lifted out of
-        ``__setitem__`` so single-segment installs can finish without
-        recursing back through it (which would loop, since
-        ``__setitem__`` now unconditionally delegates to
-        ``_install_flavoured``).
-
-        When ``value`` is an unattached :class:`_InlineTable` or
-        :class:`Array`, the synthesise step (``value_to_node`` ->
-        ``_attach_or_clone``) splices ``value._node`` into the
-        destination KV verbatim and flips ``_attached``. We capture
-        that pre-call and use it post-call to drop ``value`` itself
-        into dict storage, so ``self[key] is value`` holds and later
-        mutations through ``value`` flow through the same cached view.
+        When ``value`` is an unattached :class:`_InlineTable` /
+        :class:`Array`, :func:`value_to_node` splices its node live;
+        we then bind ``value`` itself in dict storage so
+        ``self[key] is value`` holds.
         """
         will_live_attach = (
             isinstance(value, (_InlineTable, Array)) and not value._attached  # noqa: SLF001
@@ -411,28 +396,19 @@ class Table(dict[str, Any]):
 
     @override
     def __setitem__(self, key: str, value: object) -> None:
-        # Detach any container currently at ``key`` before we overwrite
-        # it, so user-held references stop reflecting later document
-        # edits. ``old is value`` is the augmented-assignment / self-
-        # assignment case (``d[k] |= ...`` rebinds with the same
-        # object): there's nothing to detach and nothing to re-install.
+        # Detach any container at ``key`` so user-held references stop
+        # tracking later edits. ``old is value`` is the augmented-
+        # assignment case (``d[k] |= ...``); skip detach.
         #
-        # We intentionally route writes through the install machinery
-        # even when ``self`` is itself detached: a detached Table /
-        # _InlineTable owns a private CST (a section list in an orphan
-        # ``DocumentNode``, or just its own ``InlineTableNode``), and
-        # writes need to land there so re-attach (deep-clone or
-        # live-splice) sees them.
+        # Detached self still routes through install: a detached Table
+        # owns a private CST (orphan DocumentNode or InlineTableNode)
+        # and writes must land there so re-attach sees them.
         if super().__contains__(key):
             old = super().__getitem__(key)
             if old is value:
                 return
             if isinstance(old, (Table, AoT, Array)):
                 old._detach()  # noqa: SLF001
-        # All assignment flows -- structural and plain -- funnel through
-        # ``_install_flavoured`` so each Table flavour can apply one
-        # consistent dispatch policy. Plain values land in the
-        # subclass's ``_commit_value`` fallback.
         self._install_flavoured((key,), value)
 
     def install(
@@ -495,10 +471,7 @@ class Table(dict[str, Any]):
                 walked = False
                 break
             cur = nxt
-        # Detach any container view currently at the leaf so user-held
-        # references stop tracking the document after replacement.
-        # ``__setitem__`` does this for single-key overwrites; do the
-        # same here once we've located the leaf's parent.
+        # Mirror __setitem__'s detach-existing behaviour at the resolved leaf.
         if walked and isinstance(cur, Table) and dict.__contains__(cur, parts[-1]):
             existing = dict.__getitem__(cur, parts[-1])
             if isinstance(existing, (Table, AoT, Array)) and existing is not value:
@@ -1025,12 +998,8 @@ class _InlineTable(Table):
 
     @override
     def _set_value(self, key: str, value: object) -> TomlValue | None:
-        # Fast path for an unshadowed fresh key: the dict cache lets us
-        # skip the entry walk entirely. ``key not in self`` here means
-        # no existing entry has ``key`` as its first path segment (the
-        # dict surfaces both single-segment entries and dotted-key
-        # sub-tables under their head), so there is nothing to swap or
-        # purge -- just append and incrementally re-stamp separators.
+        # Fast path: brand-new head key (dict cache surfaces single-segment
+        # entries and dotted-key sub-tables, so absence here is conclusive).
         prefix = (key,)
         if not super().__contains__(key):
             new_entry = self._make_entry(prefix, value)
@@ -1477,8 +1446,7 @@ class _StdTable(Table):
             if hlen >= child_len and hpath[:plen] == path and hpath[plen] == key:
                 if hdr.kind == "array" and hlen == child_len:
                     return ("aot", None)
-                # A deeper section ([a.b.c] *or* [[a.b.c]]) below ``key``
-                # makes ``key`` an implicit super-table — i.e. a table.
+                # Deeper section makes ``key`` an implicit super-table.
                 child_kind = "table"
         if child_kind is not None:
             return (child_kind, None)
@@ -1506,20 +1474,14 @@ class _StdTable(Table):
     def _purge_conflicting(self, key: str) -> None:
         """Remove any existing dotted, sub-table or AoT structure under ``key``.
 
-        Used to give Python-dict-style overwrite semantics: assigning to
-        a name that already names a sub-table silently destroys that
-        sub-table (and any nested children) rather than raising. Also
-        removes any ancestor-section dotted entries that contribute
-        to ``self._path + (key, ...)`` so they don't survive as ghosts.
-        Constrained to ``self._scope()`` so an AoT entry can't reach
-        across its boundary and delete a sibling entry's same-path
-        sub-section.
+        Gives Python-dict-style overwrite semantics: assigning to a name
+        that already names a sub-table silently destroys that sub-table
+        and any nested children. Constrained to ``self._scope()`` so an
+        AoT entry can't reach across its boundary and delete a sibling
+        entry's same-path sub-section.
 
-        Pure structural removal — does not touch top-blank trivia.
-        Callers run :meth:`DocumentNode.normalise_top_blank` themselves
-        once the larger operation is done, so a purge-then-splice
-        sequence doesn't strip a soon-to-be-meaningful blank in the
-        intermediate state.
+        Pure structural removal; caller runs
+        :meth:`DocumentNode.normalise_top_blank`.
         """
         for sec in self._direct_sections():
             sec.entries[:] = [kv for kv in sec.entries if kv.key.path[0] != key]
@@ -1597,25 +1559,18 @@ class _StdTable(Table):
                 next_header = doc_node.sections[idx + 1].header
                 if next_header is not None:
                     _prepend_blank_line(next_header.leading)
-        # The new dict-storage value is exactly what we just wrote;
-        # caller can skip the full _refresh_key walk. Safe for every
-        # kind because _purge_conflicting only removes things keyed by
-        # ``key`` in this scope, so no other dict slot is invalidated.
+        # Return new value; _purge_conflicting only touches this key's slots,
+        # so no other dict slot is invalidated.
         return _value_for(new_kv.value)
 
     @override
     def _delete_value(self, key: str) -> None:
         kind, payload = self._classify(key)
         if kind == "absent":
-            # Nothing to remove from the CST. Either the caller already
-            # validated presence at the cache level (``Table.__delitem__``
-            # does), or the key is genuinely absent and the cache will
-            # raise on its own. Either way, the CST has no work to do.
+            # Cache-level presence is the source of truth; nothing to do.
             return
         if kind in ("direct", "extras") and isinstance(payload, KeyValueNode):
-            # Targeted removal: drop just the matching KV from its section.
-            # Avoids the O(N) section walks and full-list rebuilds in
-            # ``_purge_conflicting`` when there's nothing else to remove.
+            # Targeted removal avoids the O(N) walk in _purge_conflicting.
             target = payload
             scope = self._scope()
             sections = scope if scope is not None else self._doc_node.sections
@@ -1956,14 +1911,9 @@ class _StdTable(Table):
             # the target path (e.g. during ``deepcopy`` reconstruction).
             self._install_attached_table(parts, value)
             return True
-        # No bespoke Array branch: an unattached :class:`Array` falls
-        # through to the plain-value commit in ``_install_flavoured``,
-        # which routes through ``_set_value`` -> ``value_to_node``.
-        # ``value_to_node`` splices the user's ``_node`` into the
-        # destination KV (live attach), and ``_commit_value`` then
-        # swaps the user's reference into dict storage so
-        # ``self[k] is value`` holds. Attached Arrays deep-clone in
-        # ``value_to_node`` for the same reason.
+        # Array isn't dispatched here: it falls through to the plain-value
+        # commit, which routes through value_to_node (live-attach if
+        # unattached, deep-clone if already attached).
         return False
 
     def _prepare_section_slot(

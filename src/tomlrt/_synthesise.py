@@ -179,15 +179,7 @@ def _mapping_to_inline_table_node(mapping: Mapping[str, TomlValue]) -> InlineTab
 
 
 def _attach_or_clone(value: object, node: ValueNode) -> ValueNode:
-    """Splice ``node`` live into the destination, or deep-clone it.
-
-    A typed container (:class:`Array`, :class:`_InlineTable`) lives at
-    most one CST location. If ``value`` is currently unattached, we
-    flip ``_attached`` and return its node verbatim so the user's
-    reference becomes the live view at the destination. If ``value``
-    is already attached somewhere, we deep-clone the node so the new
-    slot is independent of the old one.
-    """
+    """Return ``node`` live if ``value`` is unattached, else a deep clone."""
     if not value._attached:  # type: ignore[attr-defined]  # noqa: SLF001
         value._attached = True  # type: ignore[attr-defined]  # noqa: SLF001
         return node
@@ -197,14 +189,10 @@ def _attach_or_clone(value: object, node: ValueNode) -> ValueNode:
 def value_to_node(value: object) -> ValueNode:
     """Convert a logical value to a fresh :class:`ValueNode`.
 
-    Containers already backed by a CST are deep-cloned so the new node
-    is independent of the source. Any :class:`Mapping` (including
-    :class:`dict` and ``MappingProxyType``) becomes an inline table;
-    a plain :class:`list` becomes an inline array. Tuples and other
-    non-list sequences are deliberately not accepted: ``Sequence``
-    would also match ``str`` / ``bytes`` / ``range`` and so requires
-    case-by-case carve-outs, while ``Mapping`` has no such landmines.
-    Callers who want to assign a tuple should call ``list(...)`` first.
+    Containers backed by an existing CST are deep-cloned so the new
+    node is independent of the source. Any :class:`Mapping` becomes an
+    inline table; a plain :class:`list` becomes an inline array.
+    Tuples are not accepted — wrap with ``list``.
     """
     # Local import avoids a circular dependency with _document.
     from tomlrt._document import AoT, Array, Table  # noqa: PLC0415

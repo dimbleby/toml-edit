@@ -71,17 +71,10 @@ def loads(text: str) -> Document:
 def load(fp: IO[bytes]) -> Document:
     """Parse a TOML document from a *binary* file-like object.
 
-    The file must be opened in binary mode (``open(path, "rb")``).
-    Mirroring :mod:`tomllib`, we refuse text-mode files because:
-
-    * TOML is defined to be UTF-8 -- decoding it ourselves removes the
-      risk of a locale-dependent text-mode default (e.g. ``cp1252`` on
-      Windows) silently mangling non-ASCII strings.
-    * Text mode performs newline translation (``\\r\\n`` -> ``\\n``),
-      which would destroy this library's format-preservation guarantee
-      for files originating on Windows.
-
-    Raises :class:`TypeError` if ``fp`` looks like a text-mode stream.
+    The file must be opened in binary mode (``open(path, "rb")``); text
+    mode would perform locale-dependent decoding and newline translation,
+    breaking the byte-exact round-trip guarantee. Raises :class:`TypeError`
+    for a text stream.
     """
     data = fp.read()
     if not isinstance(data, (bytes, bytearray)):
@@ -102,9 +95,6 @@ def dump(doc: Document, fp: IO[bytes]) -> None:
     """Serialize a :class:`Document` and write it to a *binary* stream.
 
     The file must be opened in binary mode (``open(path, "wb")``).
-    Symmetric with :func:`load`: writing UTF-8 bytes ourselves avoids
-    locale-dependent encoding and newline translation, so a
-    ``load`` -> ``dump`` round-trip is byte-for-byte stable.
     """
     fp.write(dumps(doc).encode("utf-8"))
 
