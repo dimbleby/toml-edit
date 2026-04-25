@@ -11,8 +11,11 @@ from tomlrt._parser import parse as _parse_to_cst
 
 
 def _populate(table: Table, data: Mapping[str, Any]) -> None:
-    """Recursively pour ``data`` into ``table`` using section/AoT shapes
-    for nested mappings and lists-of-mappings, scalars for leaves."""
+    """Recursively pour ``data`` into ``table``.
+
+    Uses section/AoT shapes for nested mappings and lists-of-mappings,
+    scalars for leaves.
+    """
     from tomlrt._document import AoT  # noqa: PLC0415
 
     for key, value in data.items():

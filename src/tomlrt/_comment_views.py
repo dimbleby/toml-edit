@@ -324,8 +324,10 @@ class _ArrayCommentsView(_ArrayItemViewBase[str]):
                 next_item.leading = Trivia([WhitespaceNode(indent)])
 
     def _ensure_array_break_before_close(self) -> None:
-        """Force ``]`` onto a new line when the last item carries an EOL
-        comment (the comment otherwise swallows the closing bracket)."""
+        """Force ``]`` onto a new line when the last item carries an EOL comment.
+
+        Without this, the trailing comment swallows the closing bracket.
+        """
         node = self._array._node  # noqa: SLF001
         ft = node.final_trivia
         if "\n" in ft.render():

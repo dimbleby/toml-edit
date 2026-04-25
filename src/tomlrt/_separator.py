@@ -285,7 +285,7 @@ def _sample_separator_style(
 
 
 def _strip_trailing_indent(trivia: Trivia) -> None:
-    """Drop any pure-whitespace pieces sitting after ``trivia``'s last newline.
+    r"""Drop any pure-whitespace pieces sitting after ``trivia``'s last newline.
 
     Used on the *last* item's post-comma / trailing trivia after a
     reorder: a piece like ``"\\n  "`` was the indent for whichever
