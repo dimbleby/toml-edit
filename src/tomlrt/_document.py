@@ -1924,13 +1924,15 @@ class _StdTable(Table):
             self._install_section(parts, value)
             return True
         if isinstance(value, AoT):
-            # An unattached AoT (e.g. ``AoT([{...}])`` or freshly
-            # detached) live-attaches: its orphan section nodes
-            # migrate into the live doc with their headers rebased
-            # in place, and the user's ``value`` becomes the view at
-            # this slot. An already-attached source is deep-cloned so
-            # two slots never share CST sections.
-            self._install_aot(parts, value)
+            # Unattached AoT (e.g. ``AoT([{...}])`` or freshly detached):
+            # its orphan section nodes migrate into the live doc with
+            # their headers rebased in place, and the user's ``value``
+            # becomes the view at this slot. An already-attached source
+            # is deep-cloned so two slots never share CST sections.
+            if value._attached:  # noqa: SLF001
+                self._install_attached_aot(parts, value)
+            else:
+                self._install_detached(parts, value, _rebase_aot_sections_inplace)
             return True
         if isinstance(value, _StdTable):
             if (
@@ -1944,7 +1946,7 @@ class _StdTable(Table):
                 # rebase its private section nodes in place and
                 # rehome the user's view so it becomes the live
                 # view at the destination.
-                self._install_detached_table(parts, value)
+                self._install_detached(parts, value, _rebase_table_sections_inplace)
                 return True
             # Attached source: deep-clone the CST so comments and
             # formatting survive, and so any nested AoT lands as
@@ -2042,37 +2044,15 @@ class _StdTable(Table):
             None,
         )
 
-    def _install_aot(
+    def _install_attached_aot(
         self,
         parts: tuple[str, ...],
         value: AoT,
     ) -> None:
-        """Install ``value`` (attached or unattached) at ``parts``.
-
-        Attached source: deep-clone and splice; the destination gets a
-        fresh view, the source is unchanged.
-
-        Unattached source: rebase the source's section nodes in place
-        and splice them into the live document, then rehome the user's
-        ``value`` -- including any held nested children under its
-        entries -- so it *is* the live view at the destination.
-
-        The two paths share the slot-prep / blank-line-policy / splice
-        mechanics in `_splice_attached`; only the source-section
-        provider and the post-splice "wire up the view" step diverge.
-        """
-        was_attached = value._attached  # noqa: SLF001
-        sources = _clone_aot_sections if was_attached else _rebase_aot_sections_inplace
-        src_path = value._path  # noqa: SLF001
-        full_path = self._splice_attached(parts, value, sources)
-        if was_attached:
-            view: AoT = AoT._attached_to(self._doc_node, full_path, [])  # noqa: SLF001
-            view._resync()  # noqa: SLF001
-        else:
-            _rehome_table_subtree(
-                value, self._doc_node, src_path, full_path, self._owner_anchor
-            )
-            view = value
+        """Deep-clone an attached source ``AoT`` into ``parts``."""
+        full_path = self._splice_attached(parts, value, _clone_aot_sections)
+        view: AoT = AoT._attached_to(self._doc_node, full_path, [])  # noqa: SLF001
+        view._resync()  # noqa: SLF001
         self._install_at_path(parts, view)
 
     @override
@@ -2089,7 +2069,7 @@ class _StdTable(Table):
         # detached view, so SectionSpec snapshot semantics are preserved.
         detached = Table.section(value)
         assert isinstance(detached, _StdTable)
-        return self._install_detached_table(parts, detached)
+        return self._install_detached(parts, detached, _rebase_table_sections_inplace)
 
     def _drop_redundant_anchor(self) -> None:
         """Drop an empty placeholder ``[X]`` header at ``self._path``.
@@ -2136,22 +2116,37 @@ class _StdTable(Table):
         self._install_at_path(parts, view)
         return view
 
-    def _install_detached_table(
+    @overload
+    def _install_detached(
         self,
         parts: tuple[str, ...],
         value: _StdTable,
-    ) -> _StdTable:
-        """Live-attach an unattached ``_StdTable`` (e.g. ``Table.section()``).
+        rebase: Callable[[_StdTable, tuple[str, ...]], list[SectionNode]],
+    ) -> _StdTable: ...
+    @overload
+    def _install_detached(
+        self,
+        parts: tuple[str, ...],
+        value: AoT,
+        rebase: Callable[[AoT, tuple[str, ...]], list[SectionNode]],
+    ) -> AoT: ...
+    def _install_detached(
+        self,
+        parts: tuple[str, ...],
+        value: _StdTable | AoT,
+        rebase: Callable[[Any, tuple[str, ...]], list[SectionNode]],
+    ) -> _StdTable | AoT:
+        """Live-attach an unattached ``_StdTable`` or ``AoT``.
 
         The orphan section nodes migrate from ``value._doc_node`` into
         the live document, with header paths rebased onto the
-        destination path. The user's ``value`` reference -- and every
-        cached descendant view -- is rehomed in place, so subsequent
-        mutations through it reach the live document and
+        destination path by ``rebase``. The user's ``value`` reference --
+        and every cached descendant view -- is rehomed in place, so
+        subsequent mutations through it reach the live document and
         ``self[parts[-1]] is value`` holds.
         """
-        src_path = value._path
-        full_path = self._splice_attached(parts, value, _rebase_table_sections_inplace)
+        src_path = value._path  # noqa: SLF001
+        full_path = self._splice_attached(parts, value, rebase)
         _rehome_table_subtree(
             value, self._doc_node, src_path, full_path, self._owner_anchor
         )
