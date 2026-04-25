@@ -156,7 +156,7 @@ def _starts_with_blank_line(trivia: Trivia) -> bool:
     return bool(trivia.pieces) and isinstance(trivia.pieces[0], NewlineNode)
 
 
-def _gaps_uniformly_blank(leadings: Iterable[Trivia]) -> bool:
+def _first_gap_is_blank(leadings: Iterable[Trivia]) -> bool:
     """Decide whether new siblings should adopt a blank-line gap.
 
     The first sibling gap in source order is read as the user's
