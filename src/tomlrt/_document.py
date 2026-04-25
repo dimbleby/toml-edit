@@ -90,8 +90,8 @@ from tomlrt._trivia import (
     _detect_newline,
     _ensure_trailing_newline,
     _extract_trailing_comment_block,
+    _first_gap_is_blank,
     _format_comment,
-    _gaps_uniformly_blank,
     _indent_after_last_newline,
     _normalise_newlines,
     _prepend_blank_line,
@@ -1542,7 +1542,7 @@ class _StdTable(Table):
         target = sections[-1]
         indent = _detect_indent(target)
         new_kv = make_keyvalue_node(key, value, indent=indent)
-        if _gaps_uniformly_blank(kv.leading for kv in target.entries[1:]):
+        if _first_gap_is_blank(kv.leading for kv in target.entries[1:]):
             new_kv.leading.pieces.insert(0, NewlineNode("\n"))
         _ensure_trailing_newline(target)
         # Migrate any parked preamble (only present when this is the
@@ -2934,9 +2934,7 @@ class AoT(list[Table]):
         sibling_leadings = [
             sec.header.leading for sec in own[1:] if sec.header is not None
         ]
-        add_blank = (
-            _gaps_uniformly_blank(sibling_leadings) if sibling_leadings else True
-        )
+        add_blank = _first_gap_is_blank(sibling_leadings) if sibling_leadings else True
         preceding_has_content = any(
             s.header is not None or s.entries for s in sections[:insert_idx]
         )
