@@ -1750,13 +1750,18 @@ class _StdTable(Table):
         kind: str,
     ) -> None:
         """Defensive: refuse if ``[child_path]`` (or ``[[child_path]]``)
-        already exists. The parser blocks any source where this would
-        arise and assignment auto-purges conflicts, so this only fires
-        under direct CST manipulation.
+        already exists within this view's scope. The parser blocks any
+        source where this would arise and assignment auto-purges
+        conflicts, so this is mostly a guard against direct CST
+        manipulation -- but the scope restriction matters in normal
+        use too: an AoT entry must not see a same-named promoted
+        section that lives in a sibling entry's block.
         """
-        for existing in self._doc_node.sections:
+        scope = self._scope()
+        sections = scope if scope is not None else self._doc_node.sections
+        for existing in sections:
             hdr = existing.header
-            if hdr is not None and hdr.key.path == child_path:  # pragma: no cover
+            if hdr is not None and hdr.key.path == child_path:
                 joined = ".".join(child_path)
                 if kind == "aot":
                     msg = (
