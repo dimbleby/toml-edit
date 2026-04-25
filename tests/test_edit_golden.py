@@ -2067,6 +2067,36 @@ def test_promote_array_rejects_non_array_for_present_keys() -> None:
             doc["a"].promote_array(target)
 
 
+def test_promote_inline_across_aot_entries() -> None:
+    """Promoting the same key in each entry of an AoT must not trip
+    the "section already exists" guard with the section just emitted
+    inside a sibling entry's block.
+    """
+    doc = tomlrt.loads(
+        '[[package]]\nname = "A"\ndependencies = { b = "*" }\n\n'
+        '[[package]]\nname = "B"\ndependencies = { c = "*" }\n',
+    )
+    for entry in doc.aot("package"):
+        entry.promote_inline("dependencies")
+    rendered = tomlrt.dumps(doc)
+    assert rendered.count("[package.dependencies]") == 2
+    assert "dependencies = {" not in rendered
+    assert tomlrt.loads(rendered).render() == rendered
+
+
+def test_promote_array_across_aot_entries() -> None:
+    doc = tomlrt.loads(
+        '[[package]]\nname = "A"\ntags = [{k = 1}]\n\n'
+        '[[package]]\nname = "B"\ntags = [{k = 2}]\n',
+    )
+    for entry in doc.aot("package"):
+        entry.promote_array("tags")
+    rendered = tomlrt.dumps(doc)
+    assert rendered.count("[[package.tags]]") == 2
+    assert "tags = [" not in rendered
+    assert tomlrt.loads(rendered).render() == rendered
+
+
 # ---------------------------------------------------------------------------
 # Table.set_table / Table.ensure_table / dotted-path navigation
 # ---------------------------------------------------------------------------
