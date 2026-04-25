@@ -399,6 +399,11 @@ def _section_insert_index(
     back to the end of the document.
     """
     parent = full_path[:-1]
+    # Top-level sections always go to the end: every existing section
+    # trivially shares the empty parent prefix, so the last-sibling
+    # search would just yield ``len(sections) - 1``. Skip it.
+    if not parent:
+        return len(sections)
     last_sibling = -1
     for i, sec in enumerate(sections):
         hdr = sec.header

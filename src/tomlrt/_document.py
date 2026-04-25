@@ -1989,22 +1989,28 @@ class _StdTable(Table):
         scope_ids = None if scope is None else {id(s) for s in scope}
         prior_index: int | None = None
         prior_leading: Trivia | None = None
-        for i, sec in enumerate(self._doc_node.sections):
-            hdr = sec.header
-            if (
-                hdr is not None
-                and (scope_ids is None or id(sec) in scope_ids)
-                and len(hdr.key.path) >= plen
-                and hdr.key.path[:plen] == full_path
-            ):
-                prior_index = i
-                # Capture only when the matched section's header is exactly
-                # at full_path: a deeper match (e.g. ``[a.b.c]`` while we
-                # replace ``[a.b]``) is a sub-section, not the slot itself,
-                # and its leading belongs to it rather than to the parent.
-                if len(hdr.key.path) == plen:
-                    prior_leading = _clone_trivia(hdr.leading)
-                break
+        # Dict-cache short-circuit: if ``parts[0]`` isn't a known key on
+        # this view, no existing section can match ``full_path`` (any
+        # such section would surface as a sub-table or value in the
+        # dict cache). Skip the O(total-sections) prior-match scan.
+        skip_prior_search = len(parts) == 1 and not super().__contains__(parts[0])
+        if not skip_prior_search:
+            for i, sec in enumerate(self._doc_node.sections):
+                hdr = sec.header
+                if (
+                    hdr is not None
+                    and (scope_ids is None or id(sec) in scope_ids)
+                    and len(hdr.key.path) >= plen
+                    and hdr.key.path[:plen] == full_path
+                ):
+                    prior_index = i
+                    # Capture only when the matched section's header is exactly
+                    # at full_path: a deeper match (e.g. ``[a.b.c]`` while we
+                    # replace ``[a.b]``) is a sub-section, not the slot itself,
+                    # and its leading belongs to it rather than to the parent.
+                    if len(hdr.key.path) == plen:
+                        prior_leading = _clone_trivia(hdr.leading)
+                    break
         if len(parts) == 1:
             kind, _ = self._classify(parts[0])
             if kind != "absent":
@@ -2081,7 +2087,16 @@ class _StdTable(Table):
         # installed inside an AoT entry stays scoped to that entry —
         # otherwise reads/writes through ``view`` see same-named
         # sections in sibling entries and silently merge their values.
-        view = _StdTable(self._doc_node, full_path, owner_anchor=self._owner_anchor)
+        # The new section is empty and has no children yet, so its
+        # construction-time pool is just itself: skip the
+        # O(total-sections) rescan that ``_populate`` would otherwise do.
+        view = _StdTable(
+            self._doc_node,
+            full_path,
+            owner_anchor=self._owner_anchor,
+            _pool=[new_sec],
+            _extras=[],
+        )
         self._install_at_path(parts, view)
         for k, v in value.items():
             view[k] = v
