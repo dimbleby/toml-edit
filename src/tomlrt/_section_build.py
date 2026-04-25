@@ -161,10 +161,41 @@ def _clone_aot_sections(
     replaced by ``full_path``. Surrounding placement (insert index,
     blank-line policy, dict-storage sync) is the caller's job.
     """
+    sections = _aot_owned_sections(value)
+    return _clone_sections_rebased(sections, value._path, full_path)  # noqa: SLF001
+
+
+def _rebase_aot_sections_inplace(
+    value: AoT,
+    full_path: tuple[str, ...],
+) -> list[SectionNode]:
+    """Like :func:`_clone_aot_sections` but rebases in place, no clone.
+
+    Used when live-attaching an unattached AoT: the orphan section
+    nodes themselves migrate into the destination document, so we
+    rewrite their header paths in place rather than producing
+    independent copies. Returns the same sections, ready to splice.
+    """
+    sections = _aot_owned_sections(value)
+    splen = len(value._path)  # noqa: SLF001
+    for sec in sections:
+        hdr = sec.header
+        if (
+            hdr is None
+            or len(hdr.key.path) < splen
+            or hdr.key.path[:splen] != value._path  # noqa: SLF001
+        ):
+            continue
+        new_path = (*full_path, *hdr.key.path[splen:])
+        hdr.key = _make_dotted_key(new_path)
+    return sections
+
+
+def _aot_owned_sections(value: AoT) -> list[SectionNode]:
+    """All section nodes contributing to ``value``, in document order."""
     doc_node = value._doc_node  # noqa: SLF001
     blocks = (doc_node.aot_entry_block(header) for header in value._own_sections())  # noqa: SLF001
-    sections = [sec for block in blocks for sec in block]
-    return _clone_sections_rebased(sections, value._path, full_path)  # noqa: SLF001
+    return [sec for block in blocks for sec in block]
 
 
 def _new_host_section(path: tuple[str, ...]) -> SectionNode:
