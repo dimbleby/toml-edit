@@ -2731,45 +2731,29 @@ class AoT(list[Table]):
     def _make_header_section(self) -> SectionNode:
         return _new_section(self._path, kind="array")
 
-    def _populate_section(self, sec: SectionNode, value: object) -> None:
-        """Fill ``sec`` with KV entries derived from ``value``.
-
-        Accepts a plain dict, a :class:`Table`, or any
-        :class:`collections.abc.Mapping`. Cross-document Tables are
-        deep-cloned by ``make_keyvalue_node`` (via ``value_to_node``)
-        so inline tables / arrays aren't aliased.
-        """
-        if not isinstance(value, Mapping):
-            msg = (
-                f"cannot append a value of type {type(value).__name__} to an "
-                "array-of-tables; expected a dict or Table"
-            )
-            raise TOMLError(msg)
-        for k, v in value.items():
-            if not isinstance(k, str):
-                msg = f"AoT entry keys must be strings, got {type(k).__name__}"
-                raise TOMLError(msg)
-            sec.entries.append(make_keyvalue_node(k, v))
-
-    def _build_entry_block(
+    def _populate_via_view(
         self,
-        value: Table | Mapping[str, object],
-    ) -> list[SectionNode]:
-        """Build the section block for a new AoT entry.
+        header: SectionNode,
+        value: Mapping[str, object],
+    ) -> None:
+        """Install ``value``'s items into the AoT entry rooted at ``header``.
 
-        For a :class:`_StdTable` source, deep-clone its contributing
-        sections via :func:`_clone_table_sections` so per-KV trivia,
-        sub-section headers, and any nested AoTs are preserved
-        verbatim under the new entry's path. For plain mappings, fall
-        back to data-only synthesis through :meth:`_populate_section`.
+        Routes each KV through a temporary :class:`_StdTable` view
+        scoped (via ``owner_anchor``) to the new entry's block, so
+        flavoured values (``SectionSpec``, ``AoT``, layout-bearing
+        ``Array``) take their structural install paths -- a nested
+        ``Table.section`` becomes ``[path.k]``, a nested ``AoT``
+        becomes ``[[path.k]]`` -- instead of being inlined by the
+        synthesiser.
         """
-        if isinstance(value, _StdTable):
-            cloned = _clone_table_sections(value, self._path, head_kind="array")
-            if cloned:
-                return cloned
-        new_sec = self._make_header_section()
-        self._populate_section(new_sec, value)
-        return [new_sec]
+        view = _StdTable(
+            self._doc_node,
+            self._path,
+            anchor=header,
+            owner_anchor=header,
+        )
+        for k, v in value.items():
+            view[k] = v
 
     # ------------------------------------------------------------------
     # Mutators
@@ -2820,13 +2804,12 @@ class AoT(list[Table]):
         py_index: int,
         value: Table | Mapping[str, object],
     ) -> None:
+        self._validate_entry(value)
         own = self._own_sections()
         n = len(own)
         if py_index < 0:
             py_index += n
         py_index = max(0, min(py_index, n))
-        new_block = self._build_entry_block(value)
-        new_sec = new_block[0]
         sections = self._doc_node.sections
         # Pick an insertion point first; blank-line decision depends on it.
         if py_index == n:
@@ -2839,6 +2822,19 @@ class AoT(list[Table]):
                 insert_idx = len(sections)
         else:
             insert_idx = sections.index(own[py_index])
+        # Build the entry's block. ``_StdTable`` sources are deep-cloned
+        # so per-KV trivia, sub-section headers, and nested AoTs survive
+        # verbatim. Plain mappings get an empty header spliced in first
+        # and then populated through a scoped view, so flavoured values
+        # (``SectionSpec``, ``AoT``) install as proper sub-sections /
+        # sub-AoTs under the new entry instead of being inlined.
+        if isinstance(value, _StdTable):
+            new_block = _clone_table_sections(value, self._path, head_kind="array")
+            if not new_block:
+                new_block = [self._make_header_section()]
+        else:
+            new_block = [self._make_header_section()]
+        new_sec = new_block[0]
         # Insert a blank-line separator before the new header iff there
         # is already rendered content preceding it. When existing
         # siblings already share a uniform spacing style, copy that;
@@ -2864,6 +2860,9 @@ class AoT(list[Table]):
                 _prepend_blank_line(next_hdr.leading)
         self._doc_node.adopt_preamble_into(new_sec.header.leading)
         sections[insert_idx:insert_idx] = new_block
+        if not isinstance(value, _StdTable):
+            assert isinstance(value, Mapping)
+            self._populate_via_view(new_sec, value)
         self._resync()
 
     @override
