@@ -23,7 +23,7 @@ from tomlrt._nodes import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Iterable, Iterator, Sequence
 
     from tomlrt._nodes import (
         DocumentNode,
@@ -156,7 +156,7 @@ def _starts_with_blank_line(trivia: Trivia) -> bool:
     return bool(trivia.pieces) and isinstance(trivia.pieces[0], NewlineNode)
 
 
-def _gaps_uniformly_blank(leadings: Sequence[Trivia]) -> bool:
+def _gaps_uniformly_blank(leadings: Iterable[Trivia]) -> bool:
     """Decide whether existing siblings are uniformly blank-line separated.
 
     ``leadings`` is the leading trivia of every sibling *except the
@@ -166,9 +166,13 @@ def _gaps_uniformly_blank(leadings: Sequence[Trivia]) -> bool:
     blank line; mixed layouts fall back to ``False`` so we don't
     impose spacing the user may have deliberately omitted.
     """
-    if not leadings:
+    it = iter(leadings)
+    first = next(it, None)
+    if first is None:
         return False
-    return all(_starts_with_blank_line(t) for t in leadings)
+    return _starts_with_blank_line(first) and all(
+        _starts_with_blank_line(t) for t in it
+    )
 
 
 def _prepend_blank_line(trivia: Trivia) -> None:
