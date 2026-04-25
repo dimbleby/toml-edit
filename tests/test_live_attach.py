@@ -448,3 +448,56 @@ def test_aot_entry_view_identity_preserved_through_attach() -> None:
     entry["extra"] = 1
     parsed = _reparses(tomlrt.dumps(doc))
     assert parsed == {"servers": [{"name": "a", "extra": 1}]}
+
+
+# ---------------------------------------------------------------------------
+# Recursive attach: typed containers inside plain dict/list values
+# ---------------------------------------------------------------------------
+
+
+def test_inline_inside_plain_dict_attaches_live() -> None:
+    doc = tomlrt.parse("")
+    inner = Table.inline({"z": 1})
+    doc["x"] = {"y": inner}
+    inner["extra"] = 99
+    parsed = _reparses(tomlrt.dumps(doc))
+    assert parsed == {"x": {"y": {"z": 1, "extra": 99}}}
+
+
+def test_array_inside_plain_dict_attaches_live() -> None:
+    doc = tomlrt.parse("")
+    arr = Array([1, 2])
+    doc["x"] = {"xs": arr}
+    arr.append(3)
+    parsed = _reparses(tomlrt.dumps(doc))
+    assert parsed == {"x": {"xs": [1, 2, 3]}}
+
+
+def test_inline_inside_plain_list_attaches_live() -> None:
+    doc = tomlrt.parse("")
+    inner = Table.inline({"z": 1})
+    doc["xs"] = [inner, {"q": 2}]
+    inner["extra"] = 99
+    parsed = _reparses(tomlrt.dumps(doc))
+    assert parsed == {"xs": [{"z": 1, "extra": 99}, {"q": 2}]}
+
+
+def test_array_inside_array_attaches_live() -> None:
+    doc = tomlrt.parse("")
+    inner = Array([1, 2])
+    doc["xs"] = Array([inner, [3, 4]])
+    inner.append(99)
+    parsed = _reparses(tomlrt.dumps(doc))
+    assert parsed == {"xs": [[1, 2, 99], [3, 4]]}
+
+
+def test_outer_plain_dict_remains_snapshot() -> None:
+    # The plain-dict outer is still a snapshot: mutating it after
+    # assignment does *not* show up in the document, even though a
+    # nested typed container inside it attaches live.
+    doc = tomlrt.parse("")
+    plain: dict[str, object] = {"y": Table.inline({"z": 1})}
+    doc["x"] = plain
+    plain["new"] = 42  # outer is snapshot — not visible in doc
+    parsed = _reparses(tomlrt.dumps(doc))
+    assert parsed == {"x": {"y": {"z": 1}}}
