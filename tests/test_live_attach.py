@@ -476,7 +476,7 @@ def test_aot_held_nested_section_under_entry_survives_attach() -> None:
     """A nested live container assigned into an AoT entry *before* the AoT
     itself is installed must remain wired to the destination document.
 
-    Regression: ``_install_aot``'s detached branch only updated entry
+    Regression: the AoT detached-install path only updated entry
     tables' ``_doc_node`` / ``_path`` via ``_resync()`` -- it did not
     recurse into held nested children. A user holding the inner
     ``Table.section`` would silently lose post-install mutations
