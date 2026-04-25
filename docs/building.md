@@ -11,9 +11,6 @@ print(tomlrt.dumps(doc))
 # title = "example"
 ```
 
-`tomlrt.document()` is the discoverable way to build a TOML file from scratch.
-It is equivalent to `tomlrt.parse("")` but signals intent.
-
 ## From a plain `dict`
 
 Pass a mapping to populate the document recursively:
@@ -53,7 +50,7 @@ Use `install` to descend through dotted segments, or `ensure_table` when you jus
 doc.install("tool.poetry.version", "0.1.0")  # [tool.poetry] version = "..."
 doc.install(("tool", "weird.key"), 1)        # [tool] "weird.key" = 1
 
-ruff = doc.ensure_table("tool.ruff")          # creates [tool.ruff] if absent
+ruff = doc.ensure_table("tool.ruff")         # creates [tool.ruff] if absent
 ruff["line-length"] = 88
 ```
 
