@@ -176,45 +176,52 @@ def _clone_aot_sections(
     return _clone_sections_rebased(sections, value._path, full_path)  # noqa: SLF001
 
 
-def _rebase_aot_sections_inplace(
-    value: AoT,
+def _rebase_sections_inplace(
+    sections: Iterable[SectionNode],
+    src_path: tuple[str, ...],
     full_path: tuple[str, ...],
+    *,
+    head_kind: HeaderKind | None = None,
 ) -> list[SectionNode]:
-    """Like `_clone_aot_sections` but rebases header paths in place.
-
-    Used when live-attaching an unattached AoT: the orphan section
-    nodes themselves migrate into the destination document.
+    """Live-attach analogue of `_clone_sections_rebased`: rebase orphan
+    section header paths in place. ``head_kind`` (if given) forces the
+    leading section's kind, mirroring `_clone_table_sections`.
     """
-    sections = _aot_owned_sections(value)
-    out: list[SectionNode] = []
-    for sec, new_path in _iter_rebased(sections, value._path, full_path):  # noqa: SLF001
-        assert sec.header is not None
-        sec.header.key = _make_dotted_key(new_path)
-        out.append(sec)
-    return out
-
-
-def _rebase_table_sections_inplace(
-    value: _StdTable,
-    full_path: tuple[str, ...],
-) -> list[SectionNode]:
-    """Rebase a detached ``_StdTable``'s section headers in place.
-
-    Used when live-attaching an unattached standard table (the
-    detached form returned by [`Table.section`][tomlrt.Table.section]):
-    the orphan section nodes themselves migrate from the value's
-    private `DocumentNode` into the destination document, with their
-    header paths rewritten so the placeholder prefix is replaced by
-    ``full_path``. Returns them in document order.
-    """
-    src_path = value._path  # noqa: SLF001
-    sections = value._doc_node.sections  # noqa: SLF001
     out: list[SectionNode] = []
     for sec, new_path in _iter_rebased(sections, src_path, full_path):
         assert sec.header is not None
         sec.header.key = _make_dotted_key(new_path)
         out.append(sec)
+    if head_kind is not None:
+        for sec in out:
+            assert sec.header is not None
+            if len(sec.header.key.path) == len(full_path):
+                sec.header.kind = head_kind
+                break
     return out
+
+
+def _rebase_aot_sections_inplace(
+    value: AoT, full_path: tuple[str, ...]
+) -> list[SectionNode]:
+    """Live-attach analogue of `_clone_aot_sections`."""
+    return _rebase_sections_inplace(
+        _aot_owned_sections(value),
+        value._path,  # noqa: SLF001
+        full_path,
+    )
+
+
+def _rebase_table_sections_inplace(
+    value: _StdTable, full_path: tuple[str, ...]
+) -> list[SectionNode]:
+    """Live-attach a detached `_StdTable`; normalises head kind to ``"table"``."""
+    return _rebase_sections_inplace(
+        value._doc_node.sections,  # noqa: SLF001
+        value._path,  # noqa: SLF001
+        full_path,
+        head_kind="table",
+    )
 
 
 def _aot_owned_sections(value: AoT) -> list[SectionNode]:

@@ -2162,25 +2162,8 @@ class _StdTable(Table):
         mutations through it reach the live document and
         ``self[parts[-1]] is value`` holds.
         """
-        full_path = (*self._path, *parts)
         src_path = value._path
-        new_secs = _rebase_table_sections_inplace(value, full_path)
-        # Mirror the kind-normalisation that ``_clone_table_sections``
-        # applies on the deep-clone path: a standard-table install
-        # produces a ``[full_path]`` header even when the source was
-        # an orphaned AoT entry whose anchor still carries
-        # ``kind="array"``.
-        for sec in new_secs:
-            assert sec.header is not None
-            if len(sec.header.key.path) == len(full_path):
-                sec.header.kind = "table"
-                break
-        _full_path, insert_at, prior_leading = self._prepare_section_slot(parts)
-        if new_secs:
-            _apply_prior_leading(new_secs, prior_leading)
-            _insert_section_block(
-                self._doc_node, insert_at, new_secs, separate_within=False
-            )
+        full_path = self._splice_attached(parts, value, _rebase_table_sections_inplace)
         _rehome_table_subtree(
             value, self._doc_node, src_path, full_path, self._owner_anchor
         )
