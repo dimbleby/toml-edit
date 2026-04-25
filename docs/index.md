@@ -22,6 +22,6 @@ print(tomlrt.dumps(doc))   # comments and layout are preserved
 - [Building documents](building.md) — start from scratch with `document()`.
 - [Editing documents](editing.md) — structural assignment, live views, layout control.
 - [Typed access](access.md) — type-safe traversal and conversion back to plain Python.
-- [Comments](comments.md) — the comment API, end to end.
+- [Comments](comments.md) — the comment API.
 - [Errors](errors.md) — exception types.
 - [API reference](api.md) — full public surface.
