@@ -28,6 +28,7 @@ classifiers = [
 
 [project.urls]
 Repository = "https://github.com/dimbleby/tomlrt"
+Documentation = "https://dimbleby.github.io/tomlrt/"
 Issues = "https://github.com/dimbleby/tomlrt/issues"
 Changelog = "https://github.com/dimbleby/tomlrt/blob/main/CHANGELOG.md"
 
@@ -38,6 +39,11 @@ dev = [
   "hypothesis>=6",
   "mypy>=1.11",
   "tomli>=2; python_version < '3.11'",
+]
+docs = [
+  "mkdocs>=1.6",
+  "mkdocs-material>=9.5",
+  "mkdocstrings[python]>=0.27",
 ]
 
 [build-system]
