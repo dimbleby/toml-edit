@@ -2,7 +2,7 @@
 
 Builds new ``[name]`` / ``[[name]]`` blocks from scratch, deep-clones
 existing sections (rebasing their key prefix), and splices blocks back
-into a :class:`DocumentNode`. The cloning paths reach into the logical
+into a `DocumentNode`. The cloning paths reach into the logical
 view layer (``AoT`` / ``_StdTable`` privates) by design — they are the
 inverse of the view layer's "give me the CST that backs this view".
 """
@@ -113,7 +113,8 @@ def _build_promoted_aot_section(
 ) -> SectionNode:
     """Build a ``[[path]]`` section containing ``inline``'s entries.
 
-    Used by :meth:`Table.promote_array` to convert each element of an
+    Used by [`Table.promote_array`][tomlrt.Table.promote_array] to
+    convert each element of an
     inline array of inline tables into its own AoT entry.
     """
     section = _new_section(path, kind="array")
@@ -179,7 +180,7 @@ def _rebase_aot_sections_inplace(
     value: AoT,
     full_path: tuple[str, ...],
 ) -> list[SectionNode]:
-    """Like :func:`_clone_aot_sections` but rebases header paths in place.
+    """Like `_clone_aot_sections` but rebases header paths in place.
 
     Used when live-attaching an unattached AoT: the orphan section
     nodes themselves migrate into the destination document.

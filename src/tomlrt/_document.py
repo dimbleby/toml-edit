@@ -2,7 +2,7 @@
 
 This module exposes the public mapping/sequence types that users
 interact with. It implements both the read path and the structural
-mutation API on top of the physical CST defined in :mod:`tomlrt._nodes`.
+mutation API on top of the physical CST defined in `tomlrt._nodes`.
 """
 
 from __future__ import annotations
@@ -177,7 +177,7 @@ def _materialise_array(node: ArrayNode) -> list[TomlValue]:
 class SectionSpec(dict[str, Any]):
     """Tag telling ``__setitem__`` to install a ``[k]`` standard section.
 
-    Produced by :meth:`Table.section`; used only at assignment sites::
+    Produced by [`Table.section`][tomlrt.Table.section]; used only at assignment sites::
 
         doc["tool"] = Table.section({"version": 1})  # [tool] section
 
@@ -193,19 +193,19 @@ class Table(dict[str, Any]):
 
     All mapping flavours in tomlrt (top-level document, standard
     table, inline table, and the synthetic mappings spawned by dotted
-    keys) inherit from :class:`Table`, which is itself a subclass of
-    :class:`dict`. So values typed as ``Table`` cover every nested
+    keys) inherit from [`Table`][tomlrt.Table], which is itself a subclass of
+    `dict`. So values typed as ``Table`` cover every nested
     mapping you can encounter while walking a document, *and*
     ``isinstance(t, dict)`` is ``True`` and ``**t`` works.
 
-    .. rubric:: Storage model
+    **Storage model**
 
-    A :class:`Table` is a *view* over the parsed concrete syntax
+    A [`Table`][tomlrt.Table] is a *view* over the parsed concrete syntax
     tree (CST) — the physical tree of nodes that records every
     byte of the original document, including whitespace, comments,
     quote style and key order. Every mutation writes to the CST
     first and the dict storage is then refreshed from there. The
-    CST is the single source of truth — :meth:`render` and every
+    CST is the single source of truth — `render` and every
     iteration ultimately read from it; the dict storage is a cache
     that mirrors the CST data and exists for two reasons:
 
@@ -214,29 +214,29 @@ class Table(dict[str, Any]):
     * stable object identity for nested containers, so that
       ``doc["foo"] is doc["foo"]``.
 
-    Once a :class:`Table` is *detached* (see below) the CST link is
+    Once a [`Table`][tomlrt.Table] is *detached* (see below) the CST link is
     severed and the dict storage takes over as the only source of
     truth for that orphan subtree.
 
-    .. rubric:: Held references
+    **Held references**
 
     Held references behave like ordinary Python dict references:
 
     * If the binding goes away (``del doc['foo']``), the held
       ``Table`` is *orphaned*: its dict storage is intact and reads
       still work, but it is no longer connected to the document and
-      mutations through it do not appear in :meth:`Document.render`.
+      mutations through it do not appear in [`Document.render`][tomlrt.Document.render].
     * Re-binding the path (``doc['foo'] = {...}`` or
       ``doc.set_table('foo', {...})``) installs a *fresh* ``Table``;
       held references to the old table are unaffected.
 
-    .. rubric:: Live vs snapshot containers
+    **Live vs snapshot containers**
 
     Assignment of a *container* value follows one rule: a container
     is attached to at most one CST location.
 
-    * Assigning a fresh, unattached :class:`Array`,
-      :meth:`Table.inline` result, or :class:`AoT` *attaches in
+    * Assigning a fresh, unattached [`Array`][tomlrt.Array],
+      [`Table.inline`][tomlrt.Table.inline] result, or [`AoT`][tomlrt.AoT] *attaches in
       place*: the user's reference becomes the live view at the
       destination, so later mutations through that reference show
       up in the document. ``doc[k] is myinline`` after the assign.
@@ -244,10 +244,11 @@ class Table(dict[str, Any]):
       (any document, including ``self``) deep-clones the source.
       The two slots are independent — mutations to one don't bleed
       into the other.
-    * Plain :class:`dict` and :class:`list` values continue to be
+    * Plain `dict` and `list` values continue to be
       *snapshot* on assignment. Mutations to the original mapping
       / list after assignment are *not* reflected in the document.
-      Use :meth:`Table.inline` or :class:`Array` to opt in to live
+      Use [`Table.inline`][tomlrt.Table.inline] or
+      [`Array`][tomlrt.Array] to opt in to live
       semantics. Typed containers nested inside a plain dict / list
       still attach live recursively, even though the surrounding
       plain container is a snapshot.
@@ -271,7 +272,7 @@ class Table(dict[str, Any]):
         Use from an assignment site: ``doc[k] = Table.section({...})``.
         The spec is a dict subclass; you can build it up further before
         assignment (``spec["sub"] = ...``). Nested dicts in the mapping
-        remain inline unless they are themselves :meth:`section` specs.
+        remain inline unless they are themselves `section` specs.
         """
         spec = SectionSpec()
         if mapping is not None:
@@ -325,7 +326,7 @@ class Table(dict[str, Any]):
         """Mutate the CST so ``key`` binds to ``value``.
 
         Return the new dict-storage value if cheap to compute, else
-        ``None`` (asks the caller to fall back to :meth:`_refresh_key`).
+        ``None`` (asks the caller to fall back to `_refresh_key`).
         """
         raise NotImplementedError
 
@@ -362,7 +363,7 @@ class Table(dict[str, Any]):
 
         After detachment, mutations through this object only affect its
         own (now-isolated) state. ``doc_node`` is passed in when the
-        parent already created an orphan :class:`DocumentNode` covering
+        parent already created an orphan `DocumentNode` covering
         the whole detached subtree; section-based subclasses use it to
         keep nested structural mutations confined to that orphan view.
         """
@@ -378,8 +379,8 @@ class Table(dict[str, Any]):
     def _commit_value(self, key: str, value: object) -> None:
         """Plain-value write at ``key`` then sync dict storage.
 
-        When ``value`` is an unattached :class:`_InlineTable` /
-        :class:`Array`, :func:`value_to_node` splices its node live;
+        When ``value`` is an unattached `_InlineTable` /
+        [`Array`][tomlrt.Array], `value_to_node` splices its node live;
         we then bind ``value`` itself in dict storage so
         ``self[key] is value`` holds.
         """
@@ -424,11 +425,11 @@ class Table(dict[str, Any]):
 
         ``value`` may be any of:
 
-        * a spec from :meth:`Table.section` — installs a
+        * a spec from [`Table.section`][tomlrt.Table.section] — installs a
           ``[...]`` standard section;
-        * an :class:`AoT` built standalone (``AoT([{...}])``) — installs
+        * an [`AoT`][tomlrt.AoT] built standalone (``AoT([{...}])``) — installs
           ``[[...]]`` array-of-tables entries;
-        * an :class:`Array` built standalone (``Array([...],
+        * an [`Array`][tomlrt.Array] built standalone (``Array([...],
           multiline=...)``) — installs an inline array with the
           requested layout;
         * any plain Python value (scalar, ``dict``, ``list``) —
@@ -441,8 +442,8 @@ class Table(dict[str, Any]):
         ``install(("tool", "poetry"), Table.section({}))`` produces a
         single ``[tool.poetry]`` header, not a ``[tool]`` + nested.
 
-        Returns the freshly-installed live view (:class:`Table`,
-        :class:`AoT`, :class:`Array`) or the leaf value.
+        Returns the freshly-installed live view ([`Table`][tomlrt.Table],
+        [`AoT`][tomlrt.AoT], [`Array`][tomlrt.Array]) or the leaf value.
         """
         parts = _parse_key_path(path)
         # Reject install paths that would have to thread through an
@@ -494,7 +495,8 @@ class Table(dict[str, Any]):
         ``SectionSpec`` / ``AoT`` because inline-style tables cannot
         hold ``[k]`` sections or ``[[k]]`` array-of-tables, and
         rejects multi-segment paths for the same reason. Standalone
-        :class:`Array` and :class:`Table.inline` values are accepted
+        [`Array`][tomlrt.Array] and
+        [`Table.inline`][tomlrt.Table.inline] values are accepted
         and attach live (their ``_node`` is spliced into the
         destination so the user's reference remains the live view).
         """
@@ -582,8 +584,9 @@ class Table(dict[str, Any]):
         """Return a deep, plain-Python copy of this table.
 
         Walks the table recursively and converts every nested
-        :class:`Table` / :class:`AoT` / :class:`Array` view into an
-        ordinary :class:`dict` / :class:`list`. The result shares no
+        [`Table`][tomlrt.Table] / [`AoT`][tomlrt.AoT] /
+        [`Array`][tomlrt.Array] view into an
+        ordinary `dict` / `list`. The result shares no
         mutable state with the document and is safe to hand to
         consumers that expect real ``dict``/``list`` objects -- JSON
         encoders, ``fastjsonschema``, ``pydantic``, anything that
@@ -596,13 +599,14 @@ class Table(dict[str, Any]):
 
     @override
     def pop(self, key: str, default: object = _MISSING) -> Any:
-        """Remove ``key`` and return its value, like :meth:`dict.pop`.
+        """Remove ``key`` and return its value, like `dict.pop`.
 
-        For :class:`Table` / :class:`AoT` / :class:`Array` values, the
+        For [`Table`][tomlrt.Table] / [`AoT`][tomlrt.AoT] /
+        [`Array`][tomlrt.Array] values, the
         returned object is *orphaned*: it keeps its own data but is no
-        longer attached to the document. Use :meth:`to_dict` /
-        :meth:`Array.to_list` first if you need a plain-Python deep
-        copy.
+        longer attached to the document. Use `to_dict` /
+        [`Array.to_list`][tomlrt.Array.to_list] first if you need a
+        plain-Python deep copy.
         """
         try:
             value = super().__getitem__(key)
@@ -633,10 +637,10 @@ class Table(dict[str, Any]):
     # ------------------------------------------------------------------
 
     def table(self, key: str) -> Table:
-        """Return the table at ``key``, typed as :class:`Table`.
+        """Return the table at ``key``, typed as [`Table`][tomlrt.Table].
 
         ``key`` accepts a dotted path (e.g. ``"tool.poetry"``). Raises
-        :class:`KeyError` if any segment is missing, or :class:`TypeError`
+        `KeyError` if any segment is missing, or `TypeError`
         if the destination is not a table.
         """
         return self._typed_lookup(key, Table)
@@ -646,19 +650,19 @@ class Table(dict[str, Any]):
     @overload
     def get_table(self, key: str, default: _T) -> Table | _T: ...
     def get_table(self, key: str, default: object = None) -> object:
-        """Like :meth:`table`, but returns ``default`` if ``key`` is missing.
+        """Like `table`, but returns ``default`` if ``key`` is missing.
 
-        Wrong-type entries still raise :class:`TypeError`: a missing key
+        Wrong-type entries still raise `TypeError`: a missing key
         is "no answer", but an entry that exists with the wrong shape is
         a real bug worth surfacing.
         """
         return self._typed_lookup(key, Table, default=default)
 
     def array(self, key: str) -> Array:
-        """Return the array at ``key``, typed as :class:`Array`.
+        """Return the array at ``key``, typed as [`Array`][tomlrt.Array].
 
-        ``key`` accepts a dotted path. Raises :class:`KeyError` if any
-        segment is missing, or :class:`TypeError` if the destination is
+        ``key`` accepts a dotted path. Raises `KeyError` if any
+        segment is missing, or `TypeError` if the destination is
         not an inline array.
         """
         return self._typed_lookup(key, Array)
@@ -668,17 +672,17 @@ class Table(dict[str, Any]):
     @overload
     def get_array(self, key: str, default: _T) -> Array | _T: ...
     def get_array(self, key: str, default: object = None) -> object:
-        """Like :meth:`array`, but returns ``default`` if ``key`` is missing.
+        """Like `array`, but returns ``default`` if ``key`` is missing.
 
-        Wrong-type entries still raise :class:`TypeError`.
+        Wrong-type entries still raise `TypeError`.
         """
         return self._typed_lookup(key, Array, default=default)
 
     def aot(self, key: str) -> AoT:
-        """Return the array-of-tables at ``key``, typed as :class:`AoT`.
+        """Return the array-of-tables at ``key``, typed as [`AoT`][tomlrt.AoT].
 
-        ``key`` accepts a dotted path. Raises :class:`KeyError` if any
-        segment is missing, or :class:`TypeError` if the destination is
+        ``key`` accepts a dotted path. Raises `KeyError` if any
+        segment is missing, or `TypeError` if the destination is
         not an array of tables.
         """
         return self._typed_lookup(key, AoT)
@@ -688,9 +692,9 @@ class Table(dict[str, Any]):
     @overload
     def get_aot(self, key: str, default: _T) -> AoT | _T: ...
     def get_aot(self, key: str, default: object = None) -> object:
-        """Like :meth:`aot`, but returns ``default`` if ``key`` is missing.
+        """Like `aot`, but returns ``default`` if ``key`` is missing.
 
-        Wrong-type entries still raise :class:`TypeError`.
+        Wrong-type entries still raise `TypeError`.
         """
         return self._typed_lookup(key, AoT, default=default)
 
@@ -713,8 +717,8 @@ class Table(dict[str, Any]):
     ) -> object:
         """Shared implementation for ``table`` / ``array`` / ``aot`` and
         their ``get_*`` variants. Without ``default``, missing keys
-        re-raise :class:`KeyError`; otherwise ``default`` is returned.
-        Wrong-type entries always raise :class:`TypeError`.
+        re-raise `KeyError`; otherwise ``default`` is returned.
+        Wrong-type entries always raise `TypeError`.
         """
         try:
             value = self._lookup_path(key)
@@ -776,7 +780,7 @@ class Table(dict[str, Any]):
 
         ``None`` means the header has no trailing comment. Setting
         ``None`` or ``""`` removes any existing comment. Raises
-        :class:`TOMLError` for the top-level :class:`Document`,
+        [`TOMLError`][tomlrt.TOMLError] for the top-level [`Document`][tomlrt.Document],
         for inline tables, and for any logical table that exists only
         through implicit parents (no physical header in source).
 
@@ -803,7 +807,7 @@ class Table(dict[str, Any]):
         Returns the contiguous block of ``# ...`` lines ending right
         above the ``[name]`` / ``[[name]]`` line. Earlier blank-line
         separated comments are *not* included. Assigning an empty
-        tuple removes the block. Raises like :attr:`header_comment`.
+        tuple removes the block. Raises like `header_comment`.
         """
         msg = "this table flavour does not support the header comment API"
         raise TOMLError(msg)
@@ -858,7 +862,7 @@ class Table(dict[str, Any]):
         destination already exists and is table-shaped (an explicit
         section, an implicit super-table, or an inline table), the
         existing live view is returned and no mutation occurs. Raises
-        :class:`TOMLError` when the path names a non-table value.
+        [`TOMLError`][tomlrt.TOMLError] when the path names a non-table value.
         """
         parts = _parse_key_path(key)
         cur: Table = self
@@ -879,9 +883,9 @@ class Table(dict[str, Any]):
 
 
 class _InlineTable(Table):
-    """Mapping view over an :class:`InlineTableNode`.
+    """Mapping view over an `InlineTableNode`.
 
-    Also acts as the :class:`_DottedHost` for any dotted-key views
+    Also acts as the `_DottedHost` for any dotted-key views
     derived from its entries — the inline table itself owns all the
     state (node, separator style, ``=`` padding) those views need.
     """
@@ -1044,7 +1048,7 @@ class _DottedHost(Protocol):
 
 
 class _SectionDottedHost:
-    """Mutates dotted-key entries inside one or more :class:`SectionNode`."""
+    """Mutates dotted-key entries inside one or more `SectionNode`."""
 
     __slots__ = ("_sections",)
 
@@ -1453,7 +1457,7 @@ class _StdTable(Table):
         return self._classify_extras(key)
 
     def _classify_extras(self, key: str) -> tuple[str, object]:
-        """Tail of :meth:`_classify`: look for ancestor-section dotted KVs."""
+        """Tail of `_classify`: look for ancestor-section dotted KVs."""
         extras = self._compute_extras()
         if extras:
             terminal = None
@@ -1481,7 +1485,7 @@ class _StdTable(Table):
         entry's same-path sub-section.
 
         Pure structural removal; caller runs
-        :meth:`DocumentNode.normalise_top_blank`.
+        `DocumentNode.normalise_top_blank`.
         """
         for sec in self._direct_sections():
             sec.entries[:] = [kv for kv in sec.entries if kv.key.path[0] != key]
@@ -1637,7 +1641,7 @@ class _StdTable(Table):
     def _find_direct_kv(self, key: str) -> tuple[SectionNode, KeyValueNode]:
         """Return the section + KV node binding ``key`` as a single segment.
 
-        Raises :class:`KeyError` when ``key`` is absent or the binding is
+        Raises `KeyError` when ``key`` is absent or the binding is
         a child table / dotted-key prefix rather than a simple
         ``key = value`` line.
         """
@@ -1782,7 +1786,7 @@ class _StdTable(Table):
     ) -> tuple[SectionNode, KeyValueNode, _T]:
         """Find a direct KV at ``key`` whose value is an ``expected`` node.
 
-        Raises a friendly :class:`TOMLError` if the key exists under a
+        Raises a friendly [`TOMLError`][tomlrt.TOMLError] if the key exists under a
         different shape (sub-section, dotted-key subtable, AoT) or if
         the value is the wrong node type. ``label`` is the
         "an inline table" / "an array" phrasing used in the message.
@@ -1884,8 +1888,8 @@ class _StdTable(Table):
         a section / AoT / array install (so the caller should stop);
         ``False`` for plain values that need the ordinary value-write
         path. Centralising the dispatch keeps ``__setitem__`` /
-        :meth:`_set_value` (single-segment writes) and
-        :meth:`Document.install` (multi-segment writes) on the same
+        `_set_value` (single-segment writes) and
+        [`Document.install`][tomlrt.Document.install] (multi-segment writes) on the same
         decision tree.
         """
         if isinstance(value, SectionSpec):
@@ -2016,7 +2020,7 @@ class _StdTable(Table):
         ``value`` so it *is* the live view at the destination.
 
         The two paths share the slot-prep / blank-line-policy / splice
-        mechanics in :meth:`_splice_attached`; only the source-section
+        mechanics in `_splice_attached`; only the source-section
         provider and the post-splice "wire up the view" step diverge.
         """
         was_attached = value._attached  # noqa: SLF001
@@ -2157,7 +2161,7 @@ class _StdTable(Table):
 
 
 class Document(_StdTable):
-    """Top-level TOML document. Subclass of :class:`Table`."""
+    """Top-level TOML document. Subclass of [`Table`][tomlrt.Table]."""
 
     __slots__ = ("_newline",)
 
@@ -2173,13 +2177,18 @@ class Document(_StdTable):
     def cst(self) -> DocumentNode:
         """The underlying concrete syntax tree (CST).
 
-        Returns the root :class:`~tomlrt._nodes.DocumentNode` that
+        Returns the root `DocumentNode` that
         records the document's exact byte layout. Intended for
         tooling and debugging — most users will never need this.
         """
         return self._doc_node
 
     def render(self) -> str:
+        """Serialize the document back to a TOML string.
+
+        Equivalent to `tomlrt.dumps(self)`. Restores the original
+        line-ending style detected at parse time.
+        """
         if self._newline != "\n":
             _normalise_newlines(self._doc_node, self._newline)
         return self._doc_node.render()
@@ -2202,7 +2211,7 @@ class Document(_StdTable):
         and is blank-line-separated from anything below. Comments that
         sit directly above the first key (no blank line) are *not*
         preamble — they are the leading comments of that key, accessed
-        via :attr:`leading_comments`. In a document with no structural
+        via `leading_comments`. In a document with no structural
         content, the entire opening comment block is treated as
         preamble.
 
@@ -2247,11 +2256,11 @@ class Document(_StdTable):
 
         Returns the trailing run of ``# …`` lines that follows all
         structural content. Empty when the document has no structural
-        content (in that case everything is :attr:`preamble`).
+        content (in that case everything is `preamble`).
 
         Setter accepts a sequence of bare comment texts and replaces
         the current epilogue. Assign ``()`` to remove. Raises
-        :class:`TOMLError` if called with a non-empty value on a
+        [`TOMLError`][tomlrt.TOMLError] if called with a non-empty value on a
         document with no structural content.
         """
         if not self._doc_node.has_content():
@@ -2277,7 +2286,7 @@ class Document(_StdTable):
 
 
 class Array(list[Any]):
-    """Inline TOML array exposed as a real :class:`list`.
+    """Inline TOML array exposed as a real `list`.
 
     Every standard list mutator is overridden so the underlying CST
     stays in sync. Existing handles to nested ``Array``/``Table`` values
@@ -2301,7 +2310,7 @@ class Array(list[Any]):
         line with ``indent`` indentation. Such an array is *detached*
         until assigned into a document (``doc[k] = arr``).
 
-        Passing an :class:`ArrayNode` directly is the internal
+        Passing an `ArrayNode` directly is the internal
         attached-construction path used by the parser and CST walkers.
         """
         if isinstance(items, ArrayNode):
@@ -2417,10 +2426,10 @@ class Array(list[Any]):
         be chained.
 
         Switching to single-line layout when any item carries an EOL
-        or leading comment is rejected with :class:`TOMLError`: a ``#``
+        or leading comment is rejected with [`TOMLError`][tomlrt.TOMLError]: a ``#``
         comment runs to end of line, so collapsing such an array would
         produce invalid TOML. Clear the offending comments first via
-        :attr:`comments` / :attr:`leading_comments` if you really want
+        `comments` / `leading_comments` if you really want
         a single-line layout.
         """
         if not multiline and _value_has_inner_comment(self._node):
@@ -2601,9 +2610,9 @@ class Array(list[Any]):
     def to_list(self) -> list[Any]:
         """Return a deep, plain-Python copy of this array.
 
-        Walks recursively, converting nested :class:`Table` /
-        :class:`AoT` / :class:`Array` views into ordinary
-        :class:`dict` / :class:`list` containers. Scalars are
+        Walks recursively, converting nested [`Table`][tomlrt.Table] /
+        [`AoT`][tomlrt.AoT] / [`Array`][tomlrt.Array] views into ordinary
+        `dict` / `list` containers. Scalars are
         returned as-is.
         """
         return [_to_plain(v) for v in self]
@@ -2613,7 +2622,7 @@ class Array(list[Any]):
     # ------------------------------------------------------------------
 
     def array(self, index: SupportsIndex) -> Array:
-        """Return ``self[index]`` typed as a nested :class:`Array`."""
+        """Return ``self[index]`` typed as a nested [`Array`][tomlrt.Array]."""
         value = self[index]
         if not isinstance(value, Array):
             type_name = type(value).__name__
@@ -2626,9 +2635,9 @@ class Array(list[Any]):
     @overload
     def get_array(self, index: SupportsIndex, default: _T) -> Array | _T: ...
     def get_array(self, index: SupportsIndex, default: object = None) -> object:
-        """Like :meth:`array`, but returns ``default`` if ``index`` is out of range.
+        """Like `array`, but returns ``default`` if ``index`` is out of range.
 
-        Wrong-type entries still raise :class:`TypeError`.
+        Wrong-type entries still raise `TypeError`.
         """
         try:
             value = self[index]
@@ -2641,7 +2650,7 @@ class Array(list[Any]):
         return value
 
     def table(self, index: SupportsIndex) -> Table:
-        """Return ``self[index]`` typed as a nested :class:`Table`."""
+        """Return ``self[index]`` typed as a nested [`Table`][tomlrt.Table]."""
         value = self[index]
         if not isinstance(value, Table):
             msg = (
@@ -2655,9 +2664,9 @@ class Array(list[Any]):
     @overload
     def get_table(self, index: SupportsIndex, default: _T) -> Table | _T: ...
     def get_table(self, index: SupportsIndex, default: object = None) -> object:
-        """Like :meth:`table`, but returns ``default`` if ``index`` is out of range.
+        """Like `table`, but returns ``default`` if ``index`` is out of range.
 
-        Wrong-type entries still raise :class:`TypeError`.
+        Wrong-type entries still raise `TypeError`.
         """
         try:
             value = self[index]
@@ -2674,8 +2683,8 @@ class Array(list[Any]):
 class AoT(list[Table]):
     """Array-of-tables, e.g. ``[[products]]`` repeated.
 
-    Subclass of :class:`list`; supports basic mutation (append/insert
-    of dict-shaped or :class:`Table` entries) by synthesizing fresh
+    Subclass of `list`; supports basic mutation (append/insert
+    of dict-shaped or [`Table`][tomlrt.Table] entries) by synthesizing fresh
     ``[[path]]`` sections in the underlying CST.
     """
 
@@ -2687,7 +2696,7 @@ class AoT(list[Table]):
     ) -> None:
         """Construct a standalone array-of-tables.
 
-        Each of ``entries`` (a dict-shaped mapping or :class:`Table`)
+        Each of ``entries`` (a dict-shaped mapping or [`Table`][tomlrt.Table])
         is materialised into a ``[[_]]`` section in an internal orphan
         document, so all the usual list mutators (``append``, ``insert``,
         ``extend``, ``pop``, ``__setitem__`` of slots) keep working
@@ -2696,7 +2705,7 @@ class AoT(list[Table]):
 
         The 3-argument internal form (``doc_node``, ``path``,
         ``tables``) used by the parser/CST walkers remains available
-        via :meth:`_attached_to`.
+        via `_attached_to`.
         """
         path: tuple[str, ...] = ("_",)
         doc_node = DocumentNode(sections=[])
@@ -2829,7 +2838,7 @@ class AoT(list[Table]):
     ) -> None:
         """Install ``value``'s items into the AoT entry rooted at ``header``.
 
-        Routes each KV through a temporary :class:`_StdTable` view
+        Routes each KV through a temporary `_StdTable` view
         scoped (via ``owner_anchor``) to the new entry's block, so
         flavoured values (``SectionSpec``, ``AoT``, layout-bearing
         ``Array``) take their structural install paths -- a nested
@@ -2855,9 +2864,9 @@ class AoT(list[Table]):
         self._insert_at(len(self), value)
 
     def add(self, entry: Mapping[str, object] = MappingProxyType({})) -> Table:
-        """Append ``entry`` and return the new :class:`Table` view.
+        """Append ``entry`` and return the new [`Table`][tomlrt.Table] view.
 
-        Convenience over :meth:`append` for the common build-and-mutate
+        Convenience over `append` for the common build-and-mutate
         idiom: ``pkg = aot.add({"name": "foo"}); pkg.set_table(...)``.
         ``entry`` defaults to an empty mapping, so ``aot.add()`` adds a
         blank entry and returns it for further population.
@@ -2868,7 +2877,7 @@ class AoT(list[Table]):
     def to_list(self) -> list[dict[str, Any]]:
         """Return a deep, plain-Python copy of this array-of-tables.
 
-        Each entry is converted to an ordinary :class:`dict` (with
+        Each entry is converted to an ordinary `dict` (with
         nested views recursively flattened to plain containers). The
         result shares no mutable state with the document.
         """
@@ -3054,7 +3063,7 @@ class AoT(list[Table]):
         """Orphan ``targets`` then strip their blocks from the live doc.
 
         Each cached entry view is rehomed onto its own
-        :class:`DocumentNode` carrying the entry's full
+        `DocumentNode` carrying the entry's full
         ``aot_entry_block`` *before* ``remove_sections`` runs --
         otherwise ``_resync``'s default detach pass would search a
         section list that's already been emptied of the block, and

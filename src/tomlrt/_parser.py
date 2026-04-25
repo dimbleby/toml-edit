@@ -1,4 +1,4 @@
-"""TOML 1.0.0 parser producing a :mod:`tomlrt._nodes` CST.
+"""TOML 1.0.0 parser producing a `tomlrt._nodes` CST.
 
 Hand-written recursive-descent over a ``str`` plus an integer cursor.
 Bulk character runs (whitespace, bare keys, string bodies, comment
@@ -8,7 +8,7 @@ a single C call rather than a Python-level character loop.
 The parser is responsible *only* for producing the physical CST. Logical
 table semantics (duplicate-key detection across discontiguous headers,
 dotted-key conflicts, etc.) are enforced here; the read-side wrappers
-in :mod:`tomlrt._document` rely on this validation having happened.
+in `tomlrt._document` rely on this validation having happened.
 """
 
 from __future__ import annotations
@@ -617,7 +617,7 @@ class _Parser:
         # Inline-table values: register their nested key paths so
         # cross-section headers/keys see the conflicts. (Local
         # duplicate / dotted-prefix conflicts are caught at parse time
-        # in :meth:`_parse_inline_table`.)
+        # in `_parse_inline_table`.)
         value = kv.value
         if isinstance(value, InlineTableNode):
             self._validate_inline_table(value, abs_prefix=full)

@@ -33,7 +33,7 @@ def _populate(table: Table, data: Mapping[str, object]) -> None:
 
 
 def document(data: Mapping[str, object] | None = None) -> Document:
-    """Return a fresh :class:`Document`, optionally populated from ``data``.
+    """Return a fresh [`Document`][tomlrt.Document], optionally populated from ``data``.
 
     Without arguments, returns an empty document — equivalent to
     ``parse("")`` but more discoverable when the intent is "build a
@@ -47,7 +47,8 @@ def document(data: Mapping[str, object] | None = None) -> Document:
     * everything else is set with ordinary key-value assignment
       (so leaf lists become inline arrays, leaf dicts can't appear).
 
-    Existing :class:`Table` / :class:`AoT` / :class:`Array` views are
+    Existing [`Table`][tomlrt.Table] / [`AoT`][tomlrt.AoT] /
+    [`Array`][tomlrt.Array] views are
     deep-cloned, so the returned document shares no mutable state
     with ``data``.
     """
@@ -58,13 +59,13 @@ def document(data: Mapping[str, object] | None = None) -> Document:
 
 
 def parse(text: str) -> Document:
-    """Parse a TOML document string into a :class:`Document`."""
+    """Parse a TOML document string into a [`Document`][tomlrt.Document]."""
     cst = _parse_to_cst(text)
     return Document(cst)
 
 
 def loads(text: str) -> Document:
-    """Alias for :func:`parse`, mirroring the stdlib ``tomllib`` API."""
+    """Alias for [`parse`][tomlrt.parse], mirroring the stdlib ``tomllib`` API."""
     return parse(text)
 
 
@@ -73,7 +74,7 @@ def load(fp: IO[bytes]) -> Document:
 
     The file must be opened in binary mode (``open(path, "rb")``); text
     mode would perform locale-dependent decoding and newline translation,
-    breaking the byte-exact round-trip guarantee. Raises :class:`TypeError`
+    breaking the byte-exact round-trip guarantee. Raises `TypeError`
     for a text stream.
     """
     data = fp.read()
@@ -87,12 +88,12 @@ def load(fp: IO[bytes]) -> Document:
 
 
 def dumps(doc: Document) -> str:
-    """Serialize a :class:`Document` back to a TOML string."""
+    """Serialize a [`Document`][tomlrt.Document] back to a TOML string."""
     return doc.render()
 
 
 def dump(doc: Document, fp: IO[bytes]) -> None:
-    """Serialize a :class:`Document` and write it to a *binary* stream.
+    """Serialize a [`Document`][tomlrt.Document] and write it to a *binary* stream.
 
     The file must be opened in binary mode (``open(path, "wb")``).
     """

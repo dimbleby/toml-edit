@@ -1,6 +1,6 @@
 """Trivia / comment manipulation helpers.
 
-Pure functions over the CST primitives in :mod:`tomlrt._nodes`. None
+Pure functions over the CST primitives in `tomlrt._nodes`. None
 of the helpers in this module know anything about the logical
 ``Document``/``Table``/``Array`` view layer; they exist so that the
 view layer (and the separator-style and section-construction helpers)
@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 
 
 def _walk_newline_nodes(node: object) -> Iterator[NewlineNode]:
-    """Yield every :class:`NewlineNode` reachable from ``node``.
+    """Yield every `NewlineNode` reachable from ``node``.
 
     Used to detect and normalise the document-wide line ending. Walks
     through dataclass fields and lists; ignores other primitives.
@@ -67,7 +67,7 @@ def _detect_newline(node: DocumentNode) -> str:
 
 
 def _normalise_newlines(node: DocumentNode, target: str) -> None:
-    """Set every :class:`NewlineNode` in ``node`` to ``target``."""
+    """Set every `NewlineNode` in ``node`` to ``target``."""
     for nl in _walk_newline_nodes(node):
         if nl.text != target:
             nl.text = target
@@ -109,7 +109,7 @@ def _ensure_trailing_newline(section: SectionNode) -> None:
 def _iter_value_trivia(value: ValueNode) -> Iterator[Trivia]:
     """Yield every trivia slot reachable inside ``value``.
 
-    Walks into :class:`ArrayNode` and :class:`InlineTableNode`
+    Walks into `ArrayNode` and `InlineTableNode`
     children (the only value kinds with internal trivia); leaf
     scalars yield nothing. Used by translators that need to assert
     "this value carries no comments anywhere".
@@ -136,7 +136,7 @@ def _value_has_inner_comment(value: ValueNode) -> bool:
 
 
 def _trivia_has_comment(trivia: Trivia) -> bool:
-    """``True`` iff ``trivia`` contains any :class:`CommentNode`."""
+    """``True`` iff ``trivia`` contains any `CommentNode`."""
     return any(isinstance(p, CommentNode) for p in trivia.pieces)
 
 
@@ -188,11 +188,11 @@ def _strip_comment_marker(text: str) -> str:
 
 
 def _format_comment(text: str) -> str:
-    """Format user text as a :class:`CommentNode` payload.
+    """Format user text as a `CommentNode` payload.
 
     Emits ``"# " + text`` (or ``"#"`` for empty text). Text starting
     with ``#`` is treated as literal content (``"#hashtag"`` →
-    ``"# #hashtag"``). Raises :class:`TOMLError` on line terminators or
+    ``"# #hashtag"``). Raises [`TOMLError`][tomlrt.TOMLError] on line terminators or
     non-TAB control characters.
     """
     for ch in text:
@@ -300,7 +300,7 @@ def _extract_trailing_comment_block(
     (the indent of the line that follows). Earlier comment lines that
     are separated from the run by a blank line are *not* included.
 
-    ``min_start`` clips the scan; see :func:`_trailing_comment_block_span`.
+    ``min_start`` clips the scan; see `_trailing_comment_block_span`.
     """
     pieces = trivia.pieces
     start, end = _trailing_comment_block_span(pieces, min_start=min_start)
@@ -338,7 +338,7 @@ def _replace_trailing_comment_block(
 
     Earlier trivia (older blank-separated comments, leading whitespace)
     and the trailing whitespace anchor are preserved.
-    ``min_start`` clips the scan; see :func:`_trailing_comment_block_span`.
+    ``min_start`` clips the scan; see `_trailing_comment_block_span`.
     """
     _validate_comment_lines(lines)
     pieces = trivia.pieces
@@ -408,7 +408,7 @@ def _split_pct_eol(pieces: Sequence[TriviaPiece]) -> int:
     is, the previous item's end-of-line comment, on the same source line
     as the comma. Returns ``0`` if there is no EOL comment.
 
-    Pass the result as ``min_start`` to :func:`_trailing_comment_block_span`
+    Pass the result as ``min_start`` to `_trailing_comment_block_span`
     (or its callers) so the backward walk doesn't confuse the EOL line
     with a ``leading_comments[i]`` entry.
     """
