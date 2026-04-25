@@ -93,5 +93,5 @@ jobs:
       - name: Install docs dependencies
         run: uv sync --group docs
 
-      - name: mkdocs build --strict
-        run: uv run mkdocs build --strict
+      - name: zensical build
+        run: uv run zensical build

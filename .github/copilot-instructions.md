@@ -134,13 +134,16 @@ When adding behaviour, add a focused unit test in the relevant file
 
 ## Documentation
 
-User-facing prose docs live under `docs/` and are published as a
-MkDocs site at <https://dimbleby.github.io/tomlrt/>. The dependency
-group is `docs`:
+User-facing prose docs live under `docs/` and are published at
+<https://dimbleby.github.io/tomlrt/>. The site is built with
+[Zensical](https://zensical.org/) (a static site generator from the
+creators of Material for MkDocs, backward-compatible with the
+existing `mkdocs.yml`) plus the `mkdocstrings` Python handler. The
+dependency group is `docs`:
 
 ```bash
-uv run --group docs mkdocs serve              # preview locally
-uv run --group docs mkdocs build --strict     # what CI runs
+uv run --group docs zensical serve     # preview locally
+uv run --group docs zensical build     # what CI runs
 ```
 
 The API reference page (`docs/api.md`) is generated from docstrings
