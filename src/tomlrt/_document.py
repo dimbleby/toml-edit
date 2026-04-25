@@ -2054,7 +2054,8 @@ class _StdTable(Table):
 
         Unattached source: rebase the source's section nodes in place
         and splice them into the live document, then rehome the user's
-        ``value`` so it *is* the live view at the destination.
+        ``value`` -- including any held nested children under its
+        entries -- so it *is* the live view at the destination.
 
         The two paths share the slot-prep / blank-line-policy / splice
         mechanics in `_splice_attached`; only the source-section
@@ -2062,15 +2063,16 @@ class _StdTable(Table):
         """
         was_attached = value._attached  # noqa: SLF001
         sources = _clone_aot_sections if was_attached else _rebase_aot_sections_inplace
+        src_path = value._path  # noqa: SLF001
         full_path = self._splice_attached(parts, value, sources)
         if was_attached:
             view: AoT = AoT._attached_to(self._doc_node, full_path, [])  # noqa: SLF001
+            view._resync()  # noqa: SLF001
         else:
-            value._doc_node = self._doc_node  # noqa: SLF001
-            value._path = full_path  # noqa: SLF001
-            value._attached = True  # noqa: SLF001
+            _rehome_table_subtree(
+                value, self._doc_node, src_path, full_path, self._owner_anchor
+            )
             view = value
-        view._resync()  # rehomes cached entries  # noqa: SLF001
         self._install_at_path(parts, view)
 
     @override
