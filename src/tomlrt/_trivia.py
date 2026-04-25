@@ -156,7 +156,11 @@ def _starts_with_blank_line(trivia: Trivia) -> bool:
     return bool(trivia.pieces) and isinstance(trivia.pieces[0], NewlineNode)
 
 
-def _first_gap_is_blank(leadings: Iterable[Trivia]) -> bool:
+def _first_gap_is_blank(
+    leadings: Iterable[Trivia],
+    *,
+    default: bool = False,
+) -> bool:
     """Decide whether new siblings should adopt a blank-line gap.
 
     The first sibling gap in source order is read as the user's
@@ -168,12 +172,14 @@ def _first_gap_is_blank(leadings: Iterable[Trivia]) -> bool:
     ``leadings`` is the leading trivia of every sibling *except the
     first* (the first has no preceding sibling, so its leading
     describes the gap to the document preamble, not an inter-sibling
-    gap). With no such gap (zero or one entry), returns ``False``:
-    there is no established style to follow.
+    gap). With no such gap (zero or one entry), returns ``default``:
+    the caller's view of "what to do when there's no established style
+    to follow" -- e.g. KV-in-table prefers packed (False), AoT
+    siblings prefer blank-separated (True).
     """
     it = iter(leadings)
     first = next(it, None)
-    return first is not None and _starts_with_blank_line(first)
+    return default if first is None else _starts_with_blank_line(first)
 
 
 def _prepend_blank_line(trivia: Trivia) -> None:
