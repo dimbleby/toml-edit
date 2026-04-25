@@ -472,6 +472,27 @@ def test_aot_entry_view_identity_preserved_through_attach() -> None:
     assert parsed == {"servers": [{"name": "a", "extra": 1}]}
 
 
+def test_aot_held_nested_section_under_entry_survives_attach() -> None:
+    """A nested live container assigned into an AoT entry *before* the AoT
+    itself is installed must remain wired to the destination document.
+
+    Regression: ``_install_aot``'s detached branch only updated entry
+    tables' ``_doc_node`` / ``_path`` via ``_resync()`` -- it did not
+    recurse into held nested children. A user holding the inner
+    ``Table.section`` would silently lose post-install mutations
+    through that reference.
+    """
+    nested = Table.section({"x": 1})
+    aot = AoT([{"name": "first"}])
+    aot[0]["cfg"] = nested
+    doc = tomlrt.parse("")
+    doc["pkgs"] = aot
+    nested["y"] = 2
+    parsed = _reparses(tomlrt.dumps(doc))
+    assert parsed == {"pkgs": [{"name": "first", "cfg": {"x": 1, "y": 2}}]}
+    assert doc["pkgs"][0]["cfg"] is nested
+
+
 # ---------------------------------------------------------------------------
 # Recursive attach: typed containers inside plain dict/list values
 # ---------------------------------------------------------------------------
