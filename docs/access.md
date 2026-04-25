@@ -23,7 +23,7 @@ nested    = some_array.array(2)       # -> Array
 ## Optional accessors
 
 `get_table` / `get_array` / `get_aot` mirror `dict.get`: return the value when the shape matches, otherwise the `default` (default `None`).
-They raise `TOMLError` only if the key exists but has the *wrong* shape:
+They raise `TOMLError` only if the key exists but has the _wrong_ shape:
 
 ```python
 ruff = doc.get_table("tool", default={}).get("ruff")

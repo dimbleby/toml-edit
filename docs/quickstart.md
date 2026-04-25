@@ -40,14 +40,14 @@ Plain reads with `doc["key"]` work as you'd expect — see [Typed access](access
 
 Plain Python values do the right thing on assignment:
 
-| Assigning           | Becomes                                       |
-| ------------------- | --------------------------------------------- |
+| Assigning                             | Becomes                      |
+| ------------------------------------- | ---------------------------- |
 | `str`/`int`/`bool`/`float`/`datetime` | a TOML scalar                |
-| `dict`              | an inline table (snapshot)                    |
-| `list`              | an inline array (snapshot)                    |
-| `Table.section({})` | a live `[section]` block                      |
-| `Table.inline({})`  | a live inline table                           |
-| `AoT([...])`        | `[[array.of.tables]]` blocks                  |
-| `Array([...], multiline=True)` | a multi-line inline array          |
+| `dict`                                | an inline table (snapshot)   |
+| `list`                                | an inline array (snapshot)   |
+| `Table.section({})`                   | a live `[section]` block     |
+| `Table.inline({})`                    | a live inline table          |
+| `AoT([...])`                          | `[[array.of.tables]]` blocks |
+| `Array([...], multiline=True)`        | a multi-line inline array    |
 
 For the difference between snapshot and live containers, see [Editing documents](editing.md#live-vs-snapshot).

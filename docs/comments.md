@@ -65,4 +65,4 @@ doc.epilogue = ("end of file",)
 ```
 
 A "preamble" is the run of `# …` lines that opens the file and is blank-line-separated from anything below.
-Comments that sit *directly* above the first key (no blank line) are leading comments of that key, not preamble.
+Comments that sit _directly_ above the first key (no blank line) are leading comments of that key, not preamble.

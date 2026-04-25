@@ -46,7 +46,7 @@ Nested mappings become `[section]` blocks (not inline tables); lists of mappings
 
 ## Dotted-path placement
 
-`doc["a.b"] = 1` always treats `"a.b"` as a *single literal key*.
+`doc["a.b"] = 1` always treats `"a.b"` as a _single literal key_.
 Use `install` to descend through dotted segments, or `ensure_table` when you just want the intermediate table created on demand:
 
 ```python
