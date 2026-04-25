@@ -248,7 +248,7 @@ class Table(dict[str, Any]):
       still work, but it is no longer connected to the document and
       mutations through it do not appear in [`Document.render`][tomlrt.Document.render].
     * Re-binding the path (``doc['foo'] = {...}`` or
-      ``doc.set_table('foo', {...})``) installs a *fresh* ``Table``;
+      ``doc.install('foo', Table.section())``) installs a *fresh* ``Table``;
       held references to the old table are unaffected.
 
     **Live vs snapshot containers**
@@ -2974,7 +2974,7 @@ class AoT(list[Table]):
         """Append ``entry`` and return the new [`Table`][tomlrt.Table] view.
 
         Convenience over `append` for the common build-and-mutate
-        idiom: ``pkg = aot.add({"name": "foo"}); pkg.set_table(...)``.
+        idiom: ``pkg = aot.add({"name": "foo"}); pkg["version"] = "1.0"``.
         ``entry`` defaults to an empty mapping, so ``aot.add()`` adds a
         blank entry and returns it for further population.
         """
