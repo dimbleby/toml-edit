@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `Table.inline()` now renders with spaced braces (`{ k = v }`),
+  matching the style produced when assigning a plain `dict`.
+
 ## [0.6.0] - 2026-04-26
 
 - Many bug fixes

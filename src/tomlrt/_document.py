@@ -334,6 +334,15 @@ class Table(dict[str, Any]):
 
         inline = _InlineTable(_mapping_to_inline_table_node({}))
         inline._attached = False  # noqa: SLF001
+        # The empty seed node samples to a flush ({k=v}) style; override
+        # to the spaced ({ k = v }) style so synthesised inline tables
+        # match what value_to_node produces from a plain dict.
+        inline._style = _SeparatorStyle(  # noqa: SLF001
+            open_pad=Trivia([WhitespaceNode(" ")]),
+            inter_separator=Trivia([WhitespaceNode(" ")]),
+            trailing_comma=False,
+            close_pad=Trivia([WhitespaceNode(" ")]),
+        )
         if mapping is not None:
             for k, v in mapping.items():
                 inline[k] = v
