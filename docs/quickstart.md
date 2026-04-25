@@ -45,7 +45,7 @@ Plain Python values do the right thing on assignment:
 | `str`/`int`/`bool`/`float`/`datetime` | a TOML scalar                |
 | `dict`              | an inline table (snapshot)                    |
 | `list`              | an inline array (snapshot)                    |
-| `Table.section({})` | a `[section]` block                           |
+| `Table.section({})` | a live `[section]` block                      |
 | `Table.inline({})`  | a live inline table                           |
 | `AoT([...])`        | `[[array.of.tables]]` blocks                  |
 | `Array([...], multiline=True)` | a multi-line inline array          |
