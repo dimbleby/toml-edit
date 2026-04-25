@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Public `TomlInput` type alias for typing helpers that build or
+  mutate document fragments.
+
+### Changed
+
+- `AoT.sort()` now requires the `key=` argument, since `Table` entries
+  are not orderable.
+
 ### Fixed
 
 - `Table.inline()` now renders with spaced braces (`{ k = v }`),
