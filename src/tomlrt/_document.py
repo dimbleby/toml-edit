@@ -253,6 +253,40 @@ class Table(dict[str, Any]):
             spec.update(mapping)
         return spec
 
+    @classmethod
+    def inline(
+        cls,
+        mapping: Mapping[str, object] | None = None,
+    ) -> _InlineTable:
+        """Return a fresh inline table that *attaches live* on assignment.
+
+        Use from an assignment site: ``doc[k] = Table.inline({...})``.
+        Unlike a plain ``dict`` (which is snapshotted on assignment),
+        the returned object becomes the *live* view at the assignment
+        site: subsequent mutations through the original reference are
+        reflected in the document, and ``doc[k] is the_inline`` after
+        assignment.
+
+        The inline table can be populated incrementally before
+        assignment (``t = Table.inline(); t["a"] = 1; doc[k] = t``);
+        all such mutations end up in the document.
+
+        If the same inline-table object is assigned a second time
+        (or after it has already been installed elsewhere), it is
+        cloned: a single inline table is attached to at most one
+        location in at most one document.
+        """
+        from tomlrt._synthesise import (  # noqa: PLC0415
+            _mapping_to_inline_table_node,
+        )
+
+        inline = _InlineTable(_mapping_to_inline_table_node({}))
+        inline._attached = False  # noqa: SLF001
+        if mapping is not None:
+            for k, v in mapping.items():
+                inline[k] = v
+        return inline
+
     # --- subclass hooks ----------------------------------------------------
 
     def _items(self) -> Iterator[tuple[str, TomlValue]]:  # pragma: no cover
@@ -336,6 +370,22 @@ class Table(dict[str, Any]):
             self._refresh_key(key)
         else:
             dict.__setitem__(self, key, new_v)
+        # Live-attach identity: if ``value`` is an unattached typed
+        # container, ``value_to_node`` will have spliced its ``_node``
+        # directly into the destination CST and flipped ``_attached``.
+        # The view that ``_set_value`` / ``_refresh_key`` cached is a
+        # freshly-built wrapper around that same node; replace it with
+        # the user's own reference so ``self[key] is value`` and so
+        # later mutations through ``value`` keep flowing through one
+        # consistent dict-storage cache.
+        if isinstance(value, (_InlineTable, Array)) and value._attached:  # noqa: SLF001
+            cached = dict.__getitem__(self, key) if super().__contains__(key) else None
+            if (
+                cached is not value
+                and isinstance(cached, type(value))
+                and getattr(cached, "_node", None) is value._node  # noqa: SLF001
+            ):
+                dict.__setitem__(self, key, value)
 
     @override
     def __setitem__(self, key: str, value: object) -> None:
@@ -882,6 +932,34 @@ class _InlineTable(Table):
         else:
             self._eq_padding = (WhitespaceNode(" "), WhitespaceNode(" "))
         self._populate()
+
+    @override
+    def __setitem__(self, key: str, value: object) -> None:
+        # Inline tables write through to their ``_node`` whether or
+        # not they are currently installed in a document: the node
+        # is the only storage, and there is no foreign CST that an
+        # orphan view could leak into. This lets ``Table.inline()``
+        # be populated incrementally before assignment, and lets a
+        # detached (post-overwrite) inline view continue to mutate
+        # its own private subtree.
+        if super().__contains__(key):
+            old = super().__getitem__(key)
+            if old is value:
+                return
+            if isinstance(old, (Table, AoT, Array)):
+                old._detach()  # noqa: SLF001
+        self._install_flavoured((key,), value)
+
+    @override
+    def __delitem__(self, key: str) -> None:
+        if not super().__contains__(key):
+            raise KeyError(key)
+        old = super().__getitem__(key)
+        if isinstance(old, (Table, AoT, Array)):
+            old._detach()  # noqa: SLF001
+        self._delete_value(key)
+        if super().__contains__(key):
+            super().__delitem__(key)
 
     @override
     def _items(self) -> Iterator[tuple[str, TomlValue]]:

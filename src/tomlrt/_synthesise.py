@@ -205,6 +205,13 @@ def value_to_node(value: object) -> ValueNode:
     if isinstance(value, Table):
         node = getattr(value, "_node", None)
         if isinstance(node, InlineTableNode):
+            if not value._attached:  # noqa: SLF001
+                # Live attach: hand the user's node straight to the
+                # destination so subsequent mutations through their
+                # reference flow into the document. The receiving
+                # container becomes its sole parent.
+                value._attached = True  # noqa: SLF001
+                return node
             return deepcopy(node)
         return _mapping_to_inline_table_node(dict(value))
     if isinstance(value, bool):
