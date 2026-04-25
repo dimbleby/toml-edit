@@ -1,6 +1,6 @@
 # Typed access
 
-Plain `doc["key"]` returns `Any`, which forces a `cast()` (or a runtime `isinstance` check) at every step of a nested lookup.
+Plain `doc["key"]` returns `Any`.
 The typed accessors give you a shape-checked `Table`, `Array`, or `AoT` directly.
 
 ## Required accessors
