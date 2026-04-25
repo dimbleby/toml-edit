@@ -226,6 +226,28 @@ class Table(dict[str, Any]):
     * Re-binding the path (``doc['foo'] = {...}`` or
       ``doc.set_table('foo', {...})``) installs a *fresh* ``Table``;
       held references to the old table are unaffected.
+
+    .. rubric:: Live vs snapshot containers
+
+    Assignment of a *container* value follows one rule: a container
+    is attached to at most one CST location.
+
+    * Assigning a fresh, unattached :class:`Array`,
+      :meth:`Table.inline` result, or :class:`AoT` *attaches in
+      place*: the user's reference becomes the live view at the
+      destination, so later mutations through that reference show
+      up in the document. ``doc[k] is myinline`` after the assign.
+    * Assigning a container that is already attached somewhere
+      (any document, including ``self``) deep-clones the source.
+      The two slots are independent — mutations to one don't bleed
+      into the other.
+    * Plain :class:`dict` and :class:`list` values continue to be
+      *snapshot* on assignment. Mutations to the original mapping
+      / list after assignment are *not* reflected in the document.
+      Use :meth:`Table.inline` or :class:`Array` to opt in to live
+      semantics. Typed containers nested inside a plain dict / list
+      still attach live recursively, even though the surrounding
+      plain container is a snapshot.
     """
 
     __slots__ = ("_attached",)
