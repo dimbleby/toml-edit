@@ -336,12 +336,9 @@ def _apply_separator_style(
         return
     items[0].leading = _clone_trivia(style.open_pad)
     for it in items[1:]:
-        # items[i>0].leading must be empty: inter-item content (comments
-        # included) is encoded at the tail of items[i-1].post_comma_trivia.
-        # Anything found here is stale residue from a previous position
-        # under reorder/insert/pop. Reorder operations snapshot the
-        # logical leadings via _snapshot_item_leadings beforehand and
-        # restore them via _write_item_leadings afterwards.
+        # items[i>0].leading must be empty: inter-item content lives at the
+        # tail of items[i-1].post_comma_trivia. Anything here is stale
+        # residue from a previous position; snapshot/restore handles reorder.
         it.leading = Trivia()
     container.final_trivia = Trivia()
     inter_render = style.inter_separator.render()
@@ -416,10 +413,9 @@ def _apply_separator_after_append(
     inter_render = style.inter_separator.render()
     inter_indent = _indent_after_last_newline(style.inter_separator)
 
-    # The previously-last item must now look like an interior item. The
-    # logic mirrors the per-interior-item branch in
-    # :func:`_apply_separator_style` so user comments lodged in
-    # ``trailing`` / ``post_comma_trivia`` are preserved.
+    # Previously-last item now looks like an interior item; mirror the
+    # per-interior branch in _apply_separator_style so user comments
+    # in trailing / post_comma_trivia survive.
     prev_tail = items[n - n_added - 1]
     if not prev_tail.has_comma:
         eol = _extract_eol_comment(prev_tail.trailing)

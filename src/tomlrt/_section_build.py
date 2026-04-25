@@ -128,10 +128,7 @@ def _iter_rebased(
 ) -> Iterable[tuple[SectionNode, tuple[str, ...]]]:
     """Yield ``(sec, new_path)`` for every section whose header path is
     rooted at ``src_path``, with ``new_path`` rebased onto ``full_path``.
-
-    Skips implicit (header-less) sections and sections whose key falls
-    outside ``src_path``. The clone-and-rebase and rebase-in-place
-    helpers consume this in one shape so they cannot drift apart.
+    Implicit (header-less) and out-of-prefix sections are skipped.
     """
     splen = len(src_path)
     for sec in sections:
@@ -148,12 +145,9 @@ def _clone_sections_rebased(
 ) -> list[SectionNode]:
     """Deep-clone every header section under ``src_path``, rebasing the prefix.
 
-    Implicit pre-header sections (``header is None``) and headers
-    whose path doesn't extend ``src_path`` are skipped. Other sections
-    are deep-cloned with their key rebased: relative depth below
-    ``src_path`` is preserved, so ``[a.sub.deep]`` cloned at
-    ``("t",)`` becomes ``[t.sub.deep]``. Shared rebase primitive
-    behind :func:`_clone_aot_sections` and :func:`_clone_table_sections`.
+    Implicit pre-header sections and out-of-prefix headers are skipped.
+    Relative depth below ``src_path`` is preserved: ``[a.sub.deep]``
+    cloned at ``("t",)`` becomes ``[t.sub.deep]``.
     """
     out: list[SectionNode] = []
     for sec, new_path in _iter_rebased(sections, src_path, full_path):
@@ -185,14 +179,10 @@ def _rebase_aot_sections_inplace(
     value: AoT,
     full_path: tuple[str, ...],
 ) -> list[SectionNode]:
-    """Like :func:`_clone_aot_sections` but rebases in place, no clone.
+    """Like :func:`_clone_aot_sections` but rebases header paths in place.
 
     Used when live-attaching an unattached AoT: the orphan section
-    nodes themselves migrate into the destination document, so we
-    rewrite their header paths in place rather than producing
-    independent copies. Only sections rooted at ``value._path`` are
-    returned (matching the clone path's filter), so the two helpers
-    are interchangeable shapes.
+    nodes themselves migrate into the destination document.
     """
     sections = _aot_owned_sections(value)
     out: list[SectionNode] = []
@@ -237,22 +227,17 @@ def _clone_table_sections(
 
     The returned sections are independent of ``value._doc_node`` and have
     their headers rewritten so the ``len(value._path)``-prefix is replaced
-    by ``full_path``. Surrounding placement is the caller's responsibility.
-
-    Two sources of contributing CST data are handled: sections at or below
-    ``value._path`` (cloned and re-keyed) and dotted KVs in ancestor
-    sections that extend into ``value._path`` (cloned into a host section
-    at ``full_path``, synthesised on demand). For a ``Document`` source
-    (``value._path == ()``) the implicit pre-header section's entries are
-    treated as ancestor extras, since :meth:`_compute_extras` returns
-    ``None`` in that case.
+    by ``full_path``. Both sections at or below ``value._path`` and dotted
+    KVs in ancestor sections that extend into ``value._path`` contribute
+    (the latter cloned into a host section at ``full_path``, synthesised
+    on demand). For a ``Document`` source (``value._path == ()``) the
+    implicit pre-header section's entries are treated as ancestor extras.
 
     The leading section's header kind is forced to ``head_kind``: pass
-    ``"table"`` (the default) to install as a ``[full_path]`` standard
-    section, or ``"array"`` to install as a ``[[full_path]]`` AoT entry.
-    Without this normalisation an AoT-entry source cloned into a
-    standard-table slot would keep its ``[[..]]`` header (and vice
-    versa).
+    ``"table"`` (default) for a ``[full_path]`` standard section, or
+    ``"array"`` for a ``[[full_path]]`` AoT entry. Without this
+    normalisation an AoT-entry source cloned into a standard-table slot
+    would keep its ``[[..]]`` header (and vice versa).
     """
     src_path = value._path  # noqa: SLF001
     fplen = len(full_path)
@@ -299,18 +284,11 @@ def _apply_prior_leading(
     new_secs: Sequence[SectionNode],
     prior_leading: Trivia | None,
 ) -> None:
-    """Transplant a prior section's header trivia onto a replacement block.
+    """Transplant ``prior_leading`` onto the first new section's header.
 
-    ``_prepare_section_slot`` snapshots the leading trivia of the
-    section being replaced (the comments / blank lines that sat above
-    its ``[name]`` / ``[[name]]`` line) before purging. When a new
-    block of sections is about to be spliced into the same slot, we
-    move that trivia onto the first new section's header so the
-    replacement preserves the visual context of the original.
-
-    A no-op when there was no prior section, when the new block is
-    empty, or when the new block starts with an entries-only section
-    (no header to attach the trivia to).
+    Used to preserve comments / blank lines that sat above a section
+    being replaced. No-op when the new block is empty or its first
+    section has no header.
     """
     if prior_leading is None or not new_secs:
         return
@@ -417,9 +395,7 @@ def _section_insert_index(
     back to the end of the document.
     """
     parent = full_path[:-1]
-    # Top-level sections always go to the end: every existing section
-    # trivially shares the empty parent prefix, so the last-sibling
-    # search would just yield ``len(sections) - 1``. Skip it.
+    # Top-level: shared parent prefix is always empty, so just append.
     if not parent:
         return len(sections)
     last_sibling = -1

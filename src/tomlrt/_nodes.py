@@ -34,15 +34,10 @@ if TYPE_CHECKING:
     from collections.abc import Container
     from datetime import date, datetime, time
 
-# CST node dataclasses use ``eq=False`` (see every ``@dataclass`` below) so
-# that ``==`` / ``in`` / ``list.index`` / ``list.remove`` / set membership
-# all fall back to identity comparison. We never want two distinct CST
-# nodes that happen to render the same to be treated as equal: the parser
-# preserves trivia per occurrence, mutations rewrite specific node objects,
-# and several invariants depend on locating *the* node we hold a reference
-# to (not any structurally-equal twin). Removing this opt-out re-introduces
-# a class of bugs that has bitten this codebase repeatedly — see commits
-# 3dbdb4c, 227d1bc, bdb7ea2 for the symptoms.
+# CST nodes use ``eq=False`` so that ``==`` / ``in`` / ``list.index`` /
+# ``list.remove`` / set membership all fall back to identity. Trivia is
+# preserved per occurrence and many invariants depend on locating *the*
+# node we hold a reference to, not any structurally-equal twin.
 
 
 # ---------------------------------------------------------------------------
@@ -91,8 +86,6 @@ class Trivia:
     pieces: list[TriviaPiece] = field(default_factory=list)
 
     def render(self) -> str:
-        # Empty/single-piece are by far the most common shapes; the
-        # fast paths skip ``str.join`` and the generator setup.
         pieces = self.pieces
         if not pieces:
             return ""
@@ -386,10 +379,9 @@ class SectionNode:
     header: TableHeaderNode | None
     entries: list[KeyValueNode] = field(default_factory=list)
     synthesised_placeholder: bool = False
-    """True when the header was synthesised by an explicit empty
-    ``Table.section({})`` assignment. Such headers are dropped if a
-    child section later makes them redundant; user-authored empty
-    headers (parsed or installed via ``install``) are preserved.
+    """True for headers spawned by an explicit empty ``Table.section({})``
+    install; such headers are dropped if a child section makes them
+    redundant. User-authored empty headers are preserved.
     """
 
     def render(self) -> str:
@@ -415,15 +407,10 @@ class DocumentNode:
         return any(s.header is not None or s.entries for s in self.sections)
 
     def adopt_preamble_into(self, target: Trivia) -> None:
-        """Migrate ``trailing_trivia`` to ``target`` if the doc is empty.
+        """Migrate parked preamble trivia onto ``target`` if the doc is empty.
 
-        While the document has no structural content, the preamble
-        setter parks comments in ``trailing_trivia`` (the only trivia
-        slot that exists). When the first structural element is about
-        to be inserted, callers invoke this so those comments end up
-        ahead of that element instead of after it. A blank-line
-        separator is appended if the parked content looks like a
-        comment run, so the migrated text still reads as preamble.
+        Appends a blank-line separator if the parked content includes
+        comments, so the migrated text still reads as preamble.
         """
         if self.has_content():
             return
@@ -431,9 +418,6 @@ class DocumentNode:
         if not pieces:
             return
         moved = list(pieces)
-        # Ensure a blank line separates preamble from the structural
-        # element that's about to be inserted, so the comment run
-        # remains recognisable as preamble after the migration.
         has_comment = any(isinstance(p, CommentNode) for p in moved)
         if has_comment:
             ends_with_blank = (
@@ -468,11 +452,8 @@ class DocumentNode:
         (purging children too), and drops KV entries in ancestor
         sections whose head key would steer descent into ``full_path``.
 
-        Pure structural removal — does not touch top-blank trivia.
-        Callers run :meth:`normalise_top_blank` themselves once the
-        larger operation is done, so a purge-then-splice sequence
-        doesn't strip a soon-to-be-meaningful blank in the
-        intermediate state.
+        Pure structural removal; caller is responsible for invoking
+        :meth:`normalise_top_blank` once the larger operation is done.
         """
         plen = len(full_path)
         sections = self.sections
@@ -497,17 +478,11 @@ class DocumentNode:
             ]
 
     def normalise_top_blank(self) -> None:
-        """Strip leading blank-line trivia from the document's first content.
+        """Strip leading blank-line ``NewlineNode``\\ s from the first content.
 
-        A leading ``NewlineNode`` on the first structural node's trivia
-        means "blank line separating this content from preceding
-        content"; if there is no such content (e.g. the prior section
-        or KV was deleted), the blank is meaningless and would render
-        as a stray top-of-file blank line.
-
-        Looks at the first content site — the first section's header
-        leading, or, for a header-less pre-section, the first entry's
-        leading.
+        A leading ``NewlineNode`` on the first structural node means
+        "blank line above this content"; once the preceding content is
+        gone it would render as a stray top-of-file blank.
         """
         for sec in self.sections:
             if sec.header is None:
@@ -554,15 +529,12 @@ class DocumentNode:
         if aot_sec.header is None:
             return []
         sections = self.sections
-        # Common case for build-up workloads: the entry was just
-        # appended, so no sections follow. Avoid the full linear scan.
+        # Hot path: just-appended entry, nothing follows.
         if sections and sections[-1] is aot_sec:
             return []
         aot_path = aot_sec.header.key.path
-        # Scan from the back: AoT entries are usually near the tail
-        # during incremental construction. ``list.index`` would compare
-        # by ``==`` (deep dataclass equality), which is far slower than
-        # identity here.
+        # Identity scan from the back: ``list.index`` would use deep
+        # dataclass ``==``, which is far slower than ``is`` here.
         i = -1
         for idx in range(len(sections) - 1, -1, -1):
             if sections[idx] is aot_sec:

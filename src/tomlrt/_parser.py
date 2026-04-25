@@ -239,16 +239,12 @@ class _Parser:
         return trivia
 
     def _consume_comment(self) -> CommentNode:
-        # Comment starts at '#' and runs until newline or EOF. Control
-        # chars (other than tab) are forbidden.
+        # Up to next newline/EOF; control chars (besides tab) are illegal.
         src = self._src
         start = self._pos
         m = _RE_COMMENT_BODY.match(src, start + 1)
-        # The pattern is unbounded above (*), so match always succeeds.
-        assert m is not None
+        assert m is not None  # pattern is unbounded above (*).
         end_pos = m.end()
-        # If we stopped before EOF and not at newline, the next char is
-        # an illegal control character.
         if end_pos < self._end:
             ch = src[end_pos]
             if ch != "\n" and ch != "\r":
@@ -668,11 +664,8 @@ class _Parser:
     ) -> None:
         """Register an inline table's keys for cross-section conflict checks.
 
-        Local duplicate / dotted-prefix conflicts are detected at parse
-        time inside :meth:`_parse_inline_table`; this method only walks
-        nested inline tables and, when ``abs_prefix`` is given, exposes
-        the inline table's keys to document-wide tracking so later
-        section headers or dotted keys see the conflicts.
+        When ``abs_prefix`` is given, exposes the inline table's keys to
+        document-wide tracking. Walks nested inline tables either way.
         """
         for entry in table.entries:
             path = entry.key.path

@@ -55,13 +55,8 @@ def _walk_newline_nodes(node: object) -> Iterator[NewlineNode]:
 def _detect_newline(node: DocumentNode) -> str:
     """Return the document's line ending if uniform, else ``"\\n"``.
 
-    Returns ``"\\r\\n"`` only when every :class:`NewlineNode` in the
-    CST already uses CRLF; mixed or pure-LF documents return
-    ``"\\n"``. The CRLF case enables ``Document.render`` to convert
-    newly-synthesised ``"\\n"`` newlines to match the source. We
-    deliberately leave mixed-newline documents alone — normalising
-    them either way would break the no-mutation round-trip
-    invariant.
+    Mixed-newline documents return ``"\\n"`` and are left alone — picking
+    either ending would break the no-mutation round-trip invariant.
     """
     saw_any = False
     for nl in _walk_newline_nodes(node):
@@ -161,21 +156,13 @@ def _first_gap_is_blank(
     *,
     default: bool = False,
 ) -> bool:
-    """Decide whether new siblings should adopt a blank-line gap.
+    """Should new siblings adopt a blank-line gap?
 
-    The first sibling gap in source order is read as the user's
-    chosen style: if they put a blank line between the first two
-    entries, new appends mimic that; if not, we leave them packed.
-    Later gaps that diverge from the first are treated as accidental
-    — we don't try to second-guess them.
-
-    ``leadings`` is the leading trivia of every sibling *except the
-    first* (the first has no preceding sibling, so its leading
-    describes the gap to the document preamble, not an inter-sibling
-    gap). With no such gap (zero or one entry), returns ``default``:
-    the caller's view of "what to do when there's no established style
-    to follow" -- e.g. KV-in-table prefers packed (False), AoT
-    siblings prefer blank-separated (True).
+    Reads the first sibling gap as the user's chosen style; later
+    divergent gaps are treated as accidental. ``leadings`` excludes the
+    very first sibling (which has no preceding sibling). Returns
+    ``default`` when no gap is available — KV-in-table prefers
+    ``False``, AoT siblings prefer ``True``.
     """
     it = iter(leadings)
     first = next(it, None)
@@ -192,31 +179,21 @@ def _prepend_blank_line(trivia: Trivia) -> None:
 
 
 def _strip_comment_marker(text: str) -> str:
-    """``"# foo"`` → ``"foo"``.
+    """``"# foo"`` → ``"foo"``: strip leading ``#`` and one optional space.
 
-    Removes a leading ``#`` and one optional space. Symmetric with
-    :func:`_format_comment`, which prepends exactly ``# `` (or just
-    ``#`` for empty input). We deliberately do *not* strip trailing
-    whitespace -- the comment view contract is that reads and writes
-    are exact inverses, so trailing spaces are content.
+    Trailing whitespace is preserved (it's part of the comment payload).
     """
     text = text.removeprefix("#")
     return text.removeprefix(" ")
 
 
 def _format_comment(text: str) -> str:
-    """Format user text as the payload for a :class:`CommentNode`.
+    """Format user text as a :class:`CommentNode` payload.
 
-    Always emits ``"# " + text`` (or ``"#"`` for empty text). The ``#``
-    marker is the renderer's responsibility, not the caller's: this
-    keeps round-trip symmetric with the reader, which strips a single
-    leading ``"# "`` (or ``"#"``). Comment text that itself starts
-    with ``#`` is treated as literal content -- e.g. ``"#hashtag"``
-    renders as ``"# #hashtag"`` and reads back as ``"#hashtag"``.
-    Raises :class:`TOMLError` if ``text`` contains any character the
-    TOML parser would reject in a comment: comments are single-line by
-    definition, and the only control character permitted (besides line
-    terminators which end them) is TAB.
+    Emits ``"# " + text`` (or ``"#"`` for empty text). Text starting
+    with ``#`` is treated as literal content (``"#hashtag"`` →
+    ``"# #hashtag"``). Raises :class:`TOMLError` on line terminators or
+    non-TAB control characters.
     """
     for ch in text:
         cp = ord(ch)
@@ -446,11 +423,8 @@ def _split_pct_eol(pieces: Sequence[TriviaPiece]) -> int:
 
 def _is_pure_whitespace(t: Trivia) -> bool:
     """True iff trivia contains only whitespace/newline pieces (no comments)."""
-    pieces = t.pieces
-    if not pieces:
+    if not t.pieces:
         return True
-    # ``CommentNode`` is the only non-whitespace TriviaPiece; checking
-    # for its absence dodges per-piece tuple-isinstance.
     return not _trivia_has_comment(t)
 
 
@@ -480,8 +454,6 @@ def _scan_leading_comment_run(pieces: list[TriviaPiece]) -> tuple[int, list[str]
 
 
 def _clone_trivia(t: Trivia) -> Trivia:
-    # Trivia pieces (WhitespaceNode/NewlineNode/CommentNode) are
-    # never mutated in place — only replaced wholesale — so we can
-    # share piece refs. Only the list container needs to be fresh
-    # so that subsequent splicing doesn't disturb the original.
+    # Trivia pieces are never mutated in place — only replaced wholesale —
+    # so piece refs can be shared. Only the list container needs to be fresh.
     return Trivia(list(t.pieces))
