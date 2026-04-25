@@ -1329,6 +1329,27 @@ class _StdTable(Table):
         self._owner_anchor = self._anchor
         super()._detach(doc_node)
 
+    def __copy__(self) -> _StdTable:
+        return self.__deepcopy__({})
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> _StdTable:
+        # Copy via the CST + a fresh view rather than dict's default
+        # ``_reconstruct``, which would re-enter ``__setitem__`` against
+        # an empty dict cache + a populated CST and double the CST
+        # entries. ``deepcopy(self._doc_node, memo)`` registers each
+        # cloned ``SectionNode`` in ``memo`` so anchors map across.
+        new_doc = deepcopy(self._doc_node, memo)
+        new_anchor = memo[id(self._anchor)] if self._anchor is not None else None
+        new_owner = (
+            memo[id(self._owner_anchor)] if self._owner_anchor is not None else None
+        )
+        new = self.__class__(
+            new_doc, self._path, anchor=new_anchor, owner_anchor=new_owner
+        )
+        new._attached = self._attached  # noqa: SLF001
+        memo[id(self)] = new
+        return new
+
     def _sections_under_path(self) -> list[SectionNode]:
         plen = len(self._path)
         out: list[SectionNode] = []
@@ -2158,11 +2179,13 @@ class Document(_StdTable):
             _normalise_newlines(self._doc_node, self._newline)
         return self._doc_node.render()
 
+    @override
     def __copy__(self) -> Document:
         # The CST is the source of truth; sharing it across "copies" would
         # mean mutations on one bled into the other. Always clone.
         return Document(deepcopy(self._doc_node))
 
+    @override
     def __deepcopy__(self, memo: dict[int, Any]) -> Document:
         return Document(deepcopy(self._doc_node, memo))
 
