@@ -9,7 +9,8 @@ UV ?= uv
 .PHONY: help
 help:
 	@echo "Common targets:"
-	@echo "  make test         # run the test suite"
+	@echo "  make test         # run the test suite (excludes slow/fuzz)"
+	@echo "  make fuzz         # run the slow property-based suite"
 	@echo "  make coverage     # tests + branch coverage"
 	@echo "  make lint         # ruff check + mypy --strict"
 	@echo "  make docs         # build the MkDocs site (strict)"
@@ -19,6 +20,10 @@ help:
 .PHONY: test
 test:
 	pytest -q
+
+.PHONY: fuzz
+fuzz:
+	pytest -q -m slow
 
 .PHONY: coverage
 coverage:

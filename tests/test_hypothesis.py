@@ -7,11 +7,14 @@ import string
 import sys
 from typing import Any
 
+import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 import tomlrt
 from _toml_str import td
+
+pytestmark = pytest.mark.slow
 
 if sys.version_info >= (3, 11):
     import tomllib
