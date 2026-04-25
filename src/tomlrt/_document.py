@@ -388,28 +388,25 @@ class Table(dict[str, Any]):
         recursing back through it (which would loop, since
         ``__setitem__`` now unconditionally delegates to
         ``_install_flavoured``).
+
+        When ``value`` is an unattached :class:`_InlineTable` or
+        :class:`Array`, the synthesise step (``value_to_node`` ->
+        ``_attach_or_clone``) splices ``value._node`` into the
+        destination KV verbatim and flips ``_attached``. We capture
+        that pre-call and use it post-call to drop ``value`` itself
+        into dict storage, so ``self[key] is value`` holds and later
+        mutations through ``value`` flow through the same cached view.
         """
+        will_live_attach = (
+            isinstance(value, (_InlineTable, Array)) and not value._attached  # noqa: SLF001
+        )
         new_v = self._set_value(key, value)
-        if new_v is None:
+        if will_live_attach:
+            dict.__setitem__(self, key, value)
+        elif new_v is None:
             self._refresh_key(key)
         else:
             dict.__setitem__(self, key, new_v)
-        # Live-attach identity: if ``value`` is an unattached typed
-        # container, ``value_to_node`` will have spliced its ``_node``
-        # directly into the destination CST and flipped ``_attached``.
-        # The view that ``_set_value`` / ``_refresh_key`` cached is a
-        # freshly-built wrapper around that same node; replace it with
-        # the user's own reference so ``self[key] is value`` and so
-        # later mutations through ``value`` keep flowing through one
-        # consistent dict-storage cache.
-        if isinstance(value, (_InlineTable, Array)) and value._attached:  # noqa: SLF001
-            cached = dict.__getitem__(self, key) if super().__contains__(key) else None
-            if (
-                cached is not value
-                and isinstance(cached, type(value))
-                and getattr(cached, "_node", None) is value._node  # noqa: SLF001
-            ):
-                dict.__setitem__(self, key, value)
 
     @override
     def __setitem__(self, key: str, value: object) -> None:
