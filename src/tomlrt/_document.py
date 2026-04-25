@@ -69,6 +69,7 @@ from tomlrt._section_build import (
     _new_section,
     _parse_key_path,
     _rebase_aot_sections_inplace,
+    _rebase_table_sections_inplace,
     _section_insert_index,
 )
 from tomlrt._separator import (
@@ -175,11 +176,13 @@ def _materialise_array(node: ArrayNode) -> list[TomlValue]:
 
 
 class SectionSpec(dict[str, Any]):
-    """Tag telling ``__setitem__`` to install a ``[k]`` standard section.
+    """Legacy tag asking ``__setitem__`` to install a ``[k]`` standard section.
 
-    Produced by [`Table.section`][tomlrt.Table.section]; used only at assignment sites::
-
-        doc["tool"] = Table.section({"version": 1})  # [tool] section
+    Newly written code should prefer [`Table.section`][tomlrt.Table.section],
+    which returns a live, mutable section table. ``SectionSpec`` is
+    retained because it is part of the public API; assigning one
+    *snapshots* its current mapping into a fresh ``[k]`` block, with
+    no live link back to the original ``SectionSpec`` object.
 
     A plain ``dict`` assignment would instead produce an inline table
     (``tool = { version = 1 }``).
@@ -236,10 +239,12 @@ class Table(dict[str, Any]):
     is attached to at most one CST location.
 
     * Assigning a fresh, unattached [`Array`][tomlrt.Array],
-      [`Table.inline`][tomlrt.Table.inline] result, or [`AoT`][tomlrt.AoT] *attaches in
-      place*: the user's reference becomes the live view at the
-      destination, so later mutations through that reference show
-      up in the document. ``doc[k] is myinline`` after the assign.
+      [`Table.section`][tomlrt.Table.section] result,
+      [`Table.inline`][tomlrt.Table.inline] result, or
+      [`AoT`][tomlrt.AoT] *attaches in place*: the user's reference
+      becomes the live view at the destination, so later mutations
+      through that reference show up in the document.
+      ``doc[k] is myvalue`` after the assign.
     * Assigning a container that is already attached somewhere
       (any document, including ``self``) deep-clones the source.
       The two slots are independent — mutations to one don't bleed
@@ -247,7 +252,8 @@ class Table(dict[str, Any]):
     * Plain `dict` and `list` values continue to be
       *snapshot* on assignment. Mutations to the original mapping
       / list after assignment are *not* reflected in the document.
-      Use [`Table.inline`][tomlrt.Table.inline] or
+      Use [`Table.section`][tomlrt.Table.section],
+      [`Table.inline`][tomlrt.Table.inline], or
       [`Array`][tomlrt.Array] to opt in to live
       semantics. Typed containers nested inside a plain dict / list
       still attach live recursively, even though the surrounding
@@ -266,18 +272,38 @@ class Table(dict[str, Any]):
     def section(
         cls,
         mapping: Mapping[str, object] | None = None,
-    ) -> SectionSpec:
-        """Return a spec that installs as a ``[k]`` standard section.
+    ) -> Table:
+        """Return a detached ``[k]`` standard-section table.
 
-        Use from an assignment site: ``doc[k] = Table.section({...})``.
-        The spec is a dict subclass; you can build it up further before
-        assignment (``spec["sub"] = ...``). Nested dicts in the mapping
-        remain inline unless they are themselves `section` specs.
+        Use from an assignment site::
+
+            doc[k] = Table.section({"x": 1})
+
+        The returned [`Table`][tomlrt.Table] is *live*: it is not yet
+        connected to any document, but mutations -- ``t[k] = v``,
+        ``t.update(...)``, nested
+        [`Table.section`][tomlrt.Table.section] /
+        [`AoT`][tomlrt.AoT] / [`Array`][tomlrt.Array] assignments --
+        are recorded against its own private CST and survive into the
+        document on assignment. Assigning the table installs it in
+        place: ``doc[k] is t`` afterwards, and further mutations
+        through ``t`` are visible in [`dumps`][tomlrt.dumps].
+
+        Assigning a section table that is already attached somewhere
+        deep-clones it; a single CST section lives at one location at
+        a time. Plain ``dict`` assignments still produce an inline
+        table; reach for ``Table.section`` when you want a ``[k]``
+        block.
         """
-        spec = SectionSpec()
+        placeholder_path = ("__tomlrt_detached__",)
+        new_sec = _new_section(placeholder_path)
+        new_sec.synthesised_placeholder = True
+        doc_node = DocumentNode(sections=[new_sec])
+        table = _StdTable(doc_node, placeholder_path, anchor=None, owner_anchor=None)
+        table._attached = False  # noqa: SLF001
         if mapping is not None:
-            spec.update(mapping)
-        return spec
+            table.update(mapping)
+        return table
 
     @classmethod
     def inline(
@@ -1904,15 +1930,24 @@ class _StdTable(Table):
             # two slots never share CST sections.
             self._install_aot(parts, value)
             return True
-        if isinstance(value, _StdTable) and not (
-            value._doc_node is self._doc_node  # noqa: SLF001
-            and value._path == (*self._path, *parts)  # noqa: SLF001
-        ):
-            # Section-backed Table: deep-clone the source CST so
-            # comments and formatting survive, and so any nested AoT
-            # lands as ``[[..]]`` rather than crashing the inline-table
-            # synthesiser. Skip when the value is already installed at
-            # the target path (e.g. during ``deepcopy`` reconstruction).
+        if isinstance(value, _StdTable):
+            if (
+                value._doc_node is self._doc_node  # noqa: SLF001
+                and value._path == (*self._path, *parts)  # noqa: SLF001
+            ):
+                # Same target: skip (e.g. ``deepcopy`` reconstruction).
+                return False
+            if not value._attached:  # noqa: SLF001
+                # Detached source (e.g. from ``Table.section()``):
+                # rebase its private section nodes in place and
+                # rehome the user's view so it becomes the live
+                # view at the destination.
+                self._install_detached_table(parts, value)
+                return True
+            # Attached source: deep-clone the CST so comments and
+            # formatting survive, and so any nested AoT lands as
+            # ``[[..]]`` rather than crashing the inline-table
+            # synthesiser.
             self._install_attached_table(parts, value)
             return True
         # Array isn't dispatched here: it falls through to the plain-value
@@ -2111,6 +2146,45 @@ class _StdTable(Table):
         self._install_at_path(parts, view)
         return view
 
+    def _install_detached_table(
+        self,
+        parts: tuple[str, ...],
+        value: _StdTable,
+    ) -> _StdTable:
+        """Live-attach an unattached ``_StdTable`` (e.g. ``Table.section()``).
+
+        The orphan section nodes migrate from ``value._doc_node`` into
+        the live document, with header paths rebased onto the
+        destination path. The user's ``value`` reference -- and every
+        cached descendant view -- is rehomed in place, so subsequent
+        mutations through it reach the live document and
+        ``self[parts[-1]] is value`` holds.
+        """
+        full_path = (*self._path, *parts)
+        src_path = value._path
+        new_secs = _rebase_table_sections_inplace(value, full_path)
+        # Mirror the kind-normalisation that ``_clone_table_sections``
+        # applies on the deep-clone path: a standard-table install
+        # produces a ``[full_path]`` header even when the source was
+        # an orphaned AoT entry whose anchor still carries
+        # ``kind="array"``.
+        for sec in new_secs:
+            assert sec.header is not None
+            if len(sec.header.key.path) == len(full_path):
+                sec.header.kind = "table"
+                break
+        _full_path, insert_at, prior_leading = self._prepare_section_slot(parts)
+        if new_secs:
+            _apply_prior_leading(new_secs, prior_leading)
+            _insert_section_block(
+                self._doc_node, insert_at, new_secs, separate_within=False
+            )
+        _rehome_table_subtree(
+            value, self._doc_node, src_path, full_path, self._owner_anchor
+        )
+        self._install_at_path(parts, value)
+        return value
+
     def _splice_attached(
         self,
         parts: tuple[str, ...],
@@ -2158,6 +2232,53 @@ class _StdTable(Table):
             assert isinstance(nxt, Table)
             cur = nxt
         super(Table, cur).__setitem__(parts[-1], obj)
+
+
+def _rehome_table_subtree(
+    view: object,
+    new_doc: DocumentNode,
+    src_path: tuple[str, ...],
+    full_path: tuple[str, ...],
+    owner_anchor: SectionNode | None,
+) -> None:
+    """Rebase a previously-detached subtree onto ``new_doc``.
+
+    Walks every cached view under a freshly-attached
+    [`Table`][tomlrt.Table] / [`AoT`][tomlrt.AoT] root and rewires
+    its ``_doc_node`` / ``_path`` / ``_owner_anchor`` so that
+    mutations through still-held references reach ``new_doc``. Inline
+    tables and arrays carry no document-level pointers and need no
+    rehoming -- their ``_node`` references travel with the moved CST.
+    """
+    splen = len(src_path)
+    if isinstance(view, _StdTable):
+        rel = view._path[splen:]  # noqa: SLF001
+        view._doc_node = new_doc  # noqa: SLF001
+        view._path = (*full_path, *rel)  # noqa: SLF001
+        view._owner_anchor = owner_anchor  # noqa: SLF001
+        view._attached = True  # noqa: SLF001
+        for child in dict.values(view):
+            _rehome_table_subtree(child, new_doc, src_path, full_path, owner_anchor)
+    elif isinstance(view, AoT):
+        rel = view._path[splen:]  # noqa: SLF001
+        view._doc_node = new_doc  # noqa: SLF001
+        view._path = (*full_path, *rel)  # noqa: SLF001
+        view._attached = True  # noqa: SLF001
+        view._resync()  # noqa: SLF001
+        # Entry tables now reference ``new_doc`` and the rehomed AoT
+        # path; recurse into their cached children with the entry's
+        # own anchor as the bounding owner so sub-sections inside an
+        # entry stay scoped to that entry.
+        for entry in view:
+            assert isinstance(entry, _StdTable)
+            for child in dict.values(entry):
+                _rehome_table_subtree(
+                    child,
+                    new_doc,
+                    src_path,
+                    full_path,
+                    entry._anchor,  # noqa: SLF001
+                )
 
 
 class Document(_StdTable):

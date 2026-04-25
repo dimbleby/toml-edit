@@ -22,7 +22,7 @@ else:
 import pytest
 
 import tomlrt
-from tomlrt import Array, Table
+from tomlrt import AoT, Array, SectionSpec, Table
 
 
 def _reparses(src: str) -> dict[str, Any]:
@@ -523,3 +523,172 @@ def test_outer_plain_dict_remains_snapshot() -> None:
     plain["new"] = 42  # outer is snapshot — not visible in doc
     parsed = _reparses(tomlrt.dumps(doc))
     assert parsed == {"x": {"y": {"z": 1}}}
+
+
+# ---------------------------------------------------------------------------
+# Table.section live-attach semantics.
+#
+# Symmetric with Table.inline / Array / AoT: an unattached section table
+# (the return value of ``Table.section()``) attaches live on assignment.
+# ``doc[k] is t`` afterwards, post-assignment mutations through ``t`` are
+# visible in the document, and a second assignment deep-clones.
+# ---------------------------------------------------------------------------
+
+
+def test_section_factory_returns_a_table() -> None:
+    t = Table.section({"x": 1})
+    assert isinstance(t, Table)
+    assert t["x"] == 1
+
+
+def test_section_assigned_is_user_reference() -> None:
+    doc = tomlrt.parse("")
+    t = Table.section({"x": 1})
+    doc["a"] = t
+    assert doc["a"] is t
+
+
+def test_section_post_assign_scalar_mutation_visible_in_dump() -> None:
+    doc = tomlrt.parse("")
+    t = Table.section()
+    doc["a"] = t
+    t["x"] = 1
+    assert _reparses(tomlrt.dumps(doc)) == {"a": {"x": 1}}
+
+
+def test_section_pre_assign_population_carries_through() -> None:
+    doc = tomlrt.parse("")
+    t = Table.section()
+    t["x"] = 1
+    t["y"] = 2
+    doc["a"] = t
+    t["z"] = 3
+    assert _reparses(tomlrt.dumps(doc)) == {"a": {"x": 1, "y": 2, "z": 3}}
+
+
+def test_section_double_assign_clones_second_slot() -> None:
+    doc = tomlrt.parse("")
+    t = Table.section({"x": 1})
+    doc["a"] = t
+    doc["b"] = t
+    t["x"] = 99
+    parsed = _reparses(tomlrt.dumps(doc))
+    assert parsed == {"a": {"x": 99}, "b": {"x": 1}}
+    assert doc["a"] is t
+    assert doc["b"] is not t
+
+
+def test_section_held_nested_section_survives_parent_attach() -> None:
+    doc = tomlrt.parse("")
+    parent = Table.section({"name": "p"})
+    child = Table.section({"k": "v"})
+    parent["child"] = child
+    doc["a"] = parent
+    child["new"] = 42
+    parsed = _reparses(tomlrt.dumps(doc))
+    assert parsed == {"a": {"name": "p", "child": {"k": "v", "new": 42}}}
+    assert doc["a"]["child"] is child
+
+
+def test_section_held_nested_aot_survives_parent_attach() -> None:
+    doc = tomlrt.parse("")
+    parent = Table.section()
+    pkgs = AoT([{"name": "a"}])
+    parent["pkgs"] = pkgs
+    doc["tool"] = parent
+    pkgs.add({"name": "b"})
+    out = tomlrt.dumps(doc)
+    assert out.count("[[tool.pkgs]]") == 2
+    assert _reparses(out) == {"tool": {"pkgs": [{"name": "a"}, {"name": "b"}]}}
+    assert doc["tool"]["pkgs"] is pkgs
+
+
+def test_section_into_aot_entry_is_scoped_to_that_entry() -> None:
+    doc = tomlrt.parse("")
+    doc["pkg"] = AoT([{"name": "a"}, {"name": "b"}])
+    src = Table.section({"url": "u1"})
+    doc["pkg"][0]["source"] = src
+    src["hash"] = "h"
+    parsed = _reparses(tomlrt.dumps(doc))
+    assert parsed == {
+        "pkg": [
+            {"name": "a", "source": {"url": "u1", "hash": "h"}},
+            {"name": "b"},
+        ],
+    }
+
+
+def test_section_structural_mutation_through_held_child() -> None:
+    doc = tomlrt.parse("")
+    parent = Table.section()
+    child = Table.section()
+    parent["child"] = child
+    doc["a"] = parent
+    # Structural insert (a fresh Table.section under child) after the
+    # parent's attach proves that ``child`` was rehomed to the live
+    # document, not just reading the same section nodes by accident.
+    child["deep"] = Table.section({"z": 1})
+    parsed = _reparses(tomlrt.dumps(doc))
+    assert parsed == {"a": {"child": {"deep": {"z": 1}}}}
+
+
+def test_section_install_multi_segment_path() -> None:
+    doc = tomlrt.parse("")
+    t = Table.section({"x": 1})
+    doc.install(("a", "b"), t)
+    assert doc["a"]["b"] is t
+    t["y"] = 2
+    assert _reparses(tomlrt.dumps(doc)) == {"a": {"b": {"x": 1, "y": 2}}}
+
+
+def test_section_inside_inline_is_rejected() -> None:
+    doc = tomlrt.parse("")
+    doc["inline"] = Table.inline({"a": 1})
+    with pytest.raises(tomlrt.TOMLError):
+        doc["inline"]["nested"] = Table.section({"x": 1})
+
+
+def test_legacy_sectionspec_is_still_a_snapshot() -> None:
+    doc = tomlrt.parse("")
+    spec = SectionSpec({"x": 1})
+    doc["a"] = spec
+    spec["y"] = 2  # snapshot semantics: not visible in doc
+    assert _reparses(tomlrt.dumps(doc)) == {"a": {"x": 1}}
+
+
+def test_section_placeholder_does_not_leak_into_dump() -> None:
+    doc = tomlrt.parse("")
+    parent = Table.section({"name": "p"})
+    parent["sub"] = Table.section({"k": "v"})
+    doc["root"] = parent
+    out = tomlrt.dumps(doc)
+    assert "__tomlrt_detached__" not in out
+
+
+def test_section_replacement_preserves_prior_leading() -> None:
+    src = """\
+# comment above
+
+[a]
+x = 1
+"""
+    doc = tomlrt.loads(src)
+    doc["a"] = Table.section({"x": 2})
+    out = tomlrt.dumps(doc)
+    assert out.startswith("# comment above\n\n[a]\n")
+    assert "x = 2" in out
+
+
+def test_section_parse_dump_byte_exact_unchanged() -> None:
+    src = """\
+[a]
+x = 1
+
+[a.b]
+y = 2
+
+[[c]]
+v = 1
+"""
+    doc = tomlrt.loads(src)
+    assert tomlrt.dumps(doc) == src

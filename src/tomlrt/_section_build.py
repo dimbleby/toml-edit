@@ -194,6 +194,29 @@ def _rebase_aot_sections_inplace(
     return out
 
 
+def _rebase_table_sections_inplace(
+    value: _StdTable,
+    full_path: tuple[str, ...],
+) -> list[SectionNode]:
+    """Rebase a detached ``_StdTable``'s section headers in place.
+
+    Used when live-attaching an unattached standard table (the
+    detached form returned by [`Table.section`][tomlrt.Table.section]):
+    the orphan section nodes themselves migrate from the value's
+    private `DocumentNode` into the destination document, with their
+    header paths rewritten so the placeholder prefix is replaced by
+    ``full_path``. Returns them in document order.
+    """
+    src_path = value._path  # noqa: SLF001
+    sections = value._doc_node.sections  # noqa: SLF001
+    out: list[SectionNode] = []
+    for sec, new_path in _iter_rebased(sections, src_path, full_path):
+        assert sec.header is not None
+        sec.header.key = _make_dotted_key(new_path)
+        out.append(sec)
+    return out
+
+
 def _aot_owned_sections(value: AoT) -> list[SectionNode]:
     """All section nodes contributing to ``value``, in document order."""
     doc_node = value._doc_node  # noqa: SLF001
