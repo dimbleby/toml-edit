@@ -31,14 +31,6 @@ doc = tomlrt.document({"project": {"name": "demo", "version": "0.1.0"}})
 print(tomlrt.dumps(doc))
 ```
 
-## Highlights
-
-- **Byte-exact round-trip** for any document you don't mutate.
-- **Pure stdlib at runtime** — no third-party dependencies.
-- **Typed accessors** — `table()`, `array()`, `aot()` and friends, so you rarely need `cast()` even under `mypy --strict`.
-- **First-class comment API** — read, write, and rearrange comments on keys, sections, array items, and the document as a whole.
-- **Python 3.10 – 3.14**.
-
 ## Documentation
 
 Full docs at <https://dimbleby.github.io/tomlrt/>:
