@@ -553,11 +553,19 @@ class DocumentNode:
         """
         if aot_sec.header is None:
             return []
-        aot_path = aot_sec.header.key.path
         sections = self.sections
+        # Common case for build-up workloads: the entry was just
+        # appended, so no sections follow. Avoid the full linear scan.
+        if sections and sections[-1] is aot_sec:
+            return []
+        aot_path = aot_sec.header.key.path
+        # Scan from the back: AoT entries are usually near the tail
+        # during incremental construction. ``list.index`` would compare
+        # by ``==`` (deep dataclass equality), which is far slower than
+        # identity here.
         i = -1
-        for idx, candidate in enumerate(sections):
-            if candidate is aot_sec:
+        for idx in range(len(sections) - 1, -1, -1):
+            if sections[idx] is aot_sec:
                 i = idx
                 break
         if i < 0:

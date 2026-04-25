@@ -2921,44 +2921,33 @@ class AoT(list[Table]):
         value: Table | Mapping[str, object],
     ) -> None:
         self._validate_entry(value)
-        own = self._own_sections()
-        n = len(own)
+        n = len(self)
         if py_index < 0:
             py_index += n
         py_index = max(0, min(py_index, n))
-        sections = self._doc_node.sections
-        # Pick an insertion point first; blank-line decision depends on it.
+        # Pure append is the hot path (build-up via .add / .append /
+        # .extend). It can avoid the O(total-sections) walk in
+        # _own_sections, the O(N) sibling-leading materialisation, and
+        # the O(N) _resync rebuild -- existing entries' anchors are
+        # unchanged, so we just append a fresh view to the list.
         if py_index == n:
-            # Append: land after the last [[path]] entry's owned range,
-            # or at end of doc if no entries exist yet.
-            if own:
-                tail = self._doc_node.aot_entry_block(own[-1])[-1]
-                insert_idx = sections.index(tail) + 1
-            else:
-                insert_idx = len(sections)
-        else:
-            insert_idx = sections.index(own[py_index])
-        # Build the entry's block. ``_StdTable`` sources are deep-cloned
-        # so per-KV trivia, sub-section headers, and nested AoTs survive
-        # verbatim. Plain mappings get an empty header spliced in first
-        # and then populated through a scoped view, so flavoured values
-        # (``SectionSpec``, ``AoT``) install as proper sub-sections /
-        # sub-AoTs under the new entry instead of being inlined.
-        if isinstance(value, _StdTable):
-            new_block = _clone_table_sections(value, self._path, head_kind="array")
-            if not new_block:
-                new_block = [self._make_header_section()]
-        else:
-            new_block = [self._make_header_section()]
+            self._append_entry(value)
+            return
+        own = self._own_sections()
+        sections = self._doc_node.sections
+        insert_idx = sections.index(own[py_index])
+        new_block = self._build_entry_block(value)
         new_sec = new_block[0]
         # Insert a blank-line separator before the new header iff there
         # is already rendered content preceding it. When existing
         # siblings already share a uniform spacing style, copy that;
         # otherwise default to blank-separated (canonical TOML style).
-        sibling_leadings = [
+        sibling_leadings = (
             sec.header.leading for sec in own[1:] if sec.header is not None
-        ]
-        add_blank = _first_gap_is_blank(sibling_leadings) if sibling_leadings else True
+        )
+        # With only one existing sibling there's no observable gap; default
+        # to blank-separated (canonical TOML style).
+        add_blank = _first_gap_is_blank(sibling_leadings) if n >= 2 else True
         preceding_has_content = any(
             s.header is not None or s.entries for s in sections[:insert_idx]
         )
@@ -2968,7 +2957,7 @@ class AoT(list[Table]):
         # Symmetric: when inserting before existing content, ensure the
         # next section's header carries a blank-line separator from the
         # new one so two ``[[..]]`` headers don't render glued together.
-        if py_index < n and add_blank:
+        if add_blank:
             next_hdr = sections[insert_idx].header
             if next_hdr is not None:
                 _prepend_blank_line(next_hdr.leading)
@@ -2978,6 +2967,78 @@ class AoT(list[Table]):
             assert isinstance(value, Mapping)
             self._populate_via_view(new_sec, value)
         self._resync()
+
+    def _build_entry_block(
+        self,
+        value: Table | Mapping[str, object],
+    ) -> list[SectionNode]:
+        """Build the [header, *owned-subsections] block for a new entry.
+
+        ``_StdTable`` sources are deep-cloned so per-KV trivia,
+        sub-section headers, and nested AoTs survive verbatim. Plain
+        mappings get an empty header spliced in first and are
+        populated through a scoped view by the caller, so flavoured
+        values (``SectionSpec``, ``AoT``) install as proper
+        sub-sections / sub-AoTs instead of being inlined.
+        """
+        if isinstance(value, _StdTable):
+            new_block = _clone_table_sections(value, self._path, head_kind="array")
+            if new_block:
+                return new_block
+        return [self._make_header_section()]
+
+    def _append_entry(self, value: Table | Mapping[str, object]) -> None:
+        """Append a new entry without rebuilding the entry list.
+
+        Avoids ``_own_sections`` (O(total sections)) and ``_resync``
+        (O(self)) by computing the insertion point from the cached
+        last entry's anchor and incrementally appending the new view.
+        """
+        sections = self._doc_node.sections
+        n = len(self)
+        if n == 0:
+            insert_idx = len(sections)
+            add_blank = True
+        else:
+            last_anchor = self[-1]._anchor  # noqa: SLF001
+            assert last_anchor is not None
+            # Common case: the previous entry has no owned sub-sections
+            # and is the last section in the document, so we just
+            # append. Otherwise we have to find the end of its block.
+            if sections[-1] is last_anchor:
+                insert_idx = len(sections)
+            else:
+                tail = self._doc_node.aot_entry_block(last_anchor)[-1]
+                insert_idx = sections.index(tail) + 1
+            # Sample the first sibling gap to mirror the user's style.
+            if n >= 2:
+                first_sibling_anchor = self[1]._anchor  # noqa: SLF001
+                assert first_sibling_anchor is not None
+                first_hdr = first_sibling_anchor.header
+                add_blank = (
+                    _first_gap_is_blank((first_hdr.leading,))
+                    if first_hdr is not None
+                    else True
+                )
+            else:
+                add_blank = True
+        new_block = self._build_entry_block(value)
+        new_sec = new_block[0]
+        assert new_sec.header is not None
+        preceding_has_content = any(
+            s.header is not None or s.entries for s in sections[:insert_idx]
+        )
+        if preceding_has_content and add_blank:
+            _prepend_blank_line(new_sec.header.leading)
+        self._doc_node.adopt_preamble_into(new_sec.header.leading)
+        sections[insert_idx:insert_idx] = new_block
+        if not isinstance(value, _StdTable):
+            assert isinstance(value, Mapping)
+            self._populate_via_view(new_sec, value)
+        list.append(
+            self,
+            _StdTable(self._doc_node, self._path, anchor=new_sec),
+        )
 
     @override
     def pop(self, index: SupportsIndex = -1) -> Table:
