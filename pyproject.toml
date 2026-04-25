@@ -99,7 +99,6 @@ ignore = [
   "ERA",               # eradicate
   "PD",                # pandas-vet
   "PLR",               # pylint-refactor
-  "T20",               # flake8-print
   "ANN401",            # any-type
   "E203",              # whitespace before ':'
   "S101",              # assert-used
