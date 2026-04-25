@@ -437,6 +437,28 @@ def test_detached_aot_reattaches_live() -> None:
     }
 
 
+def test_detached_table_writes_survive_reattach() -> None:
+    """Writes to a detached ``_StdTable`` view must persist when the view
+    is later re-assigned into a document.
+
+    Regression: while a ``Table`` is detached its ``_doc_node`` points at
+    a private orphan ``DocumentNode``. ``Table.__setitem__`` /
+    ``__delitem__`` used to short-circuit through ``dict.__setitem__`` /
+    ``super().__delitem__`` for detached views, leaving the orphan CST
+    untouched. Re-attaching the view (which deep-clones the orphan)
+    therefore silently dropped any post-detach writes.
+    """
+    doc = tomlrt.parse("[t]\na = 1\n")
+    t = doc["t"]
+    assert isinstance(t, tomlrt.Table)
+    del doc["t"]  # t is now detached against an orphan doc_node
+    t["b"] = 2
+    del t["a"]
+    doc["t"] = t  # re-attach via deep-clone of the orphan
+    parsed = _reparses(tomlrt.dumps(doc))
+    assert parsed == {"t": {"b": 2}}
+
+
 def test_aot_entry_view_identity_preserved_through_attach() -> None:
     aot = tomlrt.AoT([{"name": "a"}])
     entry = aot[0]
