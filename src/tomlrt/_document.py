@@ -1380,6 +1380,11 @@ class _StdTable(Table):
                                                longer than one segment
             ("absent", None)
         """
+        # Dict storage is a complete index of every key visible at this
+        # path: ``_populate`` and ``_refresh_key`` keep it in sync with
+        # the CST. If the key isn't cached, no scan can find it.
+        if not dict.__contains__(self, key):
+            return ("absent", None)
         if self._anchor is not None:
             # AoT-anchored slow path: direct sections is just the anchor;
             # child sections may live anywhere within the entry's owned
