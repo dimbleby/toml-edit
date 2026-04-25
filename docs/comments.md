@@ -37,7 +37,7 @@ server.leading_comments["port"] = (
 
 ## Section header comments
 
-`Table.header_comment` is the EOL comment on the `[section]` line itself; `Table.header_leading_comments` is the run of `# …` lines immediately above it:
+`Table.header_comment` is the end-of-line comment on the `[section]` line itself; `Table.header_leading_comments` is the run of `# …` lines immediately above it:
 
 ```python
 server.header_comment = "HTTP listener"

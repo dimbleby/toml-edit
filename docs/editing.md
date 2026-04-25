@@ -16,7 +16,7 @@ doc["tags"] = Array(["a", "b"], multiline=True)  # multi-line array
 
 ## Live vs snapshot
 
-Assigning a fresh `Table.section(...)`, `Table.inline(...)`, `Array(...)`, or `AoT(...)` _attaches it live_: the user's reference becomes the live view at the destination, and later mutations through that reference show up in the document.
+Assigning a fresh `Table.section(...)`, `Table.inline(...)`, `Array(...)`, or `AoT(...)` _attaches it live_: your reference becomes the live view at the destination, and later mutations through that reference show up in the document.
 
 ```python
 xs = Array([1, 2])
@@ -33,8 +33,8 @@ assert doc["a"] is t
 Plain `dict` / `list` values are _snapshot_ on assignment — mutating the original after assignment does _not_ affect the document.
 Reach for `Table.section`, `Table.inline`, or `Array` when you want live semantics.
 
-A container that is already attached somewhere is deep-cloned on assignment, so two slots never share the same underlying CST.
-This applies to intra-document (`doc["b"] = doc["a"]`) and cross-document (`d2["x"] = d1["x"]`) cases alike.
+A container that is already attached somewhere is deep-cloned on assignment, so two slots never share state.
+This applies whether the source and destination are in the same document (`doc["b"] = doc["a"]`) or different ones (`d2["x"] = d1["x"]`).
 
 ## Growing an array-of-tables
 
