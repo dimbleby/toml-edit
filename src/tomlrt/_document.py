@@ -1009,8 +1009,32 @@ class _InlineTable(Table):
 
     @override
     def _set_value(self, key: str, value: object) -> TomlValue | None:
-        self.set_at((key,), value)
-        return None
+        # Fast path for an unshadowed fresh key: the dict cache lets us
+        # skip the entry walk entirely. ``key not in self`` here means
+        # no existing entry has ``key`` as its first path segment (the
+        # dict surfaces both single-segment entries and dotted-key
+        # sub-tables under their head), so there is nothing to swap or
+        # purge -- just append and incrementally re-stamp separators.
+        prefix = (key,)
+        if not super().__contains__(key):
+            new_entry = self._make_entry(prefix, value)
+            self._node.entries.append(new_entry)
+            _apply_separator_after_append(self._node, self._style)
+            return _value_for(new_entry.value)
+        # Exact-match in-place swap: preserves trivia and position.
+        existing = self._find_entry(key)
+        if existing is not None:
+            existing.value = value_to_node(value)
+            return _value_for(existing.value)
+        # Dotted shadowing: purge any entry with this prefix and append.
+        # ``items[0]`` may shift, so re-stamp the full separator style.
+        self._node.entries[:] = [
+            e for e in self._node.entries if not _path_has_prefix(e.key.path, prefix)
+        ]
+        new_entry = self._make_entry(prefix, value)
+        self._node.entries.append(new_entry)
+        _apply_separator_style(self._node, self._style)
+        return _value_for(new_entry.value)
 
     @override
     def _delete_value(self, key: str) -> None:
