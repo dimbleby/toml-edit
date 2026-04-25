@@ -814,9 +814,9 @@ class Table(dict[str, Any]):
     def comments(self) -> MutableMapping[str, str]:
         """Live mapping of ``key -> end-of-line comment text``.
 
-        Only keys that currently carry a comment are present; assigning
-        ``""`` or deleting a key removes its comment. Reads return the
-        comment text without the leading ``#`` or surrounding whitespace.
+        Only keys that currently carry a comment are present; deleting a
+        key removes its comment. Reads return the comment text without
+        the leading ``#`` or surrounding whitespace.
         """
         msg = "this table flavour does not support the comment API"
         raise TOMLError(msg)
@@ -836,10 +836,10 @@ class Table(dict[str, Any]):
         """End-of-line comment on this table's ``[name]`` / ``[[name]]`` line.
 
         ``None`` means the header has no trailing comment. Setting
-        ``None`` or ``""`` removes any existing comment. Raises
-        [`TOMLError`][tomlrt.TOMLError] for the top-level [`Document`][tomlrt.Document],
-        for inline tables, and for any logical table that exists only
-        through implicit parents (no physical header in source).
+        ``None`` removes any existing comment. Raises [`TOMLError`][tomlrt.TOMLError]
+        for the top-level [`Document`][tomlrt.Document], for inline
+        tables, and for any logical table that exists only through
+        implicit parents (no physical header in source).
 
         For tables declared via multiple discontiguous ``[name]``
         sections, this refers to the *first* such header.
@@ -2501,10 +2501,9 @@ class Array(list[Any]):
     def comments(self) -> MutableMapping[int, str]:
         """Live mapping of ``index -> end-of-line comment text``.
 
-        Only items that currently carry an EOL comment are present.
-        Setting ``""`` removes the comment, mirroring ``del``.
-        Reads return the comment text without the leading ``#`` or
-        surrounding whitespace.
+        Only items that currently carry a comment are present; deleting
+        an item removes its comment. Reads return the comment text
+        without the leading ``#`` or surrounding whitespace.
         """
         return _ArrayCommentsView(self)
 
