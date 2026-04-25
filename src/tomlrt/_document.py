@@ -193,22 +193,6 @@ def _materialise_array(node: ArrayNode) -> list[TomlValue]:
 # ---------------------------------------------------------------------------
 
 
-class SectionSpec(dict[str, Any]):
-    """Legacy tag asking ``__setitem__`` to install a ``[k]`` standard section.
-
-    Newly written code should prefer [`Table.section`][tomlrt.Table.section],
-    which returns a live, mutable section table. ``SectionSpec`` is
-    retained because it is part of the public API; assigning one
-    *snapshots* its current mapping into a fresh ``[k]`` block, with
-    no live link back to the original ``SectionSpec`` object.
-
-    A plain ``dict`` assignment would instead produce an inline table
-    (``tool = { version = 1 }``).
-    """
-
-    __slots__ = ()
-
-
 class Table(dict[str, Any]):
     """A logical TOML table.
 
@@ -545,8 +529,8 @@ class Table(dict[str, Any]):
 
         Subclasses that support structural assignment (``_StdTable``,
         ``Document``) override this. The base implementation rejects
-        any section-flavoured value -- ``SectionSpec``, an attached
-        section-backed ``_StdTable``, or a detached
+        any section-flavoured value -- an attached section-backed
+        ``_StdTable`` or a detached
         [`Table.section`][tomlrt.Table.section] result -- and
         ``AoT``, because inline-style tables cannot hold ``[k]``
         sections or ``[[k]]`` array-of-tables. Multi-segment paths
@@ -556,17 +540,13 @@ class Table(dict[str, Any]):
         and attach live (their ``_node`` is spliced into the
         destination so the user's reference remains the live view).
         """
-        if isinstance(value, SectionSpec):
-            msg = "cannot install a [section] inside an inline-style table"
-            raise TOMLError(msg)
         if isinstance(value, AoT):
             msg = "cannot install an array-of-tables inside an inline-style table"
             raise TOMLError(msg)
         if isinstance(value, _StdTable):
             # A section-backed Table -- whether attached, or detached
-            # from ``Table.section()`` -- is the same kind of "give
-            # me a [section] here" request as a SectionSpec. Refuse
-            # it for the same reason: silently flattening it into
+            # from ``Table.section()`` -- is a "give me a [section]
+            # here" request. Refuse it: silently flattening it into
             # the inline host would lose the [section] semantics.
             msg = "cannot install a [section]-style table inside an inline-style table"
             raise TOMLError(msg)
@@ -1951,9 +1931,6 @@ class _StdTable(Table):
         [`Document.install`][tomlrt.Document.install] (multi-segment writes) on the same
         decision tree.
         """
-        if isinstance(value, SectionSpec):
-            self._install_section(parts, value)
-            return True
         if isinstance(value, AoT):
             # Unattached AoT (e.g. ``AoT([{...}])`` or freshly detached):
             # its orphan section nodes migrate into the live doc with
@@ -2097,7 +2074,7 @@ class _StdTable(Table):
         # the live-attach machinery -- which rebases the placeholder header
         # onto ``parts``, splices it into ``self._doc_node`` and rehomes
         # any held nested children. The user never sees the intermediate
-        # detached view, so SectionSpec snapshot semantics are preserved.
+        # detached view, so snapshot semantics are preserved.
         detached = Table.section(value)
         assert isinstance(detached, _StdTable)
         return self._install_detached(parts, detached, _rebase_table_sections_inplace)
@@ -2947,11 +2924,11 @@ class AoT(list[Table]):
 
         Routes each KV through a temporary `_StdTable` view
         scoped (via ``owner_anchor``) to the new entry's block, so
-        flavoured values (``SectionSpec``, ``AoT``, layout-bearing
-        ``Array``) take their structural install paths -- a nested
-        ``Table.section`` becomes ``[path.k]``, a nested ``AoT``
-        becomes ``[[path.k]]`` -- instead of being inlined by the
-        synthesiser.
+        flavoured values (a nested ``Table.section``, ``AoT``,
+        layout-bearing ``Array``) take their structural install
+        paths -- a nested ``Table.section`` becomes ``[path.k]``,
+        a nested ``AoT`` becomes ``[[path.k]]`` -- instead of
+        being inlined by the synthesiser.
         """
         view = _StdTable(
             self._doc_node,
@@ -3066,8 +3043,8 @@ class AoT(list[Table]):
         sub-section headers, and nested AoTs survive verbatim. Plain
         mappings get an empty header spliced in first and are
         populated through a scoped view by the caller, so flavoured
-        values (``SectionSpec``, ``AoT``) install as proper
-        sub-sections / sub-AoTs instead of being inlined.
+        values (a nested ``Table.section``, ``AoT``) install as
+        proper sub-sections / sub-AoTs instead of being inlined.
         """
         if isinstance(value, _StdTable):
             new_block = _clone_table_sections(value, self._path, head_kind="array")

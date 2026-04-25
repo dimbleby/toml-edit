@@ -22,7 +22,7 @@ else:
 import pytest
 
 import tomlrt
-from tomlrt import AoT, Array, SectionSpec, Table
+from tomlrt import AoT, Array, Table
 
 
 def _reparses(src: str) -> dict[str, Any]:
@@ -687,14 +687,6 @@ def test_section_inside_inline_is_rejected() -> None:
     doc["inline"] = Table.inline({"a": 1})
     with pytest.raises(tomlrt.TOMLError):
         doc["inline"]["nested"] = Table.section({"x": 1})
-
-
-def test_legacy_sectionspec_is_still_a_snapshot() -> None:
-    doc = tomlrt.parse("")
-    spec = SectionSpec({"x": 1})
-    doc["a"] = spec
-    spec["y"] = 2  # snapshot semantics: not visible in doc
-    assert _reparses(tomlrt.dumps(doc)) == {"a": {"x": 1}}
 
 
 def test_section_placeholder_does_not_leak_into_dump() -> None:

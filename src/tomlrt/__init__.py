@@ -6,7 +6,6 @@ from tomlrt._document import (
     AoT,
     Array,
     Document,
-    SectionSpec,
     Table,
     TomlInput,
 )
@@ -17,7 +16,6 @@ __all__ = [
     "AoT",
     "Array",
     "Document",
-    "SectionSpec",
     "TOMLError",
     "TOMLParseError",
     "Table",
