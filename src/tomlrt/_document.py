@@ -1541,7 +1541,7 @@ class _StdTable(Table):
         target = sections[-1]
         indent = _detect_indent(target)
         new_kv = make_keyvalue_node(key, value, indent=indent)
-        if _gaps_uniformly_blank([kv.leading for kv in target.entries[1:]]):
+        if _gaps_uniformly_blank(kv.leading for kv in target.entries[1:]):
             new_kv.leading.pieces.insert(0, NewlineNode("\n"))
         _ensure_trailing_newline(target)
         # Migrate any parked preamble (only present when this is the
