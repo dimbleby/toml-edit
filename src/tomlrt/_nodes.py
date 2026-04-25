@@ -57,7 +57,7 @@ class WhitespaceNode:
 
 @dataclass(slots=True, eq=False)
 class NewlineNode:
-    """A single line terminator (``\\n`` or ``\\r\\n``)."""
+    r"""A single line terminator (``\\n`` or ``\\r\\n``)."""
 
     text: str
 
@@ -299,7 +299,7 @@ ValueNode = (
 
 @dataclass(slots=True, eq=False)
 class KeyValueNode:
-    """A ``key = value`` line in the document or a standard table.
+    r"""A ``key = value`` line in the document or a standard table.
 
     Source layout::
 
@@ -339,7 +339,7 @@ HeaderKind = Literal["table", "array"]
 
 @dataclass(slots=True, eq=False)
 class TableHeaderNode:
-    """A ``[name]`` or ``[[name]]`` header line.
+    r"""A ``[name]`` or ``[[name]]`` header line.
 
     Layout::
 
@@ -478,7 +478,7 @@ class DocumentNode:
             ]
 
     def normalise_top_blank(self) -> None:
-        """Strip leading blank-line ``NewlineNode``\\ s from the first content.
+        r"""Strip leading blank-line ``NewlineNode``\\ s from the first content.
 
         A leading ``NewlineNode`` on the first structural node means
         "blank line above this content"; once the preceding content is

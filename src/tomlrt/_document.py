@@ -771,10 +771,11 @@ class Table(dict[str, Any]):
         *,
         default: object = _MISSING,
     ) -> object:
-        """Shared implementation for ``table`` / ``array`` / ``aot`` and
-        their ``get_*`` variants. Without ``default``, missing keys
-        re-raise `KeyError`; otherwise ``default`` is returned.
-        Wrong-type entries always raise `TypeError`.
+        """Shared implementation for typed accessors and their ``get_*`` variants.
+
+        Without ``default``, missing keys re-raise `KeyError`; otherwise
+        ``default`` is returned. Wrong-type entries always raise
+        `TypeError`.
         """
         try:
             value = self._lookup_path(key)
@@ -1871,13 +1872,14 @@ class _StdTable(Table):
         *,
         kind: str,
     ) -> None:
-        """Defensive: refuse if ``[child_path]`` (or ``[[child_path]]``)
-        already exists within this view's scope. The parser blocks any
-        source where this would arise and assignment auto-purges
-        conflicts, so this is mostly a guard against direct CST
-        manipulation -- but the scope restriction matters in normal
-        use too: an AoT entry must not see a same-named promoted
-        section that lives in a sibling entry's block.
+        """Refuse if ``[child_path]`` already exists within this view's scope.
+
+        The parser blocks any source where this would arise and
+        assignment auto-purges conflicts, so this is mostly a guard
+        against direct CST manipulation -- but the scope restriction
+        matters in normal use too: an AoT entry must not see a
+        same-named promoted section that lives in a sibling entry's
+        block.
         """
         scope = self._scope()
         sections = scope if scope is not None else self._doc_node.sections
@@ -1895,9 +1897,10 @@ class _StdTable(Table):
                 raise TOMLError(msg)
 
     def _splice_promoted_sections(self, new_secs: Sequence[SectionNode]) -> None:
-        """Splice freshly-promoted sections after the parent's last
-        direct section (or at end of document if the parent has none).
-        Uses ``_insert_section_block`` so consecutive AoT entries stay
+        """Splice freshly-promoted sections after the parent's last direct section.
+
+        Falls back to end-of-document if the parent has none. Uses
+        ``_insert_section_block`` so consecutive AoT entries stay
         blank-separated.
         """
         sections = self._doc_node.sections
@@ -2196,11 +2199,12 @@ class _StdTable(Table):
         return full_path
 
     def _install_at_path(self, parts: tuple[str, ...], obj: _StdTable | AoT) -> None:
-        """Install ``obj`` at the leaf of ``parts``, materialising any
-        intermediate implicit super-tables in dict storage as we go.
+        """Install ``obj`` at the leaf of ``parts``.
 
-        CST mutations are assumed to have already been performed; this
-        method only reconciles the dict-storage view.
+        Materialises any intermediate implicit super-tables in dict
+        storage as we go. CST mutations are assumed to have already
+        been performed; this method only reconciles the dict-storage
+        view.
         """
         cur: Table = self
         for part in parts[:-1]:

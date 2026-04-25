@@ -96,8 +96,6 @@ ignore = [
   "C90",               # mccabe
   "COM",               # flake8-commas
   "CPY",               # flake8-copyright
-  "D",                 # pydocstyle
-  "DOC",               # pydoclint
   "ERA",               # eradicate
   "PD",                # pandas-vet
   "PLR",               # pylint-refactor
@@ -117,3 +115,9 @@ strict = true
 
 [tool.ruff.lint.isort]
 required-imports = ["from __future__ import annotations"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D", "DOC"]

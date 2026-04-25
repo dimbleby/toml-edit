@@ -238,7 +238,7 @@ def make_keyvalue_node(
     *,
     indent: str = "",
 ) -> KeyValueNode:
-    """Build a fresh ``key = value\\n`` line."""
+    r"""Build a fresh ``key = value\\n`` line."""
     leading = Trivia([WhitespaceNode(indent)]) if indent else Trivia()
     return KeyValueNode(
         leading=leading,

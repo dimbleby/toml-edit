@@ -127,9 +127,10 @@ def _iter_rebased(
     src_path: tuple[str, ...],
     full_path: tuple[str, ...],
 ) -> Iterable[tuple[SectionNode, tuple[str, ...]]]:
-    """Yield ``(sec, new_path)`` for every section whose header path is
-    rooted at ``src_path``, with ``new_path`` rebased onto ``full_path``.
-    Implicit (header-less) and out-of-prefix sections are skipped.
+    """Yield ``(sec, new_path)`` for sections rooted at ``src_path``.
+
+    ``new_path`` is rebased onto ``full_path``. Implicit (header-less)
+    and out-of-prefix sections are skipped.
     """
     splen = len(src_path)
     for sec in sections:
@@ -183,9 +184,11 @@ def _rebase_sections_inplace(
     *,
     head_kind: HeaderKind | None = None,
 ) -> list[SectionNode]:
-    """Live-attach analogue of `_clone_sections_rebased`: rebase orphan
-    section header paths in place. ``head_kind`` (if given) forces the
-    leading section's kind, mirroring `_clone_table_sections`.
+    """Live-attach analogue of `_clone_sections_rebased`.
+
+    Rebases orphan section header paths in place. ``head_kind`` (if
+    given) forces the leading section's kind, mirroring
+    `_clone_table_sections`.
     """
     out: list[SectionNode] = []
     for sec, new_path in _iter_rebased(sections, src_path, full_path):

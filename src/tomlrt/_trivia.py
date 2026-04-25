@@ -52,7 +52,7 @@ def _walk_newline_nodes(node: object) -> Iterator[NewlineNode]:
 
 
 def _detect_newline(node: DocumentNode) -> str:
-    """Return the document's line ending if uniform, else ``"\\n"``.
+    r"""Return the document's line ending if uniform, else ``"\\n"``.
 
     Mixed-newline documents return ``"\\n"`` and are left alone — picking
     either ending would break the no-mutation round-trip invariant.
@@ -73,8 +73,10 @@ def _normalise_newlines(node: DocumentNode, target: str) -> None:
 
 
 def _first_indent_after_newline(pieces: Sequence[TriviaPiece]) -> str:
-    """Indent (run of spaces/tabs) immediately following the *first*
-    newline in ``pieces``, or empty string if no such pattern exists.
+    """Return the indent immediately following the first newline in ``pieces``.
+
+    The indent is a run of spaces/tabs; returns the empty string if
+    no such pattern exists.
     """
     for i in range(len(pieces) - 1):
         if isinstance(pieces[i], NewlineNode) and isinstance(
@@ -233,7 +235,7 @@ class _HasEolComment(Protocol):
 
 
 def _set_eol_comment(node: _HasEolComment, value: str | None) -> None:
-    """Set or clear the trailing ``# comment`` of a KV / header node.
+    r"""Set or clear the trailing ``# comment`` of a KV / header node.
 
     ``value=None`` clears the comment and strips trailing whitespace
     from ``node.trailing`` so we don't render ``foo = 12 \\n`` after
@@ -428,7 +430,7 @@ def _is_pure_whitespace(t: Trivia) -> bool:
 
 
 def _scan_leading_comment_run(pieces: list[TriviaPiece]) -> tuple[int, list[str]]:
-    """Walk a leading run of ``[WS] # … \\n`` triples from offset 0.
+    r"""Walk a leading run of ``[WS] # … \\n`` triples from offset 0.
 
     Returns ``(end_index, raw_comment_texts)``. ``end_index`` is the
     index of the first piece that is not part of the run.
