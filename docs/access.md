@@ -1,7 +1,7 @@
 # Typed access
 
-`Document` and `Table` are `dict` subclasses, so `doc["key"]` returns `Any` — fine at runtime, awkward under `mypy --strict`.
-The typed accessors avoid `cast()` while preserving the live-view semantics.
+Plain `doc["key"]` returns `Any`, which forces a `cast()` (or a runtime `isinstance` check) at every step of a nested lookup.
+The typed accessors give you a shape-checked `Table`, `Array`, or `AoT` directly.
 
 ## Required accessors
 
