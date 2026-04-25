@@ -495,10 +495,9 @@ class Table(dict[str, Any]):
         ``SectionSpec`` / ``AoT`` because inline-style tables cannot
         hold ``[k]`` sections or ``[[k]]`` array-of-tables, and
         rejects multi-segment paths for the same reason. Standalone
-        :class:`Array` is accepted at a single-segment path and
-        installed as a plain list value (the ``multiline`` layout
-        request is dropped; inline tables do not admit multi-line
-        array values).
+        :class:`Array` and :class:`Table.inline` values are accepted
+        and attach live (their ``_node`` is spliced into the
+        destination so the user's reference remains the live view).
         """
         if isinstance(value, SectionSpec):
             msg = "cannot install a [section] inside an inline-style table"
@@ -522,9 +521,6 @@ class Table(dict[str, Any]):
                 "an inline-style table"
             )
             raise TOMLError(msg)
-        if isinstance(value, Array) and not value._attached:  # noqa: SLF001
-            self._commit_value(parts[0], list(value))
-            return
         self._commit_value(parts[0], value)
 
     @override
@@ -884,28 +880,6 @@ class Table(dict[str, Any]):
             else:
                 return cur._install_section(parts[i:], {})  # noqa: SLF001
         return cur
-
-    def _install_array(
-        self,
-        parts: tuple[str, ...],
-        items: Iterable[object],
-        *,
-        multiline: bool,
-        indent: str,
-    ) -> Array:
-        if len(parts) == 1:
-            target: Table = self
-        else:
-            target = self.ensure_table(parts[:-1])
-        leaf = parts[-1]
-        target[leaf] = list(items)
-        value = dict.__getitem__(target, leaf)
-        if not isinstance(value, Array):  # pragma: no cover - defensive
-            msg = f"expected Array after install, got {type(value).__name__}"
-            raise TOMLError(msg)
-        if multiline:
-            value.set_multiline(multiline=True, indent=indent)
-        return value
 
 
 class _InlineTable(Table):
@@ -1927,15 +1901,17 @@ class _StdTable(Table):
             self._install_attached_table(parts, value)
             return True
         if isinstance(value, Array) and not value._attached:  # noqa: SLF001
-            # Standalone Arrays are specs: re-synthesise at the target
-            # with the requested layout. Attached Arrays take the
-            # deepcopy path below so comments/formatting survive.
-            self._install_array(
-                parts,
-                list(value),
-                multiline=value.multiline,
-                indent=value._indent,  # noqa: SLF001
-            )
+            # Standalone Array attaches live: ``value_to_node`` will
+            # splice ``value._node`` into the destination KV so the
+            # user's reference becomes the live view at this site.
+            # Multiline layout and indentation are already baked into
+            # ``_node`` by ``Array.__init__`` / ``set_multiline``, so
+            # no extra layout step is needed here.
+            if len(parts) == 1:
+                self._commit_value(parts[0], value)
+            else:
+                target = self.ensure_table(parts[:-1])
+                target[parts[-1]] = value
             return True
         return False
 

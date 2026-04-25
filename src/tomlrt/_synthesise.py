@@ -194,6 +194,12 @@ def value_to_node(value: object) -> ValueNode:
     from tomlrt._document import AoT, Array, Table  # noqa: PLC0415
 
     if isinstance(value, Array):
+        if not value._attached:  # noqa: SLF001
+            # Live attach: splice the user's node into the destination
+            # so subsequent mutations through their reference flow into
+            # the document.
+            value._attached = True  # noqa: SLF001
+            return value._node  # noqa: SLF001
         return deepcopy(value._node)  # noqa: SLF001
     if isinstance(value, AoT):
         msg = (
