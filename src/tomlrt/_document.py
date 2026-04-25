@@ -58,6 +58,7 @@ from tomlrt._nodes import (
     WhitespaceNode,
 )
 from tomlrt._section_build import (
+    _aot_owned_sections,
     _apply_prior_leading,
     _build_promoted_aot_section,
     _build_promoted_section,
@@ -2697,14 +2698,7 @@ class AoT(list[Table]):
         if not self._attached:
             return
         if doc_node is None:
-            captured: list[SectionNode] = []
-            seen: set[int] = set()
-            for s in self._own_sections():
-                for sec in self._doc_node.aot_entry_block(s):
-                    if id(sec) not in seen:
-                        captured.append(sec)
-                        seen.add(id(sec))
-            doc_node = DocumentNode(sections=captured)
+            doc_node = DocumentNode(sections=_aot_owned_sections(self))
         self._attached = False
         self._doc_node = doc_node
         for v in self:
