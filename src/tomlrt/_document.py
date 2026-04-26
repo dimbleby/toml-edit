@@ -3143,8 +3143,7 @@ class AoT(list[Table]):
 
     @override
     def clear(self) -> None:
-        own = self._own_sections()
-        self._orphan_and_remove(list(zip(list(self), own, strict=True)))
+        del self[:]
 
     def _orphan_and_remove(
         self,
@@ -3171,9 +3170,10 @@ class AoT(list[Table]):
     @override
     def __delitem__(self, index: SupportsIndex | slice) -> None:
         if isinstance(index, slice):
+            own = self._own_sections()
             indices = range(*index.indices(len(self)))
-            for i in sorted(indices, reverse=True):
-                self.pop(i)
+            targets = [(self[i], own[i]) for i in indices]
+            self._orphan_and_remove(targets)
         else:
             self.pop(index)
 
