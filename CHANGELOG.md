@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Synthesising parent headers and installing sections no longer mix
   blank-line and compact styles.
+- Replacing an AoT entry no longer injects a stray blank between
+  the new entry and its surviving sibling in compact documents.
 
 ## [1.0.0] - 2026-04-26
 

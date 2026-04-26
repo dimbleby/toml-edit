@@ -2991,29 +2991,41 @@ class AoT(list[Table]):
         for v in list(values):
             self._insert_at(len(self), v)
 
+    def _sample_blank(self) -> bool:
+        """Sample the inter-sibling blank-line style for new entries.
+
+        Reads the first sibling gap as the user's chosen style;
+        falls back to canonical TOML blank-separated when there's
+        nothing to read. Callers that mutate the entry list (e.g.
+        ``__setitem__``) must sample BEFORE the mutation: a stale
+        2-entry AoT collapsed to 1 entry has no gap left to read.
+        """
+        return _first_gap_is_blank(self._sibling_leadings(), default=True)
+
     def _insert_at(
         self,
         py_index: int,
         value: Table | Mapping[str, TomlInput],
+        *,
+        add_blank: bool | None = None,
     ) -> None:
         self._validate_entry(value)
         n = len(self)
         if py_index < 0:
             py_index += n
         py_index = max(0, min(py_index, n))
+        if add_blank is None:
+            add_blank = self._sample_blank()
         # Pure append is the hot path (build-up via .add / .append /
         # .extend). It can avoid the O(total-sections) walk in
-        # _own_sections, the O(N) sibling-leading materialisation, and
-        # the O(N) _resync rebuild -- existing entries' anchors are
-        # unchanged, so we just append a fresh view to the list.
+        # _own_sections and the O(N) _resync rebuild -- existing
+        # entries' anchors are unchanged, so we just append a fresh
+        # view to the list.
         if py_index == n:
-            self._append_entry(value)
+            self._append_entry(value, add_blank=add_blank)
             return
         own = self._own_sections()
         insert_idx = self._doc_node.sections.index(own[py_index])
-        # Mirror the user's spacing if there's a sibling gap to read;
-        # otherwise default to blank-separated (canonical TOML style).
-        add_blank = _first_gap_is_blank(self._sibling_leadings(), default=True)
         # Inserting between existing entries of the same series: bump
         # the now-following entry too so two ``[[..]]`` headers don't
         # render glued together.
@@ -3098,7 +3110,12 @@ class AoT(list[Table]):
             self._populate_via_view(new_sec, value)
         return new_sec
 
-    def _append_entry(self, value: Table | Mapping[str, TomlInput]) -> None:
+    def _append_entry(
+        self,
+        value: Table | Mapping[str, TomlInput],
+        *,
+        add_blank: bool,
+    ) -> None:
         """Append a new entry without rebuilding the entry list.
 
         Avoids ``_own_sections`` (O(total sections)) and ``_resync``
@@ -3106,10 +3123,8 @@ class AoT(list[Table]):
         last entry's anchor and incrementally appending the new view.
         """
         sections = self._doc_node.sections
-        n = len(self)
-        if n == 0:
+        if not self:
             insert_idx = len(sections)
-            add_blank = True
         else:
             last_anchor = self._entry_anchor(-1)
             # Common case: the previous entry has no owned sub-sections
@@ -3120,9 +3135,6 @@ class AoT(list[Table]):
             else:
                 tail = self._doc_node.aot_entry_block(last_anchor)[-1]
                 insert_idx = sections.index(tail) + 1
-            # Sample the first sibling gap to mirror the user's style;
-            # default to blank-separated when there's no gap to read.
-            add_blank = _first_gap_is_blank(self._sibling_leadings(), default=True)
         new_sec = self._splice_entry(insert_idx, value, add_blank=add_blank)
         list.append(
             self,
@@ -3235,11 +3247,16 @@ class AoT(list[Table]):
         if i < 0 or i >= n:
             msg = f"AoT assignment index out of range: {index}"
             raise IndexError(msg)
+        # Sample the inter-sibling style now: the upcoming del+insert
+        # would otherwise lose this signal in 2-entry AoTs (only the
+        # surviving sole sibling would remain, and its leading is
+        # treated as positional rather than stylistic).
+        add_blank = self._sample_blank()
         own = self._own_sections()
         hdr = own[i].header
         prior_leading = hdr.leading if hdr is not None else None
         del self[i]
-        self.insert(i, value)
+        self._insert_at(i, value, add_blank=add_blank)
         _apply_prior_leading([self._own_sections()[i]], prior_leading)
 
     @override
