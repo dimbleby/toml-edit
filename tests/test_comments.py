@@ -486,6 +486,22 @@ def test_header_comment_del() -> None:
     assert doc.table("server").header_comment is None
 
 
+def test_header_comment_del_no_comment_preserves_trailing_whitespace() -> None:
+    """Deleting a header comment that doesn't exist must be a no-op."""
+    src = "[server]   \nhost = 'a'\n"
+    doc = tomlrt.parse(src)
+    del doc.table("server").header_comment
+    assert tomlrt.dumps(doc) == src
+
+
+def test_header_comment_set_none_no_comment_preserves_trailing_whitespace() -> None:
+    """Same for the setter when value is None."""
+    src = "[server]   \nhost = 'a'\n"
+    doc = tomlrt.parse(src)
+    doc.table("server").header_comment = None
+    assert tomlrt.dumps(doc) == src
+
+
 def test_header_leading_comments_extract_block_only() -> None:
     src = td("""
         # old archived note
