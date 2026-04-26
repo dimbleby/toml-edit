@@ -23,7 +23,7 @@ from tomlrt._nodes import (
     WhitespaceNode,
 )
 from tomlrt._synthesise import make_key_part
-from tomlrt._trivia import _prepend_blank_line
+from tomlrt._trivia import _prepend_blank_line, _seam_blank_style
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -338,44 +338,39 @@ def _insert_section_block(
     new_secs: Sequence[SectionNode],
     *,
     separate_within: bool = True,
-    add_blank: bool = True,
+    add_blank: bool | None = None,
     bump_next: bool = False,
 ) -> None:
     """Splice a freshly-built block of ``[ ... ]`` / ``[[ ... ]]`` sections.
 
-    With ``add_blank=True`` (the default) a blank line is inserted
-    before the block whenever ``sections[:insert_at]`` already holds
-    rendered content, and (when ``separate_within`` is True) between
-    consecutive entries within ``new_secs``. Pass ``add_blank=False``
-    to render the block packed against its neighbours -- used by AoT
-    callers that mirror the user's existing inter-sibling style and
-    decide it is "no blank lines".
+    ``add_blank`` controls whether a blank line precedes ``new_secs[0]``
+    (when prior content exists) and -- with ``separate_within=True`` --
+    between consecutive entries within ``new_secs``. ``None`` (the
+    default) auto-detects from the doc's existing inter-section style;
+    ``True``/``False`` force the policy. Callers that already sample
+    style elsewhere (e.g. AoT entries reading sibling-vs-sibling gaps)
+    pass an explicit value.
 
-    Pass ``bump_next=True`` to also blank-separate the section that
-    will follow the new block. AoT entry inserts at non-end positions
-    need this so two ``[[..]]`` headers don't render glued together;
-    the default ``False`` preserves the trailing neighbour's authored
-    leading -- right for sub-section installs and section replaces,
-    where the user's prior layout established the gap and the new
-    block has no domain-level invariant about sibling separation.
-
-    Pass ``separate_within=False`` when each section in ``new_secs``
-    already carries its own inter-header trivia (e.g. cloned sections
-    from another document).
+    ``bump_next=True`` independently prepends a blank to the section
+    that will follow the new block; AoT entry inserts at non-end
+    positions need this so two ``[[..]]`` headers don't render glued
+    together. Pass ``separate_within=False`` when each section in
+    ``new_secs`` already carries its own inter-header trivia (e.g.
+    cloned sections from another document).
     """
     sections = doc_node.sections
+    preceding_has_content = any(s.has_content() for s in sections[:insert_at])
+    if add_blank is None:
+        add_blank = preceding_has_content and _seam_blank_style(sections)
     if add_blank:
-        preceding_has_content = any(
-            s.header is not None or s.entries for s in sections[:insert_at]
-        )
         for i, ns in enumerate(new_secs):
             if (i == 0 and preceding_has_content) or (i > 0 and separate_within):
                 assert ns.header is not None
                 _prepend_blank_line(ns.header.leading)
-        if bump_next and insert_at < len(sections):
-            next_hdr = sections[insert_at].header
-            if next_hdr is not None:
-                _prepend_blank_line(next_hdr.leading)
+    if bump_next and insert_at < len(sections):
+        next_hdr = sections[insert_at].header
+        if next_hdr is not None:
+            _prepend_blank_line(next_hdr.leading)
     if new_secs and new_secs[0].header is not None:
         doc_node.adopt_preamble_into(new_secs[0].header.leading)
     sections[insert_at:insert_at] = new_secs

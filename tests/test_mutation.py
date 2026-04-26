@@ -1276,3 +1276,139 @@ def test_non_string_keys_rejected() -> None:
     doc = tomlrt.parse("")
     with pytest.raises((TypeError, tomlrt.TOMLError)):
         doc.install((None,), 1)  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Header-less parent: adding direct keys synthesises a parent header
+# ---------------------------------------------------------------------------
+
+
+def test_set_direct_key_on_headerless_parent_no_leading_blank() -> None:
+    """Regression: synthesising a ``[fruit]`` header in front of the
+    first ``[fruit.X]`` descendant must not inject a stray blank line
+    at the top of the document.
+    """
+    src = td("""
+        [fruit.apple]
+        x = 1
+
+        [fruit.banana]
+        y = 2
+        """)
+    doc = tomlrt.parse(src)
+    doc.table("fruit")["count"] = 5
+    out = tomlrt.dumps(doc)
+    assert not out.startswith("\n"), repr(out)
+    assert out == td("""
+        [fruit]
+        count = 5
+
+        [fruit.apple]
+        x = 1
+
+        [fruit.banana]
+        y = 2
+        """)
+    assert _reparses(out) == {
+        "fruit": {"count": 5, "apple": {"x": 1}, "banana": {"y": 2}},
+    }
+
+
+def test_set_direct_key_on_headerless_parent_preserves_compact_style() -> None:
+    """When the existing document packs adjacent headers with no blank
+    lines between them, the synthesised parent header must follow the
+    same convention rather than imposing a blank line before the
+    descendant header that follows it.
+
+    The source is also genuinely *out-of-order* — ``[fruit.apple]`` and
+    ``[fruit.banana]`` are split by an unrelated ``[other]`` block —
+    to exercise the bug-prone case in tomlkit-style terminology.
+    """
+    src = td("""
+        [meta]
+        version = 1
+        [fruit.apple]
+        x = 1
+        [other]
+        z = 3
+        [fruit.banana]
+        y = 2
+        """)
+    doc = tomlrt.parse(src)
+    doc.table("fruit")["count"] = 5
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [meta]
+        version = 1
+        [fruit]
+        count = 5
+        [fruit.apple]
+        x = 1
+        [other]
+        z = 3
+        [fruit.banana]
+        y = 2
+        """)
+
+
+def test_install_table_into_compact_style_doc_stays_compact() -> None:
+    """Installing a section into a doc whose existing headers are
+    packed flush (no blank lines between them) must not inject a blank
+    line before the new header, which would mix styles.
+
+    Regression for parallel evolution in ``_insert_section_block``: it
+    used to unconditionally add a blank when prior content existed,
+    even when the doc's between-header style was compact.
+    """
+    src = td("""
+        [a]
+        x = 1
+        [c]
+        z = 3
+        """)
+    doc = tomlrt.parse(src)
+    src_b = td("""
+        [b]
+        y = 2
+        """)
+    doc["b"] = tomlrt.parse(src_b)["b"]
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [a]
+        x = 1
+        [c]
+        z = 3
+        [b]
+        y = 2
+        """)
+
+
+def test_install_table_into_blank_line_doc_keeps_blank_line() -> None:
+    """The companion to the compact-style test: when the existing doc
+    separates headers with blank lines, an installed section should
+    follow suit, preserving canonical TOML readability.
+    """
+    src = td("""
+        [a]
+        x = 1
+
+        [c]
+        z = 3
+        """)
+    doc = tomlrt.parse(src)
+    src_b = td("""
+        [b]
+        y = 2
+        """)
+    doc["b"] = tomlrt.parse(src_b)["b"]
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [a]
+        x = 1
+
+        [c]
+        z = 3
+
+        [b]
+        y = 2
+        """)

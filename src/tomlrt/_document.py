@@ -98,6 +98,7 @@ from tomlrt._trivia import (
     _prepend_blank_line,
     _replace_trailing_comment_block,
     _scan_leading_comment_run,
+    _seam_blank_style,
     _set_eol_comment,
     _strip_comment_marker,
     _trivia_has_comment,
@@ -1637,13 +1638,8 @@ class _StdTable(Table):
 
     def _ensure_root_section(self) -> SectionNode:
         """Insert an implicit pre-header section at the top of the document."""
-        doc_node = self._doc_node
         new_sec = SectionNode(header=None, entries=[])
-        # Ensure a blank line precedes the next section's header so the
-        # newly-inserted top-level keys aren't visually glued to it.
-        if doc_node.sections and doc_node.sections[0].header is not None:
-            _prepend_blank_line(doc_node.sections[0].header.leading)
-        doc_node.sections.insert(0, new_sec)
+        _insert_section_block(self._doc_node, 0, [new_sec], bump_next=True)
         return new_sec
 
     def _ensure_nested_section(self) -> SectionNode:
@@ -1651,30 +1647,36 @@ class _StdTable(Table):
 
         Placement is immediately before the first descendant section so
         the new keys logically belong to the same place in the document.
-        Falls back to appending when there is no descendant.
+        Falls back to appending when there is no descendant. When the
+        descendant is the first rendered content, bump it down so the
+        new header doesn't sit flush against it -- but only if the
+        doc's style would call for a blank.
         """
         doc_node = self._doc_node
         new_sec = _new_section(self._path)
-        assert new_sec.header is not None
-        header = new_sec.header
         plen = len(self._path)
-        for i, sec in enumerate(doc_node.sections):
+        sections = doc_node.sections
+
+        has_prior = False
+        insert_at = len(sections)
+        for i, sec in enumerate(sections):
             h = sec.header
             if (
                 h is not None
                 and len(h.key.path) > plen
                 and h.key.path[:plen] == self._path
             ):
-                # Insert a leading newline so the new header doesn't
-                # glue against the previous section's last entry.
-                header.leading.pieces.append(NewlineNode("\n"))
-                doc_node.adopt_preamble_into(header.leading)
-                doc_node.sections.insert(i, new_sec)
-                return new_sec
-        if any(s.header is not None or s.entries for s in doc_node.sections):
-            header.leading.pieces.append(NewlineNode("\n"))
-        doc_node.adopt_preamble_into(header.leading)
-        doc_node.sections.append(new_sec)
+                insert_at = i
+                break
+            has_prior = has_prior or sec.has_content()
+
+        descendant_first = insert_at < len(sections) and not has_prior
+        _insert_section_block(
+            doc_node,
+            insert_at,
+            [new_sec],
+            bump_next=descendant_first and _seam_blank_style(sections),
+        )
         return new_sec
 
     # ------------------------------------------------------------------
@@ -1902,7 +1904,7 @@ class _StdTable(Table):
             )
         else:
             insert_at = len(sections)
-        _insert_section_block(self._doc_node, insert_at, new_secs)
+        _insert_section_block(self._doc_node, insert_at, new_secs, add_blank=True)
 
     @override
     def _install_flavoured(self, parts: tuple[str, ...], value: object) -> None:
