@@ -359,7 +359,7 @@ class Table(dict[str, Any]):
     def _set_value(  # pragma: no cover
         self,
         key: str,
-        value: object,
+        value: TomlInput,
     ) -> TomlValue | None:
         """Mutate the CST so ``key`` binds to ``value``.
 
@@ -414,7 +414,7 @@ class Table(dict[str, Any]):
 
     # --- mutators ----------------------------------------------------------
 
-    def _commit_value(self, key: str, value: object) -> None:
+    def _commit_value(self, key: str, value: TomlInput) -> None:
         """Plain-value write at ``key`` then sync dict storage.
 
         When ``value`` is an unattached `_InlineTable` /
@@ -512,7 +512,7 @@ class Table(dict[str, Any]):
     def _install_flavoured(
         self,
         parts: tuple[str, ...],
-        value: object,
+        value: TomlInput,
     ) -> None:
         """Route a flavour-bearing value through the structural installers.
 
@@ -956,7 +956,7 @@ class _InlineTable(Table):
                 return entry
         return None
 
-    def _make_entry(self, path: tuple[str, ...], value: object) -> InlineTableEntry:
+    def _make_entry(self, path: tuple[str, ...], value: TomlInput) -> InlineTableEntry:
         pre, post = self._eq_padding
         # ``pre``/``post`` are WhitespaceNode|None value objects; sharing
         # the ref across entries is safe because their ``text`` field is
@@ -974,7 +974,7 @@ class _InlineTable(Table):
 
     # --- _DottedHost protocol ------------------------------------------------
 
-    def set_at(self, path: tuple[str, ...], value: object) -> None:
+    def set_at(self, path: tuple[str, ...], value: TomlInput) -> None:
         # Preserve in-place update for an exact path match (any depth) so
         # the entry's surrounding trivia and position survive round-tripping.
         for entry in self._node.entries:
@@ -986,7 +986,7 @@ class _InlineTable(Table):
     def _replace_prefix(
         self,
         prefix: tuple[str, ...],
-        value: object,
+        value: TomlInput,
     ) -> InlineTableEntry:
         """Purge any entry under ``prefix`` and append a fresh one.
 
@@ -1026,7 +1026,7 @@ class _InlineTable(Table):
     # --- mapping mutation ----------------------------------------------------
 
     @override
-    def _set_value(self, key: str, value: object) -> TomlValue | None:
+    def _set_value(self, key: str, value: TomlInput) -> TomlValue | None:
         # Fast path: brand-new head key (dict cache surfaces single-segment
         # entries and dotted-key sub-tables, so absence here is conclusive).
         prefix = (key,)
@@ -1063,7 +1063,7 @@ class _DottedHost(Protocol):
     top of it re-read live state instead of a stale snapshot.
     """
 
-    def set_at(self, path: tuple[str, ...], value: object) -> None: ...
+    def set_at(self, path: tuple[str, ...], value: TomlInput) -> None: ...
 
     def del_prefix(self, prefix: tuple[str, ...]) -> bool: ...
 
@@ -1080,7 +1080,7 @@ class _SectionDottedHost:
     def __init__(self, sections: list[SectionNode]) -> None:
         self._sections = sections
 
-    def set_at(self, path: tuple[str, ...], value: object) -> None:
+    def set_at(self, path: tuple[str, ...], value: TomlInput) -> None:
         # Preserve in-place update for an exact path match (any depth) so
         # the entry's surrounding trivia and position survive round-tripping.
         for sec in self._sections:
@@ -1205,7 +1205,7 @@ class _DottedSubTable(Table):
                 )
 
     @override
-    def _set_value(self, key: str, value: object) -> TomlValue | None:
+    def _set_value(self, key: str, value: TomlInput) -> TomlValue | None:
         self._host.set_at((*self._prefix, key), value)
         return None
 
@@ -1558,7 +1558,7 @@ class _StdTable(Table):
             ]
 
     @override
-    def _set_value(self, key: str, value: object) -> TomlValue | None:
+    def _set_value(self, key: str, value: TomlInput) -> TomlValue | None:
         kind, payload = self._classify(key)
         if kind in ("direct", "extras"):
             # In-place value swap: reuse the existing KV node.
@@ -1895,7 +1895,7 @@ class _StdTable(Table):
         _insert_section_block(self._doc_node, insert_at, new_secs, add_blank=True)
 
     @override
-    def _install_flavoured(self, parts: tuple[str, ...], value: object) -> None:
+    def _install_flavoured(self, parts: tuple[str, ...], value: TomlInput) -> None:
         if self._dispatch_structural(parts, value):
             return
         # Plain value (or same-slot identity case skipped by
@@ -1915,7 +1915,7 @@ class _StdTable(Table):
     def _dispatch_structural(
         self,
         parts: tuple[str, ...],
-        value: object,
+        value: TomlInput,
     ) -> bool:
         """Try to install ``value`` at ``parts`` as a structural edit.
 
