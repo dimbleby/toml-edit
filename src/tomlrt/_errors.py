@@ -7,7 +7,7 @@ class TOMLError(Exception):
     """Base class for all tomlrt errors."""
 
 
-class TOMLParseError(TOMLError):
+class TOMLParseError(TOMLError, ValueError):
     """Raised when a TOML document cannot be parsed.
 
     Attributes:

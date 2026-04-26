@@ -273,6 +273,13 @@ def test_inline_table_dotted_key_conflict_reports_inline_position() -> None:
     assert exc_info.value.col == 14
 
 
+def test_parse_error_is_value_error() -> None:
+    # `tomllib.TOMLDecodeError` extends `ValueError`; tomlrt should be
+    # catchable the same way for drop-in compatibility.
+    with pytest.raises(ValueError, match="expected"):
+        tomlrt.parse("a =")
+
+
 def test_moderate_array_nesting_still_parses() -> None:
     payload = "x = " + "[" * 50 + "1" + "]" * 50 + "\n"
     doc = tomlrt.parse(payload)
