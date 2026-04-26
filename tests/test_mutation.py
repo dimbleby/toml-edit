@@ -75,8 +75,7 @@ def test_add_top_level_key_when_only_section_exists() -> None:
 def test_add_key_inside_existing_section() -> None:
     src = "[srv]\nport = 80\n"
     doc = tomlrt.parse(src)
-    srv = doc["srv"]
-    assert isinstance(srv, tomlrt.Table)
+    srv = doc.table("srv")
     srv["host"] = "127.0.0.1"
     out = tomlrt.dumps(doc)
     assert out == td("""
@@ -109,8 +108,7 @@ def test_delete_missing_key_raises_keyerror() -> None:
 def test_set_overwrites_dotted_prefix() -> None:
     src = "[a]\nb.c = 1\n"
     doc = tomlrt.parse(src)
-    a = doc["a"]
-    assert isinstance(a, tomlrt.Table)
+    a = doc.table("a")
     a["b"] = 2
     out = tomlrt.dumps(doc)
     assert _reparses(out) == {"a": {"b": 2}}
@@ -140,8 +138,7 @@ def test_quoted_key_when_bare_invalid() -> None:
 def test_inline_table_replace() -> None:
     src = "obj = { a = 1, b = 2 }\n"
     doc = tomlrt.parse(src)
-    obj = doc["obj"]
-    assert isinstance(obj, tomlrt.Table)
+    obj = doc.table("obj")
     obj["a"] = 99
     out = tomlrt.dumps(doc)
     assert out == "obj = { a = 99, b = 2 }\n"
@@ -150,8 +147,7 @@ def test_inline_table_replace() -> None:
 def test_inline_table_append() -> None:
     src = "obj = { a = 1 }\n"
     doc = tomlrt.parse(src)
-    obj = doc["obj"]
-    assert isinstance(obj, tomlrt.Table)
+    obj = doc.table("obj")
     obj["b"] = 2
     out = tomlrt.dumps(doc)
     assert "a = 1" in out
@@ -162,8 +158,7 @@ def test_inline_table_append() -> None:
 def test_inline_table_delete_last_clears_trailing_comma() -> None:
     src = "obj = { a = 1, b = 2 }\n"
     doc = tomlrt.parse(src)
-    obj = doc["obj"]
-    assert isinstance(obj, tomlrt.Table)
+    obj = doc.table("obj")
     del obj["b"]
     out = tomlrt.dumps(doc)
     assert _reparses(out) == {"obj": {"a": 1}}
@@ -176,8 +171,7 @@ def test_inline_table_accepts_standalone_array_with_live_attach() -> None:
     # multi-line arrays inside inline tables).
     src = "obj = { a = 1 }\n"
     doc = tomlrt.parse(src)
-    obj = doc["obj"]
-    assert isinstance(obj, tomlrt.Table)
+    obj = doc.table("obj")
     arr = Array([1, 2, 3], multiline=True)
     obj["xs"] = arr
     assert obj["xs"] is arr
@@ -188,8 +182,7 @@ def test_inline_table_accepts_standalone_array_with_live_attach() -> None:
 
 def test_inline_table_rejects_section_spec() -> None:
     doc = tomlrt.parse("obj = { a = 1 }\n")
-    obj = doc["obj"]
-    assert isinstance(obj, tomlrt.Table)
+    obj = doc.table("obj")
     with pytest.raises(tomlrt.TOMLError, match="inline-style table"):
         obj["bad"] = Table.section({"x": 1})
 
@@ -202,8 +195,7 @@ def test_inline_table_rejects_section_spec() -> None:
 def test_array_append() -> None:
     src = "xs = [1, 2, 3]\n"
     doc = tomlrt.parse(src)
-    xs = doc["xs"]
-    assert isinstance(xs, tomlrt.Array)
+    xs = doc.array("xs")
     xs.append(4)
     assert list(xs) == [1, 2, 3, 4]
     out = tomlrt.dumps(doc)
@@ -222,8 +214,7 @@ def test_array_append_to_empty_with_tab_indented_comment_preserves_tab() -> None
 
 def test_array_pop() -> None:
     doc = tomlrt.parse("xs = [10, 20, 30]\n")
-    xs = doc["xs"]
-    assert isinstance(xs, tomlrt.Array)
+    xs = doc.array("xs")
     v = xs.pop()
     assert v == 30
     assert list(xs) == [10, 20]
@@ -233,8 +224,7 @@ def test_array_pop() -> None:
 
 def test_array_setitem_int() -> None:
     doc = tomlrt.parse("xs = [1, 2, 3]\n")
-    xs = doc["xs"]
-    assert isinstance(xs, tomlrt.Array)
+    xs = doc.array("xs")
     xs[1] = 22
     out = tomlrt.dumps(doc)
     assert _reparses(out) == {"xs": [1, 22, 3]}
@@ -242,8 +232,7 @@ def test_array_setitem_int() -> None:
 
 def test_array_setitem_slice() -> None:
     doc = tomlrt.parse("xs = [1, 2, 3, 4]\n")
-    xs = doc["xs"]
-    assert isinstance(xs, tomlrt.Array)
+    xs = doc.array("xs")
     xs[1:3] = [22, 33, 44]
     out = tomlrt.dumps(doc)
     assert _reparses(out) == {"xs": [1, 22, 33, 44, 4]}
@@ -255,8 +244,7 @@ def test_array_setitem_slice_matches_list_semantics() -> None:
     # implementation used ``assert``, which silently did the wrong
     # thing under ``python -O``.
     doc = tomlrt.parse("xs = [1, 2, 3]\n")
-    xs = doc["xs"]
-    assert isinstance(xs, tomlrt.Array)
+    xs = doc.array("xs")
     # Strings iterate to characters, like list.__setitem__ does.
     xs[0:1] = "ab"
     assert list(xs) == ["a", "b", 2, 3]
@@ -267,8 +255,7 @@ def test_array_setitem_slice_matches_list_semantics() -> None:
 
 def test_array_delitem_slice() -> None:
     doc = tomlrt.parse("xs = [1, 2, 3, 4]\n")
-    xs = doc["xs"]
-    assert isinstance(xs, tomlrt.Array)
+    xs = doc.array("xs")
     del xs[1:3]
     out = tomlrt.dumps(doc)
     assert _reparses(out) == {"xs": [1, 4]}
@@ -276,8 +263,7 @@ def test_array_delitem_slice() -> None:
 
 def test_array_clear_and_append() -> None:
     doc = tomlrt.parse("xs = [1, 2, 3]\n")
-    xs = doc["xs"]
-    assert isinstance(xs, tomlrt.Array)
+    xs = doc.array("xs")
     xs.clear()
     xs.append("hi")
     out = tomlrt.dumps(doc)
@@ -286,8 +272,7 @@ def test_array_clear_and_append() -> None:
 
 def test_array_extend_iadd() -> None:
     doc = tomlrt.parse("xs = []\n")
-    xs = doc["xs"]
-    assert isinstance(xs, tomlrt.Array)
+    xs = doc.array("xs")
     xs.extend([1, 2])
     xs += [3, 4]
     out = tomlrt.dumps(doc)
@@ -296,8 +281,7 @@ def test_array_extend_iadd() -> None:
 
 def test_array_sort_reverse() -> None:
     doc = tomlrt.parse("xs = [3, 1, 2]\n")
-    xs = doc["xs"]
-    assert isinstance(xs, tomlrt.Array)
+    xs = doc.array("xs")
     xs.sort()
     assert list(xs) == [1, 2, 3]
     xs.reverse()
@@ -307,8 +291,7 @@ def test_array_sort_reverse() -> None:
 
 def test_array_imul() -> None:
     doc = tomlrt.parse("xs = [1, 2]\n")
-    xs = doc["xs"]
-    assert isinstance(xs, tomlrt.Array)
+    xs = doc.array("xs")
     xs *= 3
     out = tomlrt.dumps(doc)
     assert _reparses(out) == {"xs": [1, 2, 1, 2, 1, 2]}
@@ -316,8 +299,7 @@ def test_array_imul() -> None:
 
 def test_array_remove() -> None:
     doc = tomlrt.parse("xs = [1, 2, 3, 2]\n")
-    xs = doc["xs"]
-    assert isinstance(xs, tomlrt.Array)
+    xs = doc.array("xs")
     xs.remove(2)
     out = tomlrt.dumps(doc)
     assert _reparses(out) == {"xs": [1, 3, 2]}
@@ -325,8 +307,7 @@ def test_array_remove() -> None:
 
 def test_array_insert() -> None:
     doc = tomlrt.parse("xs = [1, 3]\n")
-    xs = doc["xs"]
-    assert isinstance(xs, tomlrt.Array)
+    xs = doc.array("xs")
     xs.insert(1, 2)
     out = tomlrt.dumps(doc)
     assert _reparses(out) == {"xs": [1, 2, 3]}
@@ -390,11 +371,9 @@ def test_every_array_mutator_is_overridden(name: str) -> None:
 def test_assigning_array_deep_clones() -> None:
     src = "src = [1, 2, 3]\n"
     doc = tomlrt.parse(src)
-    src_arr = doc["src"]
-    assert isinstance(src_arr, tomlrt.Array)
+    src_arr = doc.array("src")
     doc["dst"] = src_arr
-    dst = doc["dst"]
-    assert isinstance(dst, tomlrt.Array)
+    dst = doc.array("dst")
     dst.append(99)
     assert list(src_arr) == [1, 2, 3]
     assert list(dst) == [1, 2, 3, 99]

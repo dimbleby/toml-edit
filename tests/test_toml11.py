@@ -162,8 +162,7 @@ def test_too_short_time_rejected() -> None:
 def test_inline_table_trailing_comma_accepted() -> None:
     src = "a = { x = 1, y = 2, }\n"
     doc = tomlrt.parse(src)
-    a = doc["a"]
-    assert isinstance(a, tomlrt.Table)
+    a = doc.table("a")
     assert dict(a) == {"x": 1, "y": 2}
     assert tomlrt.dumps(doc) == src
 
@@ -176,8 +175,7 @@ def test_inline_table_multiline() -> None:
         }
         """)
     doc = tomlrt.parse(src)
-    a = doc["a"]
-    assert isinstance(a, tomlrt.Table)
+    a = doc.table("a")
     assert dict(a) == {"x": 1, "y": 2}
     assert tomlrt.dumps(doc) == src
 
@@ -190,8 +188,7 @@ def test_inline_table_multiline_no_trailing_comma() -> None:
         }
         """)
     doc = tomlrt.parse(src)
-    a = doc["a"]
-    assert isinstance(a, tomlrt.Table)
+    a = doc.table("a")
     assert dict(a) == {"x": 1, "y": 2}
     assert tomlrt.dumps(doc) == src
 
@@ -204,8 +201,7 @@ def test_inline_table_newline_with_comments_round_trips() -> None:
         }
         """)
     doc = tomlrt.parse(src)
-    a = doc["a"]
-    assert isinstance(a, tomlrt.Table)
+    a = doc.table("a")
     assert dict(a) == {"x": 1, "y": 2}
     assert tomlrt.dumps(doc) == src
 
@@ -213,8 +209,7 @@ def test_inline_table_newline_with_comments_round_trips() -> None:
 def test_inline_table_empty_multiline() -> None:
     src = "a = {\n}\n"
     doc = tomlrt.parse(src)
-    a = doc["a"]
-    assert isinstance(a, tomlrt.Table)
+    a = doc.table("a")
     assert dict(a) == {}
     assert tomlrt.dumps(doc) == src
 

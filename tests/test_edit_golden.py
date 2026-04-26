@@ -52,11 +52,9 @@ def test_table_with_sub_section_iter_includes_subtable() -> None:
         y = 2
         """)
     doc = tomlrt.parse(src)
-    a = doc["a"]
-    assert isinstance(a, tomlrt.Table)
+    a = doc.table("a")
     assert a["x"] == 1
-    sub = a["sub"]
-    assert isinstance(sub, tomlrt.Table)
+    sub = a.table("sub")
     assert sub["y"] == 2
 
 
@@ -68,10 +66,8 @@ def test_table_with_sub_section_modify_subtable_value() -> None:
         y = 2
         """)
     doc = tomlrt.parse(src)
-    a = doc["a"]
-    assert isinstance(a, tomlrt.Table)
-    sub = a["sub"]
-    assert isinstance(sub, tomlrt.Table)
+    a = doc.table("a")
+    sub = a.table("sub")
     sub["y"] = 99
     out = tomlrt.dumps(doc)
     assert out == td("""
@@ -90,8 +86,7 @@ def test_table_with_sub_section_add_to_parent_appends_in_parent_block() -> None:
         y = 2
         """)
     doc = tomlrt.parse(src)
-    a = doc["a"]
-    assert isinstance(a, tomlrt.Table)
+    a = doc.table("a")
     a["z"] = 3
     out = tomlrt.dumps(doc)
     # New parent-level key must land in the [a] block, BEFORE [a.sub] —
@@ -115,8 +110,7 @@ def test_table_with_sub_section_add_to_parent_appends_in_parent_block() -> None:
 def test_dotted_key_table_read() -> None:
     src = "a.b = 1\na.c = 2\n"
     doc = tomlrt.parse(src)
-    a = doc["a"]
-    assert isinstance(a, tomlrt.Table)
+    a = doc.table("a")
     assert dict(a) == {"b": 1, "c": 2}
 
 
@@ -124,8 +118,7 @@ def test_dotted_key_table_set_via_subtable_adds_dotted_entry() -> None:
     """Setting a new key on a dotted-only table appends a new dotted KV."""
     src = "a.b = 1\na.c = 2\n"
     doc = tomlrt.parse(src)
-    a = doc["a"]
-    assert isinstance(a, tomlrt.Table)
+    a = doc.table("a")
     a["d"] = 3
     assert dict(a) == {"b": 1, "c": 2, "d": 3}
     assert tomlrt.dumps(doc) == td("""
@@ -176,8 +169,7 @@ def test_dotted_key_table_delete_via_subtable() -> None:
         a.d = 3
         """)
     doc = tomlrt.parse(src)
-    a = doc["a"]
-    assert isinstance(a, tomlrt.Table)
+    a = doc.table("a")
     del a["c"]
     assert dict(a) == {"b": 1, "d": 3}
     assert "c" not in tomlrt.dumps(doc)
@@ -186,8 +178,7 @@ def test_dotted_key_table_delete_via_subtable() -> None:
 def test_dotted_key_table_delete_missing_raises() -> None:
     src = "a.b = 1\n"
     doc = tomlrt.parse(src)
-    a = doc["a"]
-    assert isinstance(a, tomlrt.Table)
+    a = doc.table("a")
     with pytest.raises(KeyError):
         del a["nope"]
 
@@ -199,8 +190,7 @@ def test_dotted_key_table_set_overwrites_subtree() -> None:
         a.c = 3
         """)
     doc = tomlrt.parse(src)
-    a = doc["a"]
-    assert isinstance(a, tomlrt.Table)
+    a = doc.table("a")
     a["b"] = 99
     assert dict(a) == {"c": 3, "b": 99}
 
@@ -209,10 +199,8 @@ def test_dotted_key_nested_subtable_set() -> None:
     """Setting a key on a deeply-nested dotted view works too."""
     src = "a.b.x = 1\na.b.y = 2\n"
     doc = tomlrt.parse(src)
-    a = doc["a"]
-    assert isinstance(a, tomlrt.Table)
-    b = a["b"]
-    assert isinstance(b, tomlrt.Table)
+    a = doc.table("a")
+    b = a.table("b")
     b["z"] = 3
     assert dict(b) == {"x": 1, "y": 2, "z": 3}
     assert tomlrt.dumps(doc) == td("""
@@ -226,10 +214,8 @@ def test_inline_dotted_subtable_set() -> None:
     """Same thing inside an inline table."""
     src = "t = { a.b = 1, a.c = 2 }\n"
     doc = tomlrt.parse(src)
-    t = doc["t"]
-    assert isinstance(t, tomlrt.Table)
-    a = t["a"]
-    assert isinstance(a, tomlrt.Table)
+    t = doc.table("t")
+    a = t.table("a")
     a["d"] = 3
     assert dict(a) == {"b": 1, "c": 2, "d": 3}
     assert tomlrt.dumps(doc) == "t = { a.b = 1, a.c = 2, a.d = 3 }\n"
@@ -248,10 +234,8 @@ def test_inline_dotted_subtable_overwrite() -> None:
 def test_inline_dotted_subtable_delete() -> None:
     src = "t = { a.b = 1, a.c = 2 }\n"
     doc = tomlrt.parse(src)
-    t = doc["t"]
-    assert isinstance(t, tomlrt.Table)
-    a = t["a"]
-    assert isinstance(a, tomlrt.Table)
+    t = doc.table("t")
+    a = t.table("a")
     del a["b"]
     assert dict(a) == {"c": 2}
 
@@ -269,16 +253,14 @@ def test_aot_basic_iteration() -> None:
         name = "bob"
         """)
     doc = tomlrt.parse(src)
-    users = doc["users"]
-    assert isinstance(users, tomlrt.AoT)
+    users = doc.aot("users")
     assert [u["name"] for u in users] == ["alice", "bob"]
 
 
 def test_aot_append_entry_via_dict() -> None:
     src = '[[users]]\nname = "alice"\n'
     doc = tomlrt.parse(src)
-    users = doc["users"]
-    assert isinstance(users, tomlrt.AoT)
+    users = doc.aot("users")
     users.append({"name": "bob"})
     out = tomlrt.dumps(doc)
     assert _reparses(out) == {"users": [{"name": "alice"}, {"name": "bob"}]}
@@ -292,8 +274,7 @@ def test_aot_modify_field_in_first_entry() -> None:
         name = "bob"
         """)
     doc = tomlrt.parse(src)
-    users = doc["users"]
-    assert isinstance(users, tomlrt.AoT)
+    users = doc.aot("users")
     users[0]["name"] = "ALICE"
     out = tomlrt.dumps(doc)
     assert out == td("""
@@ -314,8 +295,7 @@ def test_aot_modify_field_in_middle_entry() -> None:
         name = "c"
         """)
     doc = tomlrt.parse(src)
-    users = doc["users"]
-    assert isinstance(users, tomlrt.AoT)
+    users = doc.aot("users")
     users[1]["name"] = "B"
     out = tomlrt.dumps(doc)
     assert out == td("""
@@ -341,16 +321,13 @@ def test_aot_entry_sub_section_read() -> None:
         y = 20
         """)
     doc = tomlrt.parse(src)
-    arr = doc["arr"]
-    assert isinstance(arr, tomlrt.AoT)
+    arr = doc.aot("arr")
     assert len(arr) == 2
     assert arr[0]["x"] == 1
-    sub0 = arr[0]["sub"]
-    assert isinstance(sub0, tomlrt.Table)
+    sub0 = arr[0].table("sub")
     assert sub0["y"] == 2
     assert arr[1]["x"] == 10
-    sub1 = arr[1]["sub"]
-    assert isinstance(sub1, tomlrt.Table)
+    sub1 = arr[1].table("sub")
     assert sub1["y"] == 20
 
 
@@ -366,10 +343,8 @@ def test_aot_entry_sub_section_modify_value() -> None:
         y = 20
         """)
     doc = tomlrt.parse(src)
-    arr = doc["arr"]
-    assert isinstance(arr, tomlrt.AoT)
-    sub = arr[1]["sub"]
-    assert isinstance(sub, tomlrt.Table)
+    arr = doc.aot("arr")
+    sub = arr[1].table("sub")
     sub["y"] = 999
     out = tomlrt.dumps(doc)
     assert out == (
@@ -419,8 +394,7 @@ def test_aot_entry_install_subsection_does_not_overwrite_sibling() -> None:
 def test_inline_table_modify_preserves_spacing() -> None:
     src = "owner = { name = 'tom', dob = 1979 }\n"
     doc = tomlrt.parse(src)
-    owner = doc["owner"]
-    assert isinstance(owner, tomlrt.Table)
+    owner = doc.table("owner")
     owner["name"] = "tim"
     out = tomlrt.dumps(doc)
     # Style of the replaced scalar regenerates as basic-quoted (default),
@@ -431,8 +405,7 @@ def test_inline_table_modify_preserves_spacing() -> None:
 def test_inline_array_modify_preserves_brackets() -> None:
     src = "ports = [ 80, 443, 8080 ]\n"
     doc = tomlrt.parse(src)
-    ports = doc["ports"]
-    assert isinstance(ports, tomlrt.Array)
+    ports = doc.array("ports")
     ports[1] = 444
     out = tomlrt.dumps(doc)
     assert out == "ports = [ 80, 444, 8080 ]\n"
@@ -441,8 +414,7 @@ def test_inline_array_modify_preserves_brackets() -> None:
 def test_array_insert_then_pop_round_trips() -> None:
     src = "ports = [80, 443]\n"
     doc = tomlrt.parse(src)
-    ports = doc["ports"]
-    assert isinstance(ports, tomlrt.Array)
+    ports = doc.array("ports")
     ports.insert(1, 8080)
     assert list(ports) == [80, 8080, 443]
     ports.pop(1)
@@ -466,8 +438,7 @@ def test_cross_doc_table_assign_deep_clones() -> None:
     b = tomlrt.parse(src2)
     b["srv"] = a["srv"]
     # Mutating `a` must not affect `b`.
-    a_srv = a["srv"]
-    assert isinstance(a_srv, tomlrt.Table)
+    a_srv = a.table("srv")
     a_srv["port"] = 9999
     out_a = tomlrt.dumps(a)
     out_b = tomlrt.dumps(b)
@@ -486,8 +457,7 @@ def test_cross_doc_aot_assign_deep_clones() -> None:
     a = tomlrt.parse(src1)
     b = tomlrt.parse(src2)
     b["users"] = a["users"]
-    a_users = a["users"]
-    assert isinstance(a_users, tomlrt.AoT)
+    a_users = a.aot("users")
     a_users[0]["name"] = "MUT"
     assert _reparses(tomlrt.dumps(a))["users"][0]["name"] == "MUT"
     assert _reparses(tomlrt.dumps(b))["users"][0]["name"] == "alice"
@@ -499,8 +469,7 @@ def test_cross_doc_array_assign_deep_clones() -> None:
     a = tomlrt.parse(src1)
     b = tomlrt.parse(src2)
     b["ports"] = a["ports"]
-    a_ports = a["ports"]
-    assert isinstance(a_ports, tomlrt.Array)
+    a_ports = a.array("ports")
     a_ports.append(8080)
     assert _reparses(tomlrt.dumps(a))["ports"] == [80, 443, 8080]
     assert _reparses(tomlrt.dumps(b))["ports"] == [80, 443]
@@ -535,8 +504,7 @@ def test_cross_doc_table_assign_with_nested_aot() -> None:
         stripped = line.strip()
         assert stripped not in ("[tool]", "[tool.poetry]")
     # And mutating the source must not bleed into the destination.
-    a_src = a["tool"]["poetry"]["source"]
-    assert isinstance(a_src, tomlrt.AoT)
+    a_src = a["tool"]["poetry"].aot("source")
     a_src[0]["name"] = "MUT"
     assert "MUT" not in tomlrt.dumps(b)
 
@@ -599,8 +567,7 @@ def test_cross_doc_table_assign_dotted_kv_only_source() -> None:
         """)
     a = tomlrt.parse(src)
     b = tomlrt.document()
-    inner = a["a"]["b"]
-    assert isinstance(inner, tomlrt.Table)
+    inner = a["a"].table("b")
     b["x"] = inner
     out = tomlrt.dumps(b)
     assert _reparses(out) == {"x": {"c": 1, "d": 2}}
@@ -1450,8 +1417,7 @@ def test_set_value_overwriting_existing_subsection() -> None:
         z = 3
         """)
     doc = tomlrt.parse(src)
-    a = doc["a"]
-    assert isinstance(a, tomlrt.Table)
+    a = doc.table("a")
     a["b"] = 99
     out = tomlrt.dumps(doc)
     assert out == td("""
@@ -1472,8 +1438,7 @@ def test_set_value_overwriting_existing_aot() -> None:
         name = "second"
         """)
     doc = tomlrt.parse(src)
-    a = doc["a"]
-    assert isinstance(a, tomlrt.Table)
+    a = doc.table("a")
     a["items"] = 5
     out = tomlrt.dumps(doc)
     assert out == td("""
@@ -1492,8 +1457,7 @@ def test_set_value_overwriting_dotted_subtree() -> None:
         x = 9
         """)
     doc = tomlrt.parse(src)
-    a = doc["a"]
-    assert isinstance(a, tomlrt.Table)
+    a = doc.table("a")
     a["b"] = 99
     out = tomlrt.dumps(doc)
     assert _reparses(out) == {"a": {"x": 9, "b": 99}}
@@ -1524,8 +1488,7 @@ def test_del_subtable() -> None:
         q = 1
         """)
     doc = tomlrt.parse(src)
-    a = doc["a"]
-    assert isinstance(a, tomlrt.Table)
+    a = doc.table("a")
     del a["b"]
     out = tomlrt.dumps(doc)
     assert _reparses(out) == {"a": {"x": 1}, "other": {"q": 1}}
@@ -1541,8 +1504,7 @@ def test_del_aot() -> None:
         name = "second"
         """)
     doc = tomlrt.parse(src)
-    a = doc["a"]
-    assert isinstance(a, tomlrt.Table)
+    a = doc.table("a")
     del a["items"]
     out = tomlrt.dumps(doc)
     assert _reparses(out) == {"a": {"x": 1}}
@@ -1556,8 +1518,7 @@ def test_del_dotted_subtree() -> None:
         x = 9
         """)
     doc = tomlrt.parse(src)
-    a = doc["a"]
-    assert isinstance(a, tomlrt.Table)
+    a = doc.table("a")
     del a["b"]
     out = tomlrt.dumps(doc)
     assert _reparses(out) == {"a": {"x": 9}}
@@ -1565,8 +1526,7 @@ def test_del_dotted_subtree() -> None:
 
 def test_del_missing_raises_keyerror() -> None:
     doc = tomlrt.parse("[a]\nx = 1\n")
-    a = doc["a"]
-    assert isinstance(a, tomlrt.Table)
+    a = doc.table("a")
     with pytest.raises(KeyError):
         del a["missing"]
 
@@ -1581,8 +1541,7 @@ def test_pop_returns_subtable_snapshot() -> None:
         z = 3
         """)
     doc = tomlrt.parse(src)
-    a = doc["a"]
-    assert isinstance(a, tomlrt.Table)
+    a = doc.table("a")
     popped = a.pop("b")
     assert popped == {"y": 2, "c": {"z": 3}}
     assert _reparses(tomlrt.dumps(doc)) == {"a": {"x": 1}}
@@ -1632,8 +1591,7 @@ def test_setitem_into_implicit_parent() -> None:
     """Adding a new key to an implicit-only parent materialises [a]."""
     src = "[a.b]\ny = 2\n"
     doc = tomlrt.parse(src)
-    a = doc["a"]
-    assert isinstance(a, tomlrt.Table)
+    a = doc.table("a")
     a["new"] = 1
     out = tomlrt.dumps(doc)
     assert _reparses(out) == {"a": {"new": 1, "b": {"y": 2}}}
@@ -1693,12 +1651,9 @@ def test_aot_entry_owned_scope_isolates_sibling_sub_sections() -> None:
         x = 2
         """)
     doc = tomlrt.parse(src)
-    arr = doc["arr"]
-    assert isinstance(arr, tomlrt.AoT)
-    s0 = arr[0]["sub"]
-    s1 = arr[1]["sub"]
-    assert isinstance(s0, tomlrt.Table)
-    assert isinstance(s1, tomlrt.Table)
+    arr = doc.aot("arr")
+    s0 = arr[0].table("sub")
+    s1 = arr[1].table("sub")
     assert s0["x"] == 1
     assert s1["x"] == 2
     s0["x"] = 100
@@ -2009,8 +1964,7 @@ def test_append_preserves_leading_comment_in_single_item_array() -> None:
 def test_assign_aot_creates_repeated_headers() -> None:
     doc = tomlrt.loads("")
     doc["packages"] = AoT([{"name": "a", "version": "1.0"}, {"name": "b"}])
-    aot = doc["packages"]
-    assert isinstance(aot, tomlrt.AoT)
+    aot = doc.aot("packages")
     assert len(aot) == 2
     assert "[[packages]]" in tomlrt.dumps(doc)
 
@@ -2200,10 +2154,8 @@ def test_install_section_implicit_super_table_navigable() -> None:
     doc = tomlrt.loads("")
     doc.install("tool.poetry", Table.section({"name": "x"}))
     assert doc.table("tool").table("poetry")["name"] == "x"
-    tool = doc["tool"]
-    assert isinstance(tool, tomlrt.Table)
-    poetry = tool["poetry"]
-    assert isinstance(poetry, tomlrt.Table)
+    tool = doc.table("tool")
+    poetry = tool.table("poetry")
     assert poetry["name"] == "x"
     assert doc.table("tool.poetry")["name"] == "x"
 
@@ -2564,8 +2516,7 @@ def test_pop_then_assign_keeps_dict_view_in_sync() -> None:
     poetry = doc["tool"]["poetry"]
     poetry.pop("extras")
     poetry["extras"] = {"a-norm": ["one"], "b-norm": ["two"]}
-    extras = poetry["extras"]
-    assert isinstance(extras, tomlrt.Table)
+    extras = poetry.table("extras")
     assert dict(extras) == {"a-norm": ["one"], "b-norm": ["two"]}
 
 
