@@ -2937,7 +2937,14 @@ class AoT(list[Table]):
         paths -- a nested ``Table.section`` becomes ``[path.k]``,
         a nested ``AoT`` becomes ``[[path.k]]`` -- instead of
         being inlined by the synthesiser.
+
+        After installing, adopt any sibling AoT entry's KV indent on
+        the first synthesised entry: ``[[xs]]`` siblings whose KVs
+        are indented expect a freshly-appended ``[[xs]]`` to match.
+        Seeding only the first entry is enough -- subsequent KVs go
+        through ``_detect_indent`` and inherit naturally.
         """
+        indent = self._sample_kv_indent()
         view = _StdTable(
             self._doc_node,
             self._path,
@@ -2946,6 +2953,24 @@ class AoT(list[Table]):
         )
         for k, v in value.items():
             view[k] = v
+            if indent and header.entries:
+                header.entries[0].leading.pieces.insert(0, WhitespaceNode(indent))
+                indent = ""
+
+    def _sample_kv_indent(self) -> str:
+        """Sample the indent of an existing AoT entry's KV lines.
+
+        Returns the indent of the last KV under the first sibling
+        entry that has any KVs, or ``""`` if no siblings have direct
+        KV content. Used to keep newly-appended/inserted ``[[xs]]``
+        entries visually consistent with their siblings.
+        """
+        for i in range(len(self)):
+            anchor = self._entry_anchor(i)
+            indent = _detect_indent(anchor)
+            if indent:
+                return indent
+        return ""
 
     # ------------------------------------------------------------------
     # Mutators

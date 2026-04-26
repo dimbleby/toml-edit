@@ -1478,3 +1478,62 @@ def test_aot_replace_in_blank_styled_doc_keeps_blank() -> None:
         [[xs]]
         c=3
         """)
+
+
+def test_aot_append_adopts_sibling_kv_indent() -> None:
+    """A new AoT entry should match the sibling entries' KV indent.
+
+    Regression: when sibling ``[[xs]]`` entries had indented KVs,
+    appending ``{"c": 3}`` synthesised a flush-left ``c = 3`` rather
+    than mirroring the user's chosen indent.
+    """
+    src = td("""
+        [[xs]]
+            a = 1
+        [[xs]]
+            b = 2
+        """)
+    doc = tomlrt.parse(src)
+    doc["xs"].append({"c": 3})
+    assert tomlrt.dumps(doc) == td("""
+        [[xs]]
+            a = 1
+        [[xs]]
+            b = 2
+        [[xs]]
+            c = 3
+        """)
+
+
+def test_aot_insert_at_zero_adopts_sibling_kv_indent() -> None:
+    """Insert at index 0 also adopts the sibling KV indent."""
+    src = td("""
+        [[xs]]
+            a = 1
+        """)
+    doc = tomlrt.parse(src)
+    doc["xs"].insert(0, {"c": 3})
+    assert tomlrt.dumps(doc) == td("""
+        [[xs]]
+            c = 3
+
+        [[xs]]
+            a = 1
+        """)
+
+
+def test_aot_append_with_no_sibling_indent_stays_flush() -> None:
+    """Control: no sibling indent signal means no indent is invented."""
+    src = td("""
+        [[xs]]
+        a = 1
+        """)
+    doc = tomlrt.parse(src)
+    doc["xs"].append({"b": 2})
+    assert tomlrt.dumps(doc) == td("""
+        [[xs]]
+        a = 1
+
+        [[xs]]
+        b = 2
+        """)
