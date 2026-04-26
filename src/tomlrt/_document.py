@@ -623,7 +623,7 @@ class Table(dict[str, Any]):
         return {k: _to_plain(v) for k, v in self.items()}
 
     @override
-    def pop(self, key: str, default: object = _MISSING) -> Any:
+    def pop(self, key: str, default: Any = _MISSING) -> Any:
         """Remove ``key`` and return its value, like `dict.pop`.
 
         For [`Table`][tomlrt.Table] / [`AoT`][tomlrt.AoT] /
@@ -2459,7 +2459,7 @@ class Array(list[Any]):
         _write_item_leadings(self._node.items, leadings)
 
     @staticmethod
-    def _make_item(value: object, *, with_comma: bool) -> ArrayItem:
+    def _make_item(value: TomlInput, *, with_comma: bool) -> ArrayItem:
         from tomlrt._nodes import ArrayItem  # noqa: PLC0415
 
         return ArrayItem(
@@ -2545,14 +2545,14 @@ class Array(list[Any]):
     # ------------------------------------------------------------------
 
     @override
-    def append(self, value: object) -> None:
+    def append(self, value: Any) -> None:
         new_item = self._make_item(value, with_comma=False)
         self._node.items.append(new_item)
         _apply_separator_after_append(self._node, self._style)
         list.append(self, _value_for(new_item.value))
 
     @override
-    def extend(self, values: Iterable[object]) -> None:
+    def extend(self, values: Iterable[Any]) -> None:
         new_items = [self._make_item(v, with_comma=False) for v in list(values)]
         if not new_items:
             return
@@ -2561,7 +2561,7 @@ class Array(list[Any]):
         list.extend(self, [_value_for(it.value) for it in new_items])
 
     @override
-    def insert(self, index: SupportsIndex, value: object) -> None:
+    def insert(self, index: SupportsIndex, value: Any) -> None:
         idx = operator.index(index)
         leadings = _snapshot_item_leadings(self._node.items)
         new_item = self._make_item(value, with_comma=False)
@@ -2571,14 +2571,14 @@ class Array(list[Any]):
         list.insert(self, idx, _value_for(new_item.value))
 
     @overload
-    def __setitem__(self, index: SupportsIndex, value: object) -> None: ...
+    def __setitem__(self, index: SupportsIndex, value: Any) -> None: ...
     @overload
-    def __setitem__(self, index: slice, value: Iterable[object]) -> None: ...
+    def __setitem__(self, index: slice, value: Iterable[Any]) -> None: ...
     @override
     def __setitem__(
         self,
         index: SupportsIndex | slice,
-        value: object,
+        value: Any,
     ) -> None:
         if isinstance(index, slice):
             if not isinstance(value, Iterable):
@@ -2626,7 +2626,7 @@ class Array(list[Any]):
         return popped
 
     @override
-    def remove(self, value: object) -> None:
+    def remove(self, value: Any) -> None:
         idx = list.index(self, value)
         del self[idx]
 
@@ -2669,7 +2669,7 @@ class Array(list[Any]):
         self._resync()
 
     @override
-    def __iadd__(self, values: Iterable[object]) -> Self:
+    def __iadd__(self, values: Iterable[Any]) -> Self:
         self.extend(values)
         return self
 
