@@ -469,8 +469,7 @@ def test_detached_table_writes_survive_reattach() -> None:
     therefore silently dropped any post-detach writes.
     """
     doc = tomlrt.parse("[t]\na = 1\n")
-    t = doc["t"]
-    assert isinstance(t, tomlrt.Table)
+    t = doc.table("t")
     del doc["t"]  # t is now detached against an orphan doc_node
     t["b"] = 2
     del t["a"]

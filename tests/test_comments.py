@@ -211,8 +211,7 @@ def test_set_leading_comments_preserves_indent_in_subtable() -> None:
             x = 1
         """)
     doc = tomlrt.parse(src)
-    tbl = doc["tbl"]
-    assert isinstance(tbl, tomlrt.Table)
+    tbl = doc.table("tbl")
     assert tbl.leading_comments["x"] == ("explanation",)
     tbl.leading_comments["x"] = ("replaced",)
     assert tomlrt.dumps(doc) == td("""
@@ -264,8 +263,7 @@ def test_comments_view_repr_shows_pairs() -> None:
 def test_comments_on_inline_table_raises_with_helpful_message() -> None:
     src = 'pkg = { name = "tomlrt", version = "0.1" }\n'
     doc = tomlrt.parse(src)
-    pkg = doc["pkg"]
-    assert isinstance(pkg, tomlrt.Table)
+    pkg = doc.table("pkg")
     with pytest.raises(tomlrt.TOMLError, match="comment API"):
         pkg.comments["name"] = "x"
     with pytest.raises(tomlrt.TOMLError, match="comment API"):
@@ -392,8 +390,7 @@ def test_inline_promotion_inserts_after_parent_block() -> None:
         b = 2
         """)
     doc = tomlrt.parse(src)
-    parent = doc["parent"]
-    assert isinstance(parent, tomlrt.Table)
+    parent = doc.table("parent")
     parent.promote_inline("pkg")
     # A blank line separates the parent's direct entries from the
     # promoted child header, matching ``promote_array`` and other
@@ -580,8 +577,7 @@ def test_header_comment_on_aot_entry() -> None:
         name = 'b'
         """)
     doc = tomlrt.parse(src)
-    items = doc["items"]
-    assert isinstance(items, tomlrt.AoT)
+    items = doc.aot("items")
     items[0].header_comment = "first"
     items[1].header_leading_comments = ("about the second",)
     out = tomlrt.dumps(doc)
@@ -609,8 +605,7 @@ def test_header_comment_on_document_raises() -> None:
 
 def test_header_comment_on_inline_table_raises() -> None:
     doc = tomlrt.parse("a = { x = 1, y = 2 }\n")
-    a = doc["a"]
-    assert isinstance(a, tomlrt.Table)
+    a = doc.table("a")
     with pytest.raises(tomlrt.TOMLError):
         _ = a.header_comment
     with pytest.raises(tomlrt.TOMLError):
@@ -620,8 +615,7 @@ def test_header_comment_on_inline_table_raises() -> None:
 def test_header_comment_on_implicit_parent_raises() -> None:
     # `parent` exists logically but has no `[parent]` section in source.
     doc = tomlrt.parse("[parent.child]\nx = 1\n")
-    parent = doc["parent"]
-    assert isinstance(parent, tomlrt.Table)
+    parent = doc.table("parent")
     with pytest.raises(tomlrt.TOMLError):
         _ = parent.header_comment
     with pytest.raises(tomlrt.TOMLError):

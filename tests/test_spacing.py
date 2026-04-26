@@ -66,8 +66,7 @@ def test_kv_append_to_single_entry_does_not_add_blank() -> None:
 
 def test_kv_append_to_empty_table_does_not_add_blank() -> None:
     doc = tomlrt.parse("[t]\n")
-    tbl = doc["t"]
-    assert isinstance(tbl, tomlrt.Table)
+    tbl = doc.table("t")
     tbl["a"] = 1
     assert tomlrt.dumps(doc) == "[t]\na = 1\n"
 
@@ -80,8 +79,7 @@ def test_kv_append_preserves_indent_and_adds_blank() -> None:
             b = 2
         """)
     doc = tomlrt.parse(src)
-    tbl = doc["t"]
-    assert isinstance(tbl, tomlrt.Table)
+    tbl = doc.table("t")
     tbl["c"] = 3
     assert tomlrt.dumps(doc) == td("""
         [t]
@@ -106,8 +104,7 @@ def test_aot_append_to_packed_aot_stays_packed() -> None:
         x = 2
         """)
     doc = tomlrt.parse(src)
-    aot = doc["i"]
-    assert isinstance(aot, tomlrt.AoT)
+    aot = doc.aot("i")
     aot.append({"x": 3})
     assert tomlrt.dumps(doc) == td("""
         [[i]]
@@ -128,8 +125,7 @@ def test_aot_append_to_spaced_aot_adds_blank() -> None:
         x = 2
         """)
     doc = tomlrt.parse(src)
-    aot = doc["i"]
-    assert isinstance(aot, tomlrt.AoT)
+    aot = doc.aot("i")
     aot.append({"x": 3})
     assert tomlrt.dumps(doc) == (
         td("""
@@ -154,8 +150,7 @@ def test_aot_insert_middle_uniformly_spaced_adds_blank() -> None:
         x = 3
         """)
     doc = tomlrt.parse(src)
-    aot = doc["i"]
-    assert isinstance(aot, tomlrt.AoT)
+    aot = doc.aot("i")
     aot.insert(1, {"x": 2})
     assert tomlrt.dumps(doc) == (
         td("""
@@ -182,8 +177,7 @@ def test_aot_append_to_mixed_does_not_add_blank() -> None:
         x = 4
         """)
     doc = tomlrt.parse(src)
-    aot = doc["i"]
-    assert isinstance(aot, tomlrt.AoT)
+    aot = doc.aot("i")
     aot.append({"x": 5})
     assert tomlrt.dumps(doc) == (
         td("""
@@ -206,8 +200,7 @@ def test_aot_append_to_single_entry_adds_blank() -> None:
     what re-parsing the result then dumping again produces."""
     src = "[[i]]\nx = 1\n"
     doc = tomlrt.parse(src)
-    aot = doc["i"]
-    assert isinstance(aot, tomlrt.AoT)
+    aot = doc.aot("i")
     aot.append({"x": 2})
     assert tomlrt.dumps(doc) == td("""
         [[i]]
@@ -228,8 +221,7 @@ def test_aot_append_preserves_user_no_blank_style() -> None:
         x = 2
         """)
     doc = tomlrt.parse(src)
-    aot = doc["i"]
-    assert isinstance(aot, tomlrt.AoT)
+    aot = doc.aot("i")
     aot.append({"x": 3})
     assert tomlrt.dumps(doc) == td("""
         [[i]]
@@ -250,8 +242,7 @@ def test_aot_extend_inherits_blank_after_first_added_entry() -> None:
         x = 2
         """)
     doc = tomlrt.parse(src)
-    aot = doc["i"]
-    assert isinstance(aot, tomlrt.AoT)
+    aot = doc.aot("i")
     aot.extend([{"x": 3}, {"x": 4}])
     assert tomlrt.dumps(doc) == (
         td("""
