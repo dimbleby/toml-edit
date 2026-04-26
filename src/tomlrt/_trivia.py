@@ -239,11 +239,15 @@ def _set_eol_comment(node: _HasEolComment, value: str | None) -> None:
 
     ``value=None`` clears the comment and strips trailing whitespace
     from ``node.trailing`` so we don't render ``foo = 12 \\n`` after
-    the comment goes away. ``value=""`` is *not* a clear: it sets an
+    the comment goes away. If the node has no trailing comment to
+    begin with this is a no-op, so authored whitespace before the
+    newline is preserved. ``value=""`` is *not* a clear: it sets an
     empty comment (rendered as a bare ``#``), so the API is symmetric
     with the reader, which returns ``""`` for a parsed bare ``#``.
     """
     if value is None:
+        if node.trailing_comment is None:
+            return
         node.trailing_comment = None
         node.trailing = None
         return
