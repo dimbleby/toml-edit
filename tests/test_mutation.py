@@ -1412,3 +1412,69 @@ def test_install_table_into_blank_line_doc_keeps_blank_line() -> None:
         [b]
         y = 2
         """)
+
+
+def test_aot_replace_in_compact_doc_preserves_compact_style() -> None:
+    """Replacing an AoT entry in a compact doc must not inject a blank.
+
+    Regression: the del+insert path in ``__setitem__`` lost the
+    sibling-gap signal in 2-entry AoTs, so the re-sample in
+    ``_insert_at`` fell back to ``default=True`` and prepended a
+    blank between the new entry and the survivor -- mixing styles.
+    """
+    src = td("""
+        [[xs]]
+        a=1
+        [[xs]]
+        c=3
+        """)
+    doc = tomlrt.parse(src)
+    doc["xs"][0] = {"k": 9}
+    assert tomlrt.dumps(doc) == td("""
+        [[xs]]
+        k = 9
+        [[xs]]
+        c=3
+        """)
+
+
+def test_aot_replace_in_compact_ooo_doc_preserves_compact_style() -> None:
+    """Same regression, surfaced via genuinely out-of-order AoT entries."""
+    src = td("""
+        [[xs]]
+        a=1
+        [other]
+        b=2
+        [[xs]]
+        c=3
+        """)
+    doc = tomlrt.parse(src)
+    doc["xs"][0] = {"k": 9}
+    assert tomlrt.dumps(doc) == td("""
+        [other]
+        b=2
+        [[xs]]
+        k = 9
+        [[xs]]
+        c=3
+        """)
+
+
+def test_aot_replace_in_blank_styled_doc_keeps_blank() -> None:
+    """Control: blank-line style is preserved across replace."""
+    src = td("""
+        [[xs]]
+        a=1
+
+        [[xs]]
+        c=3
+        """)
+    doc = tomlrt.parse(src)
+    doc["xs"][0] = {"k": 9}
+    assert tomlrt.dumps(doc) == td("""
+        [[xs]]
+        k = 9
+
+        [[xs]]
+        c=3
+        """)
