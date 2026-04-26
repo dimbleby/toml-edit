@@ -71,6 +71,9 @@ jobs:
       - name: mypy
         run: uv run mypy
 
+      - name: pytest (slow)
+        run: uv run pytest -m slow
+
   docs:
     name: docs build
     runs-on: ubuntu-latest
