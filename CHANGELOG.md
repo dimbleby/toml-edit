@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   blank-line and compact styles.
 - Replacing an AoT entry no longer injects a stray blank between
   the new entry and its surviving sibling in compact documents.
+- Newly appended/inserted AoT entries now adopt the indent style of
+  their siblings' KV lines instead of rendering flush-left.
 
 ## [1.0.0] - 2026-04-26
 
