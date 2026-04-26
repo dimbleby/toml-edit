@@ -177,7 +177,7 @@ _SCALAR_NODE_TYPES = (StringNode, IntegerNode, FloatNode, BoolNode, DateTimeNode
 
 def _value_for(node: ValueNode) -> TomlValue:
     if isinstance(node, ArrayNode):
-        return Array(node)
+        return Array._attached_to(node)  # noqa: SLF001
     if isinstance(node, InlineTableNode):
         return _InlineTable(node)
     if isinstance(node, _SCALAR_NODE_TYPES):
@@ -252,9 +252,9 @@ class Table(dict[str, Any]):
       (any document, including ``self``) deep-clones the source.
       The two slots are independent — mutations to one don't bleed
       into the other.
-    * Plain `dict` and `list` values continue to be
-      *snapshot* on assignment. Mutations to the original mapping
-      / list after assignment are *not* reflected in the document.
+    * Plain `dict` and `list` values are *snapshot* on assignment.
+      Mutations to the original mapping / list after assignment are
+      *not* reflected in the document.
       Use [`Table.section`][tomlrt.Table.section],
       [`Table.inline`][tomlrt.Table.inline], or
       [`Array`][tomlrt.Array] to opt in to live
@@ -278,7 +278,7 @@ class Table(dict[str, Any]):
     ) -> Table:
         """Return a detached ``[k]`` standard-section table.
 
-        Use from an assignment site::
+        Use from an assignment site:
 
             doc[k] = Table.section({"x": 1})
 
@@ -294,9 +294,7 @@ class Table(dict[str, Any]):
 
         Assigning a section table that is already attached somewhere
         deep-clones it; a single CST section lives at one location at
-        a time. Plain ``dict`` assignments still produce an inline
-        table; reach for ``Table.section`` when you want a ``[k]``
-        block.
+        a time.
         """
         placeholder_path = ("__tomlrt_detached__",)
         new_sec = _new_section(placeholder_path)
@@ -608,12 +606,7 @@ class Table(dict[str, Any]):
         [`Array`][tomlrt.Array] view into an
         ordinary `dict` / `list`. The result shares no
         mutable state with the document and is safe to hand to
-        consumers that expect real ``dict``/``list`` objects -- JSON
-        encoders, ``fastjsonschema``, ``pydantic``, anything that
-        does ``isinstance(x, dict)``, etc.
-
-        Scalar values (strings, ints, floats, bools, datetimes) are
-        returned as-is; they are immutable so aliasing is harmless.
+        consumers that expect real ``dict``/``list`` objects.
         """
         return {k: _to_plain(v) for k, v in self.items()}
 
@@ -659,9 +652,10 @@ class Table(dict[str, Any]):
     def table(self, key: str) -> Table:
         """Return the table at ``key``, typed as [`Table`][tomlrt.Table].
 
-        ``key`` accepts a dotted path (e.g. ``"tool.poetry"``). Raises
-        `KeyError` if any segment is missing, or `TypeError`
-        if the destination is not a table.
+        ``key`` accepts a dotted path (e.g. ``"tool.poetry"``).
+
+        Raises `KeyError` if any segment is missing, or `TypeError` if
+        the destination is not a table.
         """
         return self._typed_lookup(key, Table)
 
@@ -672,18 +666,17 @@ class Table(dict[str, Any]):
     def get_table(self, key: str, default: object = None) -> object:
         """Like `table`, but returns ``default`` if ``key`` is missing.
 
-        Wrong-type entries still raise `TypeError`: a missing key
-        is "no answer", but an entry that exists with the wrong shape is
-        a real bug worth surfacing.
+        Wrong-type entries raise `TypeError`.
         """
         return self._typed_lookup(key, Table, default=default)
 
     def array(self, key: str) -> Array:
         """Return the array at ``key``, typed as [`Array`][tomlrt.Array].
 
-        ``key`` accepts a dotted path. Raises `KeyError` if any
-        segment is missing, or `TypeError` if the destination is
-        not an inline array.
+        ``key`` accepts a dotted path.
+
+        Raises `KeyError` if any segment is missing, or `TypeError` if
+        the destination is not an inline array.
         """
         return self._typed_lookup(key, Array)
 
@@ -694,16 +687,17 @@ class Table(dict[str, Any]):
     def get_array(self, key: str, default: object = None) -> object:
         """Like `array`, but returns ``default`` if ``key`` is missing.
 
-        Wrong-type entries still raise `TypeError`.
+        Wrong-type entries raise `TypeError`.
         """
         return self._typed_lookup(key, Array, default=default)
 
     def aot(self, key: str) -> AoT:
         """Return the array-of-tables at ``key``, typed as [`AoT`][tomlrt.AoT].
 
-        ``key`` accepts a dotted path. Raises `KeyError` if any
-        segment is missing, or `TypeError` if the destination is
-        not an array of tables.
+        ``key`` accepts a dotted path.
+
+        Raises `KeyError` if any segment is missing, or `TypeError` if
+        the destination is not an array of tables.
         """
         return self._typed_lookup(key, AoT)
 
@@ -714,7 +708,7 @@ class Table(dict[str, Any]):
     def get_aot(self, key: str, default: object = None) -> object:
         """Like `aot`, but returns ``default`` if ``key`` is missing.
 
-        Wrong-type entries still raise `TypeError`.
+        Wrong-type entries raise `TypeError`.
         """
         return self._typed_lookup(key, AoT, default=default)
 
@@ -800,10 +794,12 @@ class Table(dict[str, Any]):
         """End-of-line comment on this table's ``[name]`` / ``[[name]]`` line.
 
         ``None`` means the header has no trailing comment. Setting
-        ``None`` removes any existing comment. Raises [`TOMLError`][tomlrt.TOMLError]
-        for the top-level [`Document`][tomlrt.Document], for inline
-        tables, and for any logical table that exists only through
-        implicit parents (no physical header in source).
+        ``None`` removes any existing comment.
+
+        Raises [`TOMLError`][tomlrt.TOMLError] for the top-level
+        [`Document`][tomlrt.Document], for inline tables, and for any
+        logical table that exists only through implicit parents (no
+        physical header in source).
 
         For tables declared via multiple discontiguous ``[name]``
         sections, this refers to the *first* such header.
@@ -828,7 +824,13 @@ class Table(dict[str, Any]):
         Returns the contiguous block of ``# ...`` lines ending right
         above the ``[name]`` / ``[[name]]`` line. Earlier blank-line
         separated comments are *not* included. Assigning an empty
-        tuple removes the block. Raises like `header_comment`.
+        tuple removes the block.
+
+        Raises [`TOMLError`][tomlrt.TOMLError] for the top-level
+        [`Document`][tomlrt.Document], for inline tables, and for any
+        logical table that exists only through implicit parents (no
+        physical header in source).
+
         """
         msg = "this table flavour does not support the header comment API"
         raise TOMLError(msg)
@@ -882,8 +884,10 @@ class Table(dict[str, Any]):
         containing a literal dot, e.g. ``("foo.bar",)``). If the
         destination already exists and is table-shaped (an explicit
         section, an implicit super-table, or an inline table), the
-        existing live view is returned and no mutation occurs. Raises
-        [`TOMLError`][tomlrt.TOMLError] when the path names a non-table value.
+        existing live view is returned and no mutation occurs.
+
+        Raises [`TOMLError`][tomlrt.TOMLError] when the path names a
+        non-table value.
         """
         parts = _parse_key_path(key)
         cur: Table = self
@@ -2336,9 +2340,10 @@ class Document(_StdTable):
         content (in that case everything is `preamble`).
 
         Setter accepts a sequence of bare comment texts and replaces
-        the current epilogue. Assign ``()`` to remove. Raises
-        [`TOMLError`][tomlrt.TOMLError] if called with a non-empty value on a
-        document with no structural content.
+        the current epilogue. Assign ``()`` to remove.
+
+        Raises [`TOMLError`][tomlrt.TOMLError] if called with a
+        non-empty value on a document with no structural content.
         """
         if not self._doc_node.has_content():
             return ()
@@ -2363,49 +2368,52 @@ class Document(_StdTable):
 
 
 class Array(list[Any]):
-    """Inline TOML array exposed as a real `list`.
-
-    Every standard list mutator is overridden so the underlying CST
-    stays in sync. Existing handles to nested ``Array``/``Table`` values
-    that were *not* removed remain valid; handles to removed/replaced
-    elements become detached.
-    """
+    """An inline TOML array."""
 
     __slots__ = ("_attached", "_indent", "_node", "_style")
 
     def __init__(
         self,
-        items: Iterable[TomlInput] | ArrayNode = (),
+        items: Iterable[TomlInput] = (),
         *,
         multiline: bool = False,
         indent: str = "    ",
     ) -> None:
-        """Construct a standalone array or wrap an existing CST node.
+        """Construct a standalone inline array.
 
-        Public use: ``Array([1, 2, 3])`` builds an inline array;
+        ``Array([1, 2, 3])`` builds an inline array;
         ``Array([1, 2, 3], multiline=True)`` lays it out one item per
         line with ``indent`` indentation. Such an array is *detached*
         until assigned into a document (``doc[k] = arr``).
-
-        Passing an `ArrayNode` directly is the internal
-        attached-construction path used by the parser and CST walkers.
         """
-        if isinstance(items, ArrayNode):
-            self._node = items
-            self._attached = True
-        else:
-            from tomlrt._synthesise import _list_to_array_node  # noqa: PLC0415
+        from tomlrt._synthesise import _list_to_array_node  # noqa: PLC0415
 
-            self._node = _list_to_array_node(list(items))
-            self._attached = False
-        self._style = _sample_separator_style(
-            self._node.items,
-            self._node.final_trivia,
+        self._init_from_node(
+            _list_to_array_node(list(items)),
+            attached=False,
+            indent=indent,
         )
-        self._indent = indent
-        super().__init__(_materialise_array(self._node))
-        if not self._attached and multiline:
+        if multiline:
             self.set_multiline(multiline=True, indent=indent)
+
+    @classmethod
+    def _attached_to(cls, node: ArrayNode) -> Array:
+        obj = cls.__new__(cls)
+        obj._init_from_node(node, attached=True, indent="    ")  # noqa: SLF001
+        return obj
+
+    def _init_from_node(
+        self,
+        node: ArrayNode,
+        *,
+        attached: bool,
+        indent: str,
+    ) -> None:
+        self._node = node
+        self._attached = attached
+        self._style = _sample_separator_style(node.items, node.final_trivia)
+        self._indent = indent
+        list.__init__(self, _materialise_array(node))
 
     def _detach(self) -> None:
         self._attached = False
@@ -2477,12 +2485,7 @@ class Array(list[Any]):
 
     @property
     def leading_comments(self) -> MutableMapping[int, tuple[str, ...]]:
-        """Live mapping of ``index -> tuple of comment lines above item``.
-
-        For item 0 the lines come from inside the array opening, before
-        the first value. For item i > 0 they come from the trivia
-        between item i-1's separator and item i's value.
-        """
+        """Live mapping of ``index -> tuple of comment lines above item``."""
         return _ArrayLeadingCommentsView(self)
 
     @property
@@ -2688,8 +2691,7 @@ class Array(list[Any]):
 
         Walks recursively, converting nested [`Table`][tomlrt.Table] /
         [`AoT`][tomlrt.AoT] / [`Array`][tomlrt.Array] views into ordinary
-        `dict` / `list` containers. Scalars are
-        returned as-is.
+        `dict` / `list` containers.
         """
         return [_to_plain(v) for v in self]
 
@@ -2713,7 +2715,7 @@ class Array(list[Any]):
     def get_array(self, index: SupportsIndex, default: object = None) -> object:
         """Like `array`, but returns ``default`` if ``index`` is out of range.
 
-        Wrong-type entries still raise `TypeError`.
+        Wrong-type entries raise `TypeError`.
         """
         try:
             value = self[index]
@@ -2742,7 +2744,7 @@ class Array(list[Any]):
     def get_table(self, index: SupportsIndex, default: object = None) -> object:
         """Like `table`, but returns ``default`` if ``index`` is out of range.
 
-        Wrong-type entries still raise `TypeError`.
+        Wrong-type entries raise `TypeError`.
         """
         try:
             value = self[index]
@@ -2757,12 +2759,7 @@ class Array(list[Any]):
 
 
 class AoT(list[Table]):
-    """Array-of-tables, e.g. ``[[products]]`` repeated.
-
-    Subclass of `list`; supports basic mutation (append/insert
-    of dict-shaped or [`Table`][tomlrt.Table] entries) by synthesizing fresh
-    ``[[path]]`` sections in the underlying CST.
-    """
+    """An Array-of-tables, e.g. ``[[products]]`` repeated."""
 
     __slots__ = ("_attached", "_doc_node", "_path")
 
@@ -2770,19 +2767,7 @@ class AoT(list[Table]):
         self,
         entries: Iterable[Mapping[str, TomlInput]] = (),
     ) -> None:
-        """Construct a standalone array-of-tables.
-
-        Each of ``entries`` (a dict-shaped mapping or [`Table`][tomlrt.Table])
-        is materialised into a ``[[_]]`` section in an internal orphan
-        document, so all the usual list mutators (``append``, ``insert``,
-        ``extend``, ``pop``, ``__setitem__`` of slots) keep working
-        pre-assignment. On ``doc[k] = aot``, the pending sections are
-        rewritten to ``[[k]]`` and merged into the target document.
-
-        The 3-argument internal form (``doc_node``, ``path``,
-        ``tables``) used by the parser/CST walkers remains available
-        via `_attached_to`.
-        """
+        """Construct a standalone array-of-tables."""
         doc_node = DocumentNode(sections=[])
         super().__init__()
         self._doc_node: DocumentNode = doc_node

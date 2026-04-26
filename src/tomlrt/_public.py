@@ -38,17 +38,14 @@ def _populate(table: Table, data: Mapping[str, Any]) -> None:
 def document(data: Mapping[str, Any] | None = None) -> Document:
     """Return a fresh [`Document`][tomlrt.Document], optionally populated from ``data``.
 
-    Without arguments, returns an empty document — equivalent to
-    ``parse("")`` but more discoverable when the intent is "build a
-    TOML file from scratch".
+    Without arguments, returns an empty document.
 
     With a mapping, recursively populates the document so that:
 
     * nested mappings become standard ``[section]`` blocks (not
       inline tables);
     * lists of mappings become ``[[array.of.tables]]`` blocks;
-    * everything else is set with ordinary key-value assignment
-      (so leaf lists become inline arrays, leaf dicts can't appear).
+    * everything else is set with ordinary key-value assignment.
 
     Existing [`Table`][tomlrt.Table] / [`AoT`][tomlrt.AoT] /
     [`Array`][tomlrt.Array] views are
