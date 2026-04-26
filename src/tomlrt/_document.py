@@ -2459,7 +2459,7 @@ class Array(list[Any]):
         _write_item_leadings(self._node.items, leadings)
 
     @staticmethod
-    def _make_item(value: TomlInput, *, with_comma: bool) -> ArrayItem:
+    def _make_item(value: Any, *, with_comma: bool) -> ArrayItem:
         from tomlrt._nodes import ArrayItem  # noqa: PLC0415
 
         return ArrayItem(
