@@ -60,11 +60,13 @@ show_source = false
 show_signature_annotations = true
 separate_signature = true
 members_order = "source"
+group_by_category = false
 # Suppress overrides of stdlib dict/list methods so the rendered API
 # is the tomlrt-specific surface, not an inconsistent mix of which
 # overrides happened to acquire a docstring.
 filters = [
-  "!^_",
+  "!^_[^_]",
+  "!^__(?!init__$)",
   "!^(clear|copy|fromkeys|get|items|keys|pop|popitem|setdefault|update|values)$",
   "!^(append|count|extend|index|insert|remove|reverse|sort)$",
 ]
