@@ -600,11 +600,6 @@ class Table(dict[str, Any]):
         self.update(other)
         return self
 
-    @override
-    def copy(self) -> dict[str, Any]:
-        """Return a shallow plain ``dict`` copy of this table."""
-        return dict(self)
-
     def to_dict(self) -> dict[str, Any]:
         """Return a deep, plain-Python copy of this table.
 
