@@ -46,6 +46,9 @@ entry = pkgs.add({"name": "foo"})
 entry["version"] = "1.0"
 ```
 
+TOML has no syntax for an array-of-tables with zero entries, so an empty `AoT` does not appear in `dumps` output — the key is silently absent.
+The in-memory `AoT` remains usable: append entries to it and they will reappear in the next dump.
+
 ## Inline-array layout
 
 `Array.multiline` flips between single- and multi-line layout in place.
