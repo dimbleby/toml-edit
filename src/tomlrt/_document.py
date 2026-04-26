@@ -453,7 +453,7 @@ class Table(dict[str, Any]):
     def install(
         self,
         path: str | tuple[str, ...],
-        value: Any,
+        value: TomlInput,
     ) -> Any:
         """Install ``value`` at ``path``, descending dotted segments.
 
@@ -461,24 +461,12 @@ class Table(dict[str, Any]):
         of literal segments (use the tuple form to express a segment
         containing a literal dot, e.g. ``("foo.bar",)``).
 
-        ``value`` may be any of:
-
-        * a [`Table.section`][tomlrt.Table.section] result — installs a
-          ``[...]`` standard section;
-        * an [`AoT`][tomlrt.AoT] built standalone (``AoT([{...}])``) — installs
-          ``[[...]]`` array-of-tables entries;
-        * an [`Array`][tomlrt.Array] built standalone (``Array([...],
-          multiline=...)``) — installs an inline array with the
-          requested layout;
-        * any plain Python value (scalar, ``dict``, ``list``) —
-          assigned at the leaf with ordinary ``__setitem__`` semantics
-          (so a leaf ``dict`` becomes an inline table, a leaf ``list``
-          becomes an inline array).
-
-        Existing values at ``path`` (including sub-sections) are
-        replaced. Implicit intermediate tables are left implicit, so
-        ``install(("tool", "poetry"), Table.section({}))`` produces a
-        single ``[tool.poetry]`` header, not a ``[tool]`` + nested.
+        ``value`` follows the same rules as ordinary assignment
+        (``t[k] = value``); ``install`` only adds the dotted-path
+        descent. Existing values at ``path`` (including sub-sections)
+        are replaced. Implicit intermediate tables are left implicit,
+        so ``install(("tool", "poetry"), Table.section({}))`` produces
+        a single ``[tool.poetry]`` header, not a ``[tool]`` + nested.
 
         Returns the freshly-installed live view ([`Table`][tomlrt.Table],
         [`AoT`][tomlrt.AoT], [`Array`][tomlrt.Array]) or the leaf value.
