@@ -5,7 +5,7 @@ The typed accessors give you a shape-checked `Table`, `Array`, or `AoT` directly
 
 ## Required accessors
 
-Each raises `TOMLError` if the value at the key is missing or has the wrong shape:
+Each raises `KeyError` if the key is missing and `TypeError` if the value at the key has the wrong shape:
 
 ```python
 project = doc.table("project")            # -> Table
@@ -23,7 +23,7 @@ nested    = some_array.array(2)       # -> Array
 ## Optional accessors
 
 `get_table` / `get_array` / `get_aot` mirror `dict.get`: return the value when the shape matches, otherwise the `default` (default `None`).
-They raise `TOMLError` only if the key exists but has the _wrong_ shape:
+They raise `TypeError` only if the key exists but has the _wrong_ shape:
 
 ```python
 ruff = doc.get_table("tool", default={}).get("ruff")

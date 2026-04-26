@@ -63,10 +63,10 @@ Collapsing a multi-line array to single-line is rejected if any item carries a c
 If a value started life as an inline table or inline array of inline tables, you can promote it in place:
 
 ```python
-doc["tool"] = {"ruff": {"line-length": 88}}    # inline tables
+doc = tomlrt.parse('[tool]\nruff = { line-length = 88 }\n')
 doc.table("tool").promote_inline("ruff")       # → [tool.ruff]
 
-doc["pkgs"] = [{"a": 1}, {"b": 2}]             # inline array of tables
+doc = tomlrt.parse('pkgs = [{a = 1}, {b = 2}]\n')
 doc.promote_array("pkgs")                      # → [[pkgs]] … [[pkgs]]
 ```
 
