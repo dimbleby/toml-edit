@@ -67,9 +67,11 @@ class _PresenceFilteredView(MutableMapping[_VK, _VV], ABC):
     * `_check_key` — coerce / range-check a raw key, raising
       `TypeError` for the wrong kind and `KeyError` for
       an out-of-range value. Returns the canonicalised key.
-    * `_keys` — yields every valid key (regardless of whether
-      its payload is present).
-    * `_read` — returns the payload, or ``None`` when absent.
+    * `__iter__` — yields the keys whose payload is currently present,
+      in the order the view should expose them.
+    * `_read` — returns the payload for ``key``, or ``None`` when
+      absent. Used by random-access (``__getitem__``, ``__contains__``,
+      ``__delitem__``).
     * `_write_absent` — the deletion primitive used by
       ``__delitem__``.
     * `_format_value` — used by ``__repr__``; defaults to
@@ -83,7 +85,8 @@ class _PresenceFilteredView(MutableMapping[_VK, _VV], ABC):
     def _check_key(self, key: object) -> _VK: ...
 
     @abstractmethod
-    def _keys(self) -> Iterator[_VK]: ...
+    @override
+    def __iter__(self) -> Iterator[_VK]: ...
 
     @abstractmethod
     def _read(self, key: _VK) -> _VV | None: ...
@@ -110,10 +113,6 @@ class _PresenceFilteredView(MutableMapping[_VK, _VV], ABC):
         self._write_absent(k)
 
     @override
-    def __iter__(self) -> Iterator[_VK]:
-        return (k for k in self._keys() if self._read(k) is not None)
-
-    @override
     def __len__(self) -> int:
         return sum(1 for _ in self)
 
@@ -135,9 +134,12 @@ class _TableKVViewBase(_PresenceFilteredView[str, _VV]):
     """Common scaffolding for `_StdTable`-backed presence-filtered views.
 
     The table's single-segment ``KeyValueNode`` entries form the key
-    universe. Subclasses provide the value-shaped methods (``_read``,
-    ``_write_absent``, ``__setitem__``, optional ``_format_value``) and
-    set ``_view_name`` for error messages.
+    universe. Subclasses provide ``_kv_payload`` (read directly off a
+    KV node), ``_write_absent``, ``__setitem__`` and (optionally)
+    ``_format_value``, plus set ``_view_name`` for error messages.
+    Iteration walks ``section.entries`` once and inspects each kv
+    in place; random-access ``_read`` reuses the same hook after a
+    single ``_find_kv`` lookup.
     """
 
     __slots__ = ("_table",)
@@ -154,6 +156,10 @@ class _TableKVViewBase(_PresenceFilteredView[str, _VV]):
             return None
         return kv
 
+    @abstractmethod
+    def _kv_payload(self, kv: KeyValueNode) -> _VV | None:
+        """Return the payload of ``kv``, or ``None`` if absent."""
+
     @override
     def _check_key(self, key: object) -> str:
         if not isinstance(key, str):
@@ -162,10 +168,17 @@ class _TableKVViewBase(_PresenceFilteredView[str, _VV]):
         return key
 
     @override
-    def _keys(self) -> Iterator[str]:
+    def _read(self, key: str) -> _VV | None:
+        kv = self._find_kv(key)
+        if kv is None:
+            return None
+        return self._kv_payload(kv)
+
+    @override
+    def __iter__(self) -> Iterator[str]:
         for sec in self._table._direct_sections():  # noqa: SLF001
             for kv in sec.entries:
-                if len(kv.key.path) == 1:
+                if len(kv.key.path) == 1 and self._kv_payload(kv) is not None:
                     yield kv.key.path[0]
 
 
@@ -180,9 +193,8 @@ class _TableCommentsView(_TableKVViewBase[str]):
     _view_name = "comments"
 
     @override
-    def _read(self, key: str) -> str | None:
-        kv = self._find_kv(key)
-        if kv is None or kv.trailing_comment is None:
+    def _kv_payload(self, kv: KeyValueNode) -> str | None:
+        if kv.trailing_comment is None:
             return None
         return _strip_comment_marker(kv.trailing_comment.text)
 
@@ -210,10 +222,7 @@ class _TableLeadingCommentsView(_TableKVViewBase["tuple[str, ...]"]):
     _view_name = "leading_comments"
 
     @override
-    def _read(self, key: str) -> tuple[str, ...] | None:
-        kv = self._find_kv(key)
-        if kv is None:
-            return None
+    def _kv_payload(self, kv: KeyValueNode) -> tuple[str, ...] | None:
         return _extract_trailing_comment_block(kv.leading) or None
 
     @override
@@ -257,8 +266,10 @@ class _ArrayItemViewBase(_PresenceFilteredView[int, _VV]):
         raise KeyError(key)
 
     @override
-    def _keys(self) -> Iterator[int]:
-        return iter(range(len(self._array._node.items)))  # noqa: SLF001
+    def __iter__(self) -> Iterator[int]:
+        for i in range(len(self._array._node.items)):  # noqa: SLF001
+            if self._read(i) is not None:
+                yield i
 
 
 class _ArrayCommentsView(_ArrayItemViewBase[str]):
