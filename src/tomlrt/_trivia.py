@@ -152,6 +152,22 @@ def _starts_with_blank_line(trivia: Trivia) -> bool:
     return bool(trivia.pieces) and isinstance(trivia.pieces[0], NewlineNode)
 
 
+def _seam_blank_style(
+    sections: Sequence[SectionNode],
+    *,
+    default: bool = True,
+) -> bool:
+    """Sample the doc's inter-section blank-line style.
+
+    Returns the state of the first real inter-header gap (the first
+    header is dropped because its empty leading is positional, not
+    stylistic), or ``default`` when no gap exists.
+    """
+    leadings = (s.header.leading for s in sections if s.header is not None)
+    next(leadings, None)
+    return _first_gap_is_blank(leadings, default=default)
+
+
 def _first_gap_is_blank(
     leadings: Iterable[Trivia],
     *,

@@ -388,6 +388,14 @@ class SectionNode:
         head = self.header.render() if self.header is not None else ""
         return head + "".join([entry.render() for entry in self.entries])
 
+    def has_content(self) -> bool:
+        """True if this section carries a header or any KV entry.
+
+        False for the empty implicit pre-header sections that the
+        parser/builder occasionally creates as scaffolding.
+        """
+        return self.header is not None or bool(self.entries)
+
 
 @dataclass(slots=True, eq=False)
 class DocumentNode:
@@ -404,7 +412,7 @@ class DocumentNode:
 
     def has_content(self) -> bool:
         """True if the document has any header or KV entry."""
-        return any(s.header is not None or s.entries for s in self.sections)
+        return any(s.has_content() for s in self.sections)
 
     def adopt_preamble_into(self, target: Trivia) -> None:
         """Migrate parked preamble trivia onto ``target`` if the doc is empty.
