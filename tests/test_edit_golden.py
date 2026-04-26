@@ -136,12 +136,37 @@ def test_dotted_key_table_set_via_subtable_adds_dotted_entry() -> None:
 
 
 def test_dotted_key_table_overwrite_via_subtable() -> None:
-    src = "a.b = 1\na.c = 2\n"
+    """Overwriting a dotted leaf preserves position and surrounding trivia."""
+    src = td("""
+        # header
+        a.b = 1 # cmt
+        a.c = 2
+        """)
     doc = tomlrt.parse(src)
-    a = doc["a"]
-    assert isinstance(a, tomlrt.Table)
+    a = doc.table("a")
     a["b"] = 99
-    assert dict(a) == {"c": 2, "b": 99}
+    assert dict(a) == {"b": 99, "c": 2}
+    assert tomlrt.dumps(doc) == td("""
+        # header
+        a.b = 99 # cmt
+        a.c = 2
+        """)
+
+
+def test_dotted_key_deep_overwrite_via_subtable() -> None:
+    """Overwriting a deep dotted leaf is also in-place."""
+    src = td("""
+        a.b.x = 1 # leaf
+        a.b.y = 2
+        """)
+    doc = tomlrt.parse(src)
+    b = doc.table("a").table("b")
+    b["x"] = 99
+    assert dict(b) == {"x": 99, "y": 2}
+    assert tomlrt.dumps(doc) == td("""
+        a.b.x = 99 # leaf
+        a.b.y = 2
+        """)
 
 
 def test_dotted_key_table_delete_via_subtable() -> None:
@@ -208,6 +233,16 @@ def test_inline_dotted_subtable_set() -> None:
     a["d"] = 3
     assert dict(a) == {"b": 1, "c": 2, "d": 3}
     assert tomlrt.dumps(doc) == "t = { a.b = 1, a.c = 2, a.d = 3 }\n"
+
+
+def test_inline_dotted_subtable_overwrite() -> None:
+    """Overwriting a dotted leaf inside an inline table is in-place too."""
+    src = "t = { a.b = 1, a.c = 2 }\n"
+    doc = tomlrt.parse(src)
+    a = doc.table("t").table("a")
+    a["b"] = 99
+    assert dict(a) == {"b": 99, "c": 2}
+    assert tomlrt.dumps(doc) == "t = { a.b = 99, a.c = 2 }\n"
 
 
 def test_inline_dotted_subtable_delete() -> None:
