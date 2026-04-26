@@ -36,6 +36,15 @@ Reach for `Table.section`, `Table.inline`, or `Array` when you want live semanti
 A container that is already attached somewhere is deep-cloned on assignment, so two slots never share state.
 This applies whether the source and destination are in the same document (`doc["b"] = doc["a"]`) or different ones (`d2["x"] = d1["x"]`).
 
+## Removal and orphaning
+
+Removing a `Table`, `Array`, or `AoT` &mdash; via `del`, `pop`, `clear`, or overwrite &mdash; detaches the view. It keeps its data, but further mutations no longer reach the document:
+
+```python
+old = doc.pop("tool")        # detached Table view
+old["debug"] = True          # does NOT affect doc
+```
+
 ## Growing an array-of-tables
 
 `AoT.add()` appends a fresh entry and returns the new `Table` view, so you can keep mutating it:
