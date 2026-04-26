@@ -986,12 +986,11 @@ class _InlineTable(Table):
     # --- _DottedHost protocol ------------------------------------------------
 
     def set_at(self, path: tuple[str, ...], value: object) -> None:
-        # Preserve in-place update for an exact simple match so the
-        # entry's surrounding trivia and position survive round-tripping.
-        if len(path) == 1:
-            existing = self._find_entry(path[0])
-            if existing is not None:
-                existing.value = value_to_node(value)
+        # Preserve in-place update for an exact path match (any depth) so
+        # the entry's surrounding trivia and position survive round-tripping.
+        for entry in self._node.entries:
+            if entry.key.path == path:
+                entry.value = value_to_node(value)
                 return
         self._replace_prefix(path, value)
 
@@ -1093,6 +1092,13 @@ class _SectionDottedHost:
         self._sections = sections
 
     def set_at(self, path: tuple[str, ...], value: object) -> None:
+        # Preserve in-place update for an exact path match (any depth) so
+        # the entry's surrounding trivia and position survive round-tripping.
+        for sec in self._sections:
+            for kv in sec.entries:
+                if kv.key.path == path:
+                    kv.value = value_to_node(value)
+                    return
         # Remove any existing entry at or under this path; remember which
         # section last hosted such an entry so the new dotted KV lands
         # near its predecessors when sections are split.
