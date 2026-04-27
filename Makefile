@@ -1,7 +1,3 @@
-# Convenience targets for tomlrt. The source of truth is still the
-# commands documented in .github/copilot-instructions.md and the CI
-# workflows; this Makefile just gathers them in one place.
-
 UV ?= uv
 
 .DEFAULT_GOAL := help
@@ -30,7 +26,11 @@ coverage:
 	pytest --cov
 
 .PHONY: lint
-lint: ruff mypy
+lint: fmt ruff mypy
+
+.PHONY: fmt
+fmt:
+	ruff format --check .
 
 .PHONY: ruff
 ruff:
