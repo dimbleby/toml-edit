@@ -2254,16 +2254,6 @@ class Document(_StdTable):
         super().__init__(node, (), _pool=node.sections, _extras=[])
         self._newline = _detect_newline(node)
 
-    @property
-    def cst(self) -> DocumentNode:
-        """The underlying concrete syntax tree (CST).
-
-        Returns the root `DocumentNode` that
-        records the document's exact byte layout. Intended for
-        tooling and debugging — most users will never need this.
-        """
-        return self._doc_node
-
     def render(self) -> str:
         """Serialize the document back to a TOML string.
 
