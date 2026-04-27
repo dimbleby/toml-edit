@@ -973,7 +973,7 @@ class _InlineTable(Table):
 
     # --- _DottedHost protocol ------------------------------------------------
 
-    def set_at(self, path: tuple[str, ...], value: TomlInput) -> None:
+    def _set_at(self, path: tuple[str, ...], value: TomlInput) -> None:
         # Preserve in-place update for an exact path match (any depth) so
         # the entry's surrounding trivia and position survive round-tripping.
         for entry in self._node.entries:
@@ -989,7 +989,7 @@ class _InlineTable(Table):
     ) -> InlineTableEntry:
         """Purge any entry under ``prefix`` and append a fresh one.
 
-        Used by both the dotted-key path on ``set_at`` and the
+        Used by both the dotted-key path on ``_set_at`` and the
         dotted-shadow branch on ``_set_value``. ``items[0]`` may shift
         if the original head entry got purged, so the full separator
         style must be re-stamped.
@@ -1002,7 +1002,7 @@ class _InlineTable(Table):
         _apply_separator_style(self._node, self._style)
         return new_entry
 
-    def del_prefix(self, prefix: tuple[str, ...]) -> bool:
+    def _del_prefix(self, prefix: tuple[str, ...]) -> bool:
         kept = [
             e for e in self._node.entries if not _path_has_prefix(e.key.path, prefix)
         ]
@@ -1012,7 +1012,7 @@ class _InlineTable(Table):
         _apply_separator_style(self._node, self._style)
         return True
 
-    def entries_under(
+    def _entries_under(
         self, prefix: tuple[str, ...]
     ) -> list[tuple[tuple[str, ...], ValueNode]]:
         plen = len(prefix)
@@ -1047,7 +1047,7 @@ class _InlineTable(Table):
     def _delete_value(self, key: str) -> None:
         # Best-effort CST cleanup; presence is enforced by the caller
         # (``Table.__delitem__``) at the cache level.
-        self.del_prefix((key,))
+        self._del_prefix((key,))
 
 
 def _path_has_prefix(path: tuple[str, ...], prefix: tuple[str, ...]) -> bool:
@@ -1062,11 +1062,11 @@ class _DottedHost(Protocol):
     top of it re-read live state instead of a stale snapshot.
     """
 
-    def set_at(self, path: tuple[str, ...], value: TomlInput) -> None: ...
+    def _set_at(self, path: tuple[str, ...], value: TomlInput) -> None: ...
 
-    def del_prefix(self, prefix: tuple[str, ...]) -> bool: ...
+    def _del_prefix(self, prefix: tuple[str, ...]) -> bool: ...
 
-    def entries_under(
+    def _entries_under(
         self, prefix: tuple[str, ...]
     ) -> list[tuple[tuple[str, ...], ValueNode]]: ...
 
@@ -1079,7 +1079,7 @@ class _SectionDottedHost:
     def __init__(self, sections: list[SectionNode]) -> None:
         self._sections = sections
 
-    def set_at(self, path: tuple[str, ...], value: TomlInput) -> None:
+    def _set_at(self, path: tuple[str, ...], value: TomlInput) -> None:
         # Preserve in-place update for an exact path match (any depth) so
         # the entry's surrounding trivia and position survive round-tripping.
         for sec in self._sections:
@@ -1125,7 +1125,7 @@ class _SectionDottedHost:
             ),
         )
 
-    def del_prefix(self, prefix: tuple[str, ...]) -> bool:
+    def _del_prefix(self, prefix: tuple[str, ...]) -> bool:
         any_removed = False
         for sec in self._sections:
             kept = [
@@ -1136,7 +1136,7 @@ class _SectionDottedHost:
                 any_removed = True
         return any_removed
 
-    def entries_under(
+    def _entries_under(
         self, prefix: tuple[str, ...]
     ) -> list[tuple[tuple[str, ...], ValueNode]]:
         plen = len(prefix)
@@ -1178,7 +1178,7 @@ class _DottedSubTable(Table):
         groups: dict[str, list[tuple[tuple[str, ...], ValueNode]]] = {}
         order: list[str] = []
         terminals: dict[str, ValueNode] = {}
-        for path, value in self._host.entries_under(self._prefix):
+        for path, value in self._host._entries_under(self._prefix):  # noqa: SLF001
             head = path[self._depth]
             if len(path) == self._depth + 1:
                 terminals[head] = value
@@ -1205,14 +1205,14 @@ class _DottedSubTable(Table):
 
     @override
     def _set_value(self, key: str, value: TomlInput) -> TomlValue | None:
-        self._host.set_at((*self._prefix, key), value)
+        self._host._set_at((*self._prefix, key), value)  # noqa: SLF001
         return None
 
     @override
     def _delete_value(self, key: str) -> None:
         if key not in self:
             raise KeyError(key)
-        self._host.del_prefix((*self._prefix, key))
+        self._host._del_prefix((*self._prefix, key))  # noqa: SLF001
 
 
 class _StdTable(Table):
