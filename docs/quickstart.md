@@ -28,8 +28,11 @@ assert text == text_again
 
 ## Reading values
 
-A `Document` behaves like a `dict`; nested tables are `Table` (also a `dict` subclass), inline arrays are `Array` (a `list` subclass), and arrays-of-tables are `AoT` (a `list` of `Table`).
-Plain reads with `doc["key"]` work as you'd expect — see [Typed access](access.md) when you want typechecker-friendly traversal.
+A `Document` behaves like a `dict`; nested tables are `Table` (also a `dict`
+subclass), inline arrays are `Array` (a `list` subclass), and arrays-of-tables
+are `AoT` (a `list` of `Table`).
+Plain reads with `doc["key"]` work as you'd expect — see [Typed
+access](access.md) when you want typechecker-friendly traversal.
 
 ## Writing values
 
@@ -43,4 +46,5 @@ Plain reads with `doc["key"]` work as you'd expect — see [Typed access](access
 | `AoT([...])`                          | `[[array.of.tables]]` blocks |
 | `Array([...], multiline=True)`        | a multi-line inline array    |
 
-For the difference between snapshot and live containers, see [Editing documents](editing.md#live-vs-snapshot).
+For the difference between snapshot and live containers, see [Editing
+documents](editing.md#live-vs-snapshot).
