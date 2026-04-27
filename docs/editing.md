@@ -55,6 +55,8 @@ entry = pkgs.add({"name": "foo"})
 entry["version"] = "1.0"
 ```
 
+## Empty arrays-of-tables
+
 TOML has no syntax for an array-of-tables with zero entries, so an empty `AoT` does not appear in `dumps` output — the key is silently absent.
 The in-memory `AoT` remains usable: append entries to it and they will reappear in the next dump.
 
@@ -68,7 +70,7 @@ arr = doc.array("tags")
 arr.set_multiline(multiline=True, indent="  ")
 ```
 
-Collapsing a multi-line array to single-line is rejected if any item carries a comment — clear those first via `arr.comments` / `arr.leading_comments` (see [Comments](comments.md)).
+Collapsing a multi-line array to single-line is rejected if any item carries a comment; clear them first (see [Comments](comments.md)).
 
 ## Promoting inline → section
 
@@ -82,4 +84,4 @@ doc = tomlrt.parse('pkgs = [{a = 1}, {b = 2}]\n')
 doc.promote_array("pkgs")                      # → [[pkgs]] … [[pkgs]]
 ```
 
-Promotion is rejected if it would lose inner comments; clear them first.
+Promotion is rejected if it would lose inner comments; clear them first (see [Comments](comments.md)).
