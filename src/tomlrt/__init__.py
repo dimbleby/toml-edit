@@ -1,4 +1,4 @@
-"""tomlrt: a format-preserving TOML parser and writer."""
+"""tomlrt: a format-preserving TOML reader and writer."""
 
 from __future__ import annotations
 

@@ -1,6 +1,6 @@
 [project]
 site_name = "tomlrt"
-site_description = "A format-preserving TOML parser and writer for Python."
+site_description = "A format-preserving TOML reader and writer for Python."
 site_url = "https://dimbleby.github.io/tomlrt/"
 repo_url = "https://github.com/dimbleby/tomlrt"
 nav = [

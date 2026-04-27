@@ -1,7 +1,7 @@
 [project]
 name = "tomlrt"
 version = "1.0.2"
-description = "A format-preserving TOML parser and writer for Python."
+description = "A format-preserving TOML reader and writer for Python."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
