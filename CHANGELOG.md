@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Documentation pass and small typing tightenings across the public
+  API. The `Document.cst` escape hatch is gone.
+
 ## [1.0.1] - 2026-04-26
 
 ### Fixed
@@ -277,6 +282,3 @@ Array | AoT | Table` union).
 ## [0.1.0] - 2026-04-20
 
 Initial release.
-
-[Unreleased]: https://github.com/dimbleby/tomlrt/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/dimbleby/tomlrt/releases/tag/v0.1.0
