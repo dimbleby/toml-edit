@@ -15,21 +15,16 @@ with open("pyproject.toml", "wb") as f:
     tomlrt.dump(doc, f)
 ```
 
-`tomlrt.parse` and `tomlrt.loads` are equivalent.
-
-## Binary mode is required
-
-`load` and `dump` require **binary** file objects (`open(path, "rb")` or `"wb"`).
-Text mode would perform locale-dependent decoding and platform newline translation, which would break the byte-exact round-trip guarantee.
-A text stream raises `TypeError`.
-
-For string round-trips, use `parse` / `dumps` (or, equivalently, `Document.render()`):
+For in-memory round-trips, use `loads` / `dumps`:
 
 ```python
-doc = tomlrt.parse(text)
+doc = tomlrt.loads(text)
 text_again = tomlrt.dumps(doc)
-assert text == text_again        # if you didn't change anything
+assert text == text_again
 ```
+
+`tomlrt.loads` and `tomlrt.parse` are equivalent.
+`tomlrt.dumps(doc)` and `doc.render()` are equivalent.
 
 ## Reading values
 
@@ -37,8 +32,6 @@ A `Document` behaves like a `dict`; nested tables are `Table` (also a `dict` sub
 Plain reads with `doc["key"]` work as you'd expect — see [Typed access](access.md) when you want typechecker-friendly traversal.
 
 ## Writing values
-
-Plain Python values do the right thing on assignment:
 
 | Assigning                             | Becomes                      |
 | ------------------------------------- | ---------------------------- |

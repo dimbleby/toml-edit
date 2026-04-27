@@ -16,7 +16,7 @@ except tomlrt.TOMLError as exc:
 
 ## `TOMLParseError`
 
-Raised by `parse` / `loads` / `load` when the input isn't valid TOML.
+Raised by `loads` / `parse` / `load` when the input isn't valid TOML.
 Carries useful position information:
 
 ```python

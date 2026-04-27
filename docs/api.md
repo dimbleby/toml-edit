@@ -8,7 +8,7 @@ Anything imported from the top-level `tomlrt` namespace is part of the public, s
 
 | Symbol                                  | Kind      |
 | --------------------------------------- | --------- |
-| `parse`, `loads`, `load`                | function  |
+| `loads`, `parse`, `load`                | function  |
 | `dumps`, `dump`                         | function  |
 | `document`                              | function  |
 | `Document`, `Table`, `Array`, `AoT`     | class     |
@@ -19,8 +19,8 @@ Anything not re-exported from `tomlrt/__init__.py` (modules prefixed with `_`, i
 
 ## Top-level functions
 
-::: tomlrt.parse
 ::: tomlrt.loads
+::: tomlrt.parse
 ::: tomlrt.load
 ::: tomlrt.dumps
 ::: tomlrt.dump
