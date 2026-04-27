@@ -2,7 +2,8 @@
 
 ## Structural assignment
 
-A plain `dict` value installs as an inline table; a plain `list` installs as an inline array.
+A plain `dict` value installs as an inline table; a plain `list` installs as an
+inline array.
 To pick a different shape, assign a flavoured value:
 
 ```python
@@ -16,7 +17,9 @@ doc["tags"] = Array(["a", "b"], multiline=True)  # multi-line array
 
 ## Live vs snapshot
 
-Assigning a fresh `Table.section(...)`, `Table.inline(...)`, `Array(...)`, or `AoT(...)` _attaches it live_: your reference becomes the live view at the destination, and later mutations through that reference show up in the document.
+Assigning a fresh `Table.section(...)`, `Table.inline(...)`, `Array(...)`, or
+`AoT(...)` _attaches it live_: your reference becomes the live view at the
+destination, and later mutations through that reference show up in the document.
 
 ```python
 xs = Array([1, 2])
@@ -30,15 +33,21 @@ t["x"] = 1               # doc["a"] is now {"x": 1}
 assert doc["a"] is t
 ```
 
-Plain `dict` / `list` values are _snapshot_ on assignment — mutating the original after assignment does _not_ affect the document.
-Reach for `Table.section`, `Table.inline`, or `Array` when you want live semantics.
+Plain `dict` / `list` values are _snapshot_ on assignment — mutating the
+original after assignment does _not_ affect the document.
+Reach for `Table.section`, `Table.inline`, or `Array` when you want live
+semantics.
 
-A container that is already attached somewhere is deep-cloned on assignment, so two slots never share state.
-This applies whether the source and destination are in the same document (`doc["b"] = doc["a"]`) or different ones (`d2["x"] = d1["x"]`).
+A container that is already attached somewhere is deep-cloned on assignment, so
+two slots never share state.
+This applies whether the source and destination are in the same document
+(`doc["b"] = doc["a"]`) or different ones (`d2["x"] = d1["x"]`).
 
 ## Removal and orphaning
 
-Removing a `Table`, `Array`, or `AoT` — via `del`, `pop`, `clear`, or overwrite — detaches the view. It keeps its data, but further mutations no longer reach the document:
+Removing a `Table`, `Array`, or `AoT` — via `del`, `pop`, `clear`, or overwrite
+— detaches the view.
+It keeps its data, but further mutations no longer reach the document:
 
 ```python
 old = doc.pop("tool")        # detached Table view
@@ -47,7 +56,8 @@ old["debug"] = True          # does NOT affect doc
 
 ## Growing an array-of-tables
 
-`AoT.add()` appends a fresh entry and returns the new `Table` view, so you can keep mutating it:
+`AoT.add()` appends a fresh entry and returns the new `Table` view, so you can
+keep mutating it:
 
 ```python
 pkgs = doc.aot("packages")
@@ -57,8 +67,10 @@ entry["version"] = "1.0"
 
 ## Empty arrays-of-tables
 
-TOML has no syntax for an array-of-tables with zero entries, so an empty `AoT` does not appear in `dumps` output — the key is silently absent.
-The in-memory `AoT` remains usable: append entries to it and they will reappear in the next dump.
+TOML has no syntax for an array-of-tables with zero entries, so an empty `AoT`
+does not appear in `dumps` output — the key is silently absent.
+The in-memory `AoT` remains usable: append entries to it and they will reappear
+in the next dump.
 
 ## Inline-array layout
 
@@ -70,11 +82,13 @@ arr = doc.array("tags")
 arr.set_multiline(multiline=True, indent="  ")
 ```
 
-Collapsing a multi-line array to single-line is rejected if any item carries a comment; clear them first (see [Comments](comments.md)).
+Collapsing a multi-line array to single-line is rejected if any item carries a
+comment; clear them first (see [Comments](comments.md)).
 
 ## Promoting inline → section
 
-If a value started life as an inline table or inline array of inline tables, you can promote it in place:
+If a value started life as an inline table or inline array of inline tables, you
+can promote it in place:
 
 ```python
 doc = tomlrt.loads('[tool]\nruff = { line-length = 88 }\n')
@@ -84,4 +98,5 @@ doc = tomlrt.loads('pkgs = [{a = 1}, {b = 2}]\n')
 doc.promote_array("pkgs")                      # → [[pkgs]] … [[pkgs]]
 ```
 
-Promotion is rejected if it would lose inner comments; clear them first (see [Comments](comments.md)).
+Promotion is rejected if it would lose inner comments; clear them first (see
+[Comments](comments.md)).
