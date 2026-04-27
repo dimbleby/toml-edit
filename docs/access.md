@@ -3,7 +3,7 @@
 Plain `doc["key"]` returns `Any`.
 The typed accessors give you a shape-checked `Table`, `Array`, or `AoT` directly.
 
-## Required accessors
+## Strict accessors
 
 Each raises `KeyError` if the key is missing and `TypeError` if the value at the key has the wrong shape:
 
@@ -20,7 +20,7 @@ first_pkg = pkgs.table(0)             # -> Table
 nested    = some_array.array(2)       # -> Array
 ```
 
-## Optional accessors
+## Lenient accessors
 
 `get_table` / `get_array` / `get_aot` mirror `dict.get`: return the value when the shape matches, otherwise the `default` (default `None`).
 They raise `TypeError` only if the key exists but has the _wrong_ shape:

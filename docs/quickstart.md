@@ -23,7 +23,7 @@ with open("pyproject.toml", "wb") as f:
 Text mode would perform locale-dependent decoding and platform newline translation, which would break the byte-exact round-trip guarantee.
 A text stream raises `TypeError`.
 
-For string round-trips, use `parse` / `dumps`:
+For string round-trips, use `parse` / `dumps` (or, equivalently, `Document.render()`):
 
 ```python
 doc = tomlrt.parse(text)

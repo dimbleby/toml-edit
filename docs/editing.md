@@ -38,7 +38,7 @@ This applies whether the source and destination are in the same document (`doc["
 
 ## Removal and orphaning
 
-Removing a `Table`, `Array`, or `AoT` &mdash; via `del`, `pop`, `clear`, or overwrite &mdash; detaches the view. It keeps its data, but further mutations no longer reach the document:
+Removing a `Table`, `Array`, or `AoT` — via `del`, `pop`, `clear`, or overwrite — detaches the view. It keeps its data, but further mutations no longer reach the document:
 
 ```python
 old = doc.pop("tool")        # detached Table view
