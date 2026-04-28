@@ -34,12 +34,3 @@ print(tomlrt.dumps(doc))
 ## Documentation
 
 Full docs at <https://dimbleby.github.io/tomlrt/>:
-
-- [Quickstart](https://dimbleby.github.io/tomlrt/quickstart/)
-- [Building documents](https://dimbleby.github.io/tomlrt/building/)
-- [Editing documents](https://dimbleby.github.io/tomlrt/editing/)
-- [Typed access](https://dimbleby.github.io/tomlrt/access/)
-- [Comments](https://dimbleby.github.io/tomlrt/comments/)
-- [API reference](https://dimbleby.github.io/tomlrt/api/)
-
-See also the [changelog](CHANGELOG.md).
