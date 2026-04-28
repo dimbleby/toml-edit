@@ -58,24 +58,21 @@ def document(data: Mapping[str, Any] | None = None) -> Document:
     return doc
 
 
-def parse(text: str) -> Document:
+def loads(text: str) -> Document:
     """Parse a TOML document string into a [`Document`][tomlrt.Document]."""
     cst = _parse_to_cst(text)
     return Document(cst)
 
 
-def loads(text: str) -> Document:
-    """Alias for [`parse`][tomlrt.parse], mirroring the stdlib ``tomllib`` API."""
-    return parse(text)
+def parse(text: str) -> Document:
+    """Alias for [`loads`][tomlrt.parse]."""
+    return loads(text)
 
 
 def load(fp: IO[bytes]) -> Document:
     """Parse a TOML document from a *binary* file-like object.
 
-    The file must be opened in binary mode (``open(path, "rb")``); text
-    mode would perform locale-dependent decoding and newline translation,
-    breaking the byte-exact round-trip guarantee. Raises `TypeError`
-    for a text stream.
+    The file must be opened in binary mode (``open(path, "wb")``).
     """
     data = fp.read()
     if not isinstance(data, (bytes, bytearray)):
@@ -84,7 +81,7 @@ def load(fp: IO[bytes]) -> Document:
             f"got a text stream returning {type(data).__name__}"
         )
         raise TypeError(msg)
-    return parse(bytes(data).decode("utf-8"))
+    return loads(bytes(data).decode("utf-8"))
 
 
 def dumps(doc: Document) -> str:

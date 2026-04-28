@@ -39,7 +39,7 @@ dependencies = ["requests>=2"]
 line-length = 88
 ```
 
-ested mappings become `[section]` blocks (not inline tables); lists of mappings
+Nested mappings become `[section]` blocks (not inline tables); lists of mappings
 become `[[array.of.tables]]` blocks; everything else is an ordinary key-value
 assignment.
 
