@@ -318,11 +318,69 @@ def _ensure_trailing_indent(trivia: Trivia, indent: str) -> None:
     trivia.pieces.append(WhitespaceNode(indent))
 
 
+def _apply_interior_item(
+    item: _Separated,
+    style: _SeparatorStyle,
+    inter_render: str,
+    inter_indent: str,
+) -> None:
+    """Stamp interior-item separator state, preserving user EOL comments."""
+    if not item.has_comma:
+        eol = _extract_eol_comment(item.trailing)
+        item.trailing = Trivia()
+        item.has_comma = True
+        item.post_comma_trivia = _clone_trivia(style.inter_separator)
+        if eol is not None:
+            _replace_eol_comment(
+                item.post_comma_trivia,
+                eol,
+                force_newline=True,
+            )
+    elif _is_pure_whitespace(item.post_comma_trivia):
+        if item.post_comma_trivia.render() != inter_render:
+            item.post_comma_trivia = _clone_trivia(style.inter_separator)
+    else:
+        _ensure_trailing_indent(item.post_comma_trivia, inter_indent)
+    if _is_pure_whitespace(item.trailing) and item.trailing.pieces:
+        item.trailing = Trivia()
+
+
+def _apply_tail_item(
+    item: _Separated,
+    style: _SeparatorStyle,
+    close_render: str,
+) -> None:
+    """Stamp tail-item separator state per ``style.trailing_comma``."""
+    if style.trailing_comma:
+        item.has_comma = True
+        if _is_pure_whitespace(item.post_comma_trivia):
+            item.post_comma_trivia = _clone_trivia(style.close_pad)
+        else:
+            # Last item carries a comment: strip any trailing indent
+            # that was meant for "the next value" so the closing
+            # bracket lands at column 0 (or wherever close_pad lands).
+            _strip_trailing_indent(item.post_comma_trivia)
+        if _is_pure_whitespace(item.trailing):
+            item.trailing = Trivia()
+    else:
+        if item.has_comma and _is_pure_whitespace(item.post_comma_trivia):
+            item.has_comma = False
+            item.post_comma_trivia = Trivia()
+        if _is_pure_whitespace(item.trailing):
+            if item.trailing.render() != close_render:
+                item.trailing = _clone_trivia(style.close_pad)
+        else:
+            # Non-empty content (e.g. comment) in trailing: trim any
+            # leftover "next-item indent" so the closing bracket
+            # doesn't end up indented after a reorder.
+            _strip_trailing_indent(item.trailing)
+
+
 def _apply_separator_style(
     container: ArrayNode | InlineTableNode,
     style: _SeparatorStyle,
 ) -> None:
-    """Re-apply a sampled `_SeparatorStyle` to the items.
+    """Re-apply a sampled `_SeparatorStyle` to every item.
 
     Items whose separator slot contains a non-whitespace token (e.g. an
     inline ``# comment``) are left alone so authoring intent is preserved.
@@ -346,47 +404,9 @@ def _apply_separator_style(
     close_render = style.close_pad.render()
     for i, item in enumerate(items):
         if i < n - 1:
-            if not item.has_comma:
-                eol = _extract_eol_comment(item.trailing)
-                item.trailing = Trivia()
-                item.has_comma = True
-                item.post_comma_trivia = _clone_trivia(style.inter_separator)
-                if eol is not None:
-                    _replace_eol_comment(
-                        item.post_comma_trivia,
-                        eol,
-                        force_newline=True,
-                    )
-            elif _is_pure_whitespace(item.post_comma_trivia):
-                if item.post_comma_trivia.render() != inter_render:
-                    item.post_comma_trivia = _clone_trivia(style.inter_separator)
-            else:
-                _ensure_trailing_indent(item.post_comma_trivia, inter_indent)
-            if _is_pure_whitespace(item.trailing) and item.trailing.pieces:
-                item.trailing = Trivia()
-        elif style.trailing_comma:
-            item.has_comma = True
-            if _is_pure_whitespace(item.post_comma_trivia):
-                item.post_comma_trivia = _clone_trivia(style.close_pad)
-            else:
-                # Last item carries a comment: strip any trailing indent
-                # that was meant for "the next value" so the closing
-                # bracket lands at column 0 (or wherever close_pad lands).
-                _strip_trailing_indent(item.post_comma_trivia)
-            if _is_pure_whitespace(item.trailing):
-                item.trailing = Trivia()
+            _apply_interior_item(item, style, inter_render, inter_indent)
         else:
-            if item.has_comma and _is_pure_whitespace(item.post_comma_trivia):
-                item.has_comma = False
-                item.post_comma_trivia = Trivia()
-            if _is_pure_whitespace(item.trailing):
-                if item.trailing.render() != close_render:
-                    item.trailing = _clone_trivia(style.close_pad)
-            else:
-                # Non-empty content (e.g. comment) in trailing: trim any
-                # leftover "next-item indent" so the closing bracket
-                # doesn't end up indented after a reorder.
-                _strip_trailing_indent(item.trailing)
+            _apply_tail_item(item, style, close_render)
 
 
 def _apply_separator_after_append(
@@ -396,10 +416,12 @@ def _apply_separator_after_append(
 ) -> None:
     """Incremental separator update after appending ``n_added`` items.
 
-    Cheaper than `_apply_separator_style` for the common bulk-
-    append case: only the previously-last item (now interior) and the
-    newly appended items need touching, leaving the rest untouched.
+    Touches exactly ``n_added + 1`` items (the previously-last item,
+    now interior, plus the newly appended items). This is what keeps
+    repeated `append()` overall O(n) rather than O(n**2); do not
+    replace with `_apply_separator_style` for non-empty appends.
     """
+    assert n_added > 0
     items: Sequence[_Separated] = (
         container.items if isinstance(container, ArrayNode) else container.entries
     )
@@ -412,50 +434,16 @@ def _apply_separator_after_append(
 
     inter_render = style.inter_separator.render()
     inter_indent = _indent_after_last_newline(style.inter_separator)
+    close_render = style.close_pad.render()
 
-    # Previously-last item now looks like an interior item; mirror the
-    # per-interior branch in _apply_separator_style so user comments
-    # in trailing / post_comma_trivia survive.
-    prev_tail = items[n - n_added - 1]
-    if not prev_tail.has_comma:
-        eol = _extract_eol_comment(prev_tail.trailing)
-        prev_tail.trailing = Trivia()
-        prev_tail.has_comma = True
-        prev_tail.post_comma_trivia = _clone_trivia(style.inter_separator)
-        if eol is not None:
-            _replace_eol_comment(
-                prev_tail.post_comma_trivia,
-                eol,
-                force_newline=True,
-            )
-    elif _is_pure_whitespace(prev_tail.post_comma_trivia):
-        if prev_tail.post_comma_trivia.render() != inter_render:
-            prev_tail.post_comma_trivia = _clone_trivia(style.inter_separator)
-    else:
-        _ensure_trailing_indent(prev_tail.post_comma_trivia, inter_indent)
-    if _is_pure_whitespace(prev_tail.trailing) and prev_tail.trailing.pieces:
-        prev_tail.trailing = Trivia()
-
-    # Newly appended items at indices [n - n_added .. n - 2] are interior.
+    _apply_interior_item(items[n - n_added - 1], style, inter_render, inter_indent)
     for i in range(n - n_added, n - 1):
         item = items[i]
         item.leading = Trivia()
-        item.has_comma = True
-        item.post_comma_trivia = _clone_trivia(style.inter_separator)
-        item.trailing = Trivia()
-
-    # The genuinely new tail item gets the close-pad / trailing-comma
-    # treatment.
+        _apply_interior_item(item, style, inter_render, inter_indent)
     new_tail = items[-1]
     new_tail.leading = Trivia()
-    if style.trailing_comma:
-        new_tail.has_comma = True
-        new_tail.post_comma_trivia = _clone_trivia(style.close_pad)
-        new_tail.trailing = Trivia()
-    else:
-        new_tail.has_comma = False
-        new_tail.post_comma_trivia = Trivia()
-        new_tail.trailing = _clone_trivia(style.close_pad)
+    _apply_tail_item(new_tail, style, close_render)
 
 
 def _array_indent(arr: ArrayNode) -> str:
