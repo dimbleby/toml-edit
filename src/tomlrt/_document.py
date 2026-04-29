@@ -2636,10 +2636,13 @@ class Array(list[Any]):
         reverse: bool = False,
     ) -> None:
         values = _materialise_array(self._node)
+        # `key=None` is permissive: TOML arrays may hold non-comparable
+        # values (notably Tables), in which case the sort raises TypeError
+        # at runtime.
         sort_key: Callable[[int], Any] = (
             (lambda i: values[i]) if key is None else (lambda i: key(values[i]))
         )
-        self._reorder_items(sorted(range(len(values)), key=sort_key, reverse=reverse))
+        self._reorder_items(sorted(range(len(values)), key=sort_key, reverse=reverse))  # ty: ignore[no-matching-overload]
 
     def _reorder_items(self, perm: Iterable[int]) -> None:
         """Apply an index permutation to ``items`` and their leadings.
@@ -3214,8 +3217,9 @@ class AoT(list[Table]):
             for offset, v in enumerate(new_values):
                 self.insert(indices.start + offset, v)
             return
-        self._validate_entry(value)
-        assert isinstance(value, Mapping)
+        if not isinstance(value, Mapping):
+            msg = "AoT entry must be a mapping"
+            raise TypeError(msg)
         # Replacement is always del + insert: the splice path used by
         # ``insert`` already handles cloned-Table sources (preserving
         # per-KV trivia, sub-sections, and nested AoTs) as well as
@@ -3238,7 +3242,9 @@ class AoT(list[Table]):
         hdr = own[i].header
         prior_leading = hdr.leading if hdr is not None else None
         del self[i]
-        self._insert_at(i, value, add_blank=add_blank)
+        # ty preserves a residual intersection from the inline isinstance
+        # narrowing above that mypy collapses.
+        self._insert_at(i, value, add_blank=add_blank)  # ty: ignore[invalid-argument-type]
         _apply_prior_leading([self._own_sections()[i]], prior_leading)
 
     @override
@@ -3303,7 +3309,7 @@ class AoT(list[Table]):
         self._reorder_blocks(start, blocks, range(len(blocks) - 1, -1, -1))
 
     @override
-    def sort(  # type: ignore[override]
+    def sort(  # type: ignore[override]  # ty: ignore[invalid-method-override]
         self,
         *,
         key: Callable[[Table], SupportsRichComparison],

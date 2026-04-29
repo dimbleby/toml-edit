@@ -14,7 +14,7 @@ import re
 from collections.abc import Mapping
 from copy import deepcopy
 from datetime import date, datetime, time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from tomlrt._errors import TOMLError
 from tomlrt._nodes import (
@@ -70,12 +70,10 @@ def _escape_basic_string(s: str) -> str:
     return "".join(out)
 
 
-def make_key_part(name: str) -> KeyPart:
+def make_key_part(name: object) -> KeyPart:
     """Build a single `KeyPart`, quoting if the name is not bare-safe."""
     if not isinstance(name, str):
-        msg = (  # type: ignore[unreachable]
-            f"TOML keys must be str, not {type(name).__name__}"
-        )
+        msg = f"TOML keys must be str, not {type(name).__name__}"
         raise TypeError(msg)
     if name == "":
         # empty bare keys are forbidden; emit "" basic string
@@ -86,7 +84,7 @@ def make_key_part(name: str) -> KeyPart:
     return KeyPart(raw=raw, value=name, kind="basic")
 
 
-def make_simple_key(name: str) -> Key:
+def make_simple_key(name: object) -> Key:
     """Build a single-segment `Key`."""
     return Key(parts=[make_key_part(name)], separators=[])
 
@@ -151,7 +149,7 @@ def _list_to_array_node(items: Iterable[object]) -> ArrayNode:
     return ArrayNode(items=array_items, final_trivia=Trivia())
 
 
-def _mapping_to_inline_table_node(mapping: Mapping[str, object]) -> InlineTableNode:
+def _mapping_to_inline_table_node(mapping: Mapping[Any, object]) -> InlineTableNode:
     entries: list[InlineTableEntry] = []
     items_list = list(mapping.items())
     n = len(items_list)

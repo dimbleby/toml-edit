@@ -53,7 +53,7 @@ def test_load_from_real_file_path(tmp_path: Path) -> None:
 def test_load_rejects_text_stream() -> None:
     fp = io.StringIO("port = 8080\n")
     with pytest.raises(TypeError, match="binary"):
-        tomlrt.load(fp)  # type: ignore[arg-type]
+        tomlrt.load(fp)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
 
 def test_load_preserves_crlf_line_endings(tmp_path: Path) -> None:

@@ -229,7 +229,7 @@ def test_reassign_after_detach_attaches_again() -> None:
 
 def test_inline_factory_rejects_non_string_keys() -> None:
     with pytest.raises(TypeError):
-        Table.inline({1: "no"})  # type: ignore[dict-item]
+        Table.inline({1: "no"})  # type: ignore[dict-item]  # ty: ignore[invalid-argument-type]
 
 
 # ---------------------------------------------------------------------------

@@ -31,7 +31,7 @@ def _deep_equal(a: object, b: object) -> bool:
     if isinstance(a, dict) and isinstance(b, dict):
         if a.keys() != b.keys():
             return False
-        return all(_deep_equal(a[k], b[k]) for k in a)
+        return all(_deep_equal(a[k], b[k]) for k in a)  # ty: ignore[invalid-argument-type]
     if isinstance(a, list) and isinstance(b, list):
         if len(a) != len(b):
             return False

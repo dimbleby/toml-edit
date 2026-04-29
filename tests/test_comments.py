@@ -919,9 +919,9 @@ def test_array_comments_non_int_key_raises() -> None:
     doc = tomlrt.parse("arr = [1, 2]\n")
     arr = doc.array("arr")
     with pytest.raises(TypeError):
-        _ = arr.comments["x"]  # type: ignore[index]
+        _ = arr.comments["x"]  # type: ignore[index]  # ty: ignore[invalid-argument-type]
     with pytest.raises(TypeError):
-        arr.comments["x"] = "v"  # type: ignore[index]
+        arr.comments["x"] = "v"  # type: ignore[index]  # ty: ignore[invalid-assignment]
 
 
 def test_array_comments_out_of_range_raises() -> None:
@@ -1236,7 +1236,7 @@ def test_array_comments_typeerror_on_non_int_key() -> None:
     doc = tomlrt.parse("xs = [1, 2, 3]\n")
     arr = doc.array("xs")
     with pytest.raises(TypeError, match="must be int"):
-        _ = arr.comments["zero"]  # type: ignore[index]
+        _ = arr.comments["zero"]  # type: ignore[index]  # ty: ignore[invalid-argument-type]
 
 
 def test_array_comments_keyerror_on_out_of_range() -> None:
@@ -1300,7 +1300,7 @@ def test_array_leading_comments_typeerror_on_non_int_key() -> None:
     doc = tomlrt.parse("xs = [1, 2]\n")
     arr = doc.array("xs")
     with pytest.raises(TypeError, match="must be int"):
-        _ = arr.leading_comments["zero"]  # type: ignore[index]
+        _ = arr.leading_comments["zero"]  # type: ignore[index]  # ty: ignore[invalid-argument-type]
 
 
 def test_array_leading_comments_keyerror_out_of_range() -> None:

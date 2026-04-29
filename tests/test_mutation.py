@@ -250,7 +250,7 @@ def test_array_setitem_slice_matches_list_semantics() -> None:
     assert list(xs) == ["a", "b", 2, 3]
     # Non-iterables raise TypeError, like list.__setitem__ does.
     with pytest.raises(TypeError):
-        xs[0:1] = 5  # type: ignore[call-overload]
+        xs[0:1] = 5  # type: ignore[call-overload]  # ty: ignore[invalid-assignment]
 
 
 def test_array_delitem_slice() -> None:
@@ -536,7 +536,7 @@ def test_aot_setitem_slice_validates_before_mutating() -> None:
     original = tomlrt.dumps(doc)
     aot = doc.aot("pkg")
     with pytest.raises(TypeError):
-        aot[0:2] = [{"ok": True}, "not a mapping"]  # type: ignore[list-item]
+        aot[0:2] = [{"ok": True}, "not a mapping"]  # type: ignore[list-item]  # ty: ignore[invalid-assignment]
     assert tomlrt.dumps(doc) == original
 
 
@@ -1264,7 +1264,7 @@ def test_non_string_keys_rejected() -> None:
     for bad in (None, 42, 3.14, True, False, (1,), b"bytes"):
         doc = tomlrt.parse("")
         with pytest.raises(TypeError):
-            doc[bad] = 1  # type: ignore[index]
+            doc[bad] = 1  # type: ignore[index]  # ty: ignore[invalid-assignment]
 
     # Empty string key IS valid TOML (``"" = 1``) and must still work.
     doc = tomlrt.parse("")
@@ -1275,7 +1275,7 @@ def test_non_string_keys_rejected() -> None:
     # install() should reject non-string segments too.
     doc = tomlrt.parse("")
     with pytest.raises((TypeError, tomlrt.TOMLError)):
-        doc.install((None,), 1)  # type: ignore[arg-type]
+        doc.install((None,), 1)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
 
 # ---------------------------------------------------------------------------
