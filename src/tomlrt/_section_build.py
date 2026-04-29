@@ -140,23 +140,33 @@ def _iter_rebased(
         yield sec, (*full_path, *hdr.key.path[splen:])
 
 
-def _clone_sections_rebased(
+def _rebase_sections(
     sections: Iterable[SectionNode],
     src_path: tuple[str, ...],
     full_path: tuple[str, ...],
+    *,
+    clone: bool,
+    head_kind: HeaderKind | None = None,
 ) -> list[SectionNode]:
-    """Deep-clone every header section under ``src_path``, rebasing the prefix.
+    """Rebase header keys on every section under ``src_path`` onto ``full_path``.
 
-    Implicit pre-header sections and out-of-prefix headers are skipped.
-    Relative depth below ``src_path`` is preserved: ``[a.sub.deep]``
-    cloned at ``("t",)`` becomes ``[t.sub.deep]``.
+    With ``clone=True`` each section is deep-copied first; with
+    ``clone=False`` the originals are mutated in place. ``head_kind``,
+    if given, forces the kind of the first section whose header lives
+    exactly at ``full_path``.
     """
     out: list[SectionNode] = []
     for sec, new_path in _iter_rebased(sections, src_path, full_path):
-        cloned = deepcopy(sec)
-        assert cloned.header is not None
-        cloned.header.key = _make_dotted_key(new_path)
-        out.append(cloned)
+        target = deepcopy(sec) if clone else sec
+        assert target.header is not None
+        target.header.key = _make_dotted_key(new_path)
+        out.append(target)
+    if head_kind is not None:
+        for sec in out:
+            assert sec.header is not None
+            if len(sec.header.key.path) == len(full_path):
+                sec.header.kind = head_kind
+                break
     return out
 
 
@@ -174,44 +184,18 @@ def _clone_aot_sections(
     blank-line policy, dict-storage sync) is the caller's job.
     """
     sections = _aot_owned_sections(value)
-    return _clone_sections_rebased(sections, value._path, full_path)  # noqa: SLF001
-
-
-def _rebase_sections_inplace(
-    sections: Iterable[SectionNode],
-    src_path: tuple[str, ...],
-    full_path: tuple[str, ...],
-    *,
-    head_kind: HeaderKind | None = None,
-) -> list[SectionNode]:
-    """Live-attach analogue of `_clone_sections_rebased`.
-
-    Rebases orphan section header paths in place. ``head_kind`` (if
-    given) forces the leading section's kind, mirroring
-    `_clone_table_sections`.
-    """
-    out: list[SectionNode] = []
-    for sec, new_path in _iter_rebased(sections, src_path, full_path):
-        assert sec.header is not None
-        sec.header.key = _make_dotted_key(new_path)
-        out.append(sec)
-    if head_kind is not None:
-        for sec in out:
-            assert sec.header is not None
-            if len(sec.header.key.path) == len(full_path):
-                sec.header.kind = head_kind
-                break
-    return out
+    return _rebase_sections(sections, value._path, full_path, clone=True)  # noqa: SLF001
 
 
 def _rebase_aot_sections_inplace(
     value: AoT, full_path: tuple[str, ...]
 ) -> list[SectionNode]:
     """Live-attach analogue of `_clone_aot_sections`."""
-    return _rebase_sections_inplace(
+    return _rebase_sections(
         _aot_owned_sections(value),
         value._path,  # noqa: SLF001
         full_path,
+        clone=False,
     )
 
 
@@ -219,10 +203,11 @@ def _rebase_table_sections_inplace(
     value: _StdTable, full_path: tuple[str, ...]
 ) -> list[SectionNode]:
     """Live-attach a detached `_StdTable`; normalises head kind to ``"table"``."""
-    return _rebase_sections_inplace(
+    return _rebase_sections(
         value._doc_node.sections,  # noqa: SLF001
         value._path,  # noqa: SLF001
         full_path,
+        clone=False,
         head_kind="table",
     )
 
@@ -279,7 +264,7 @@ def _clone_table_sections(
 
     src_scope = value._scope()  # noqa: SLF001
     src_sections = src_scope if src_scope is not None else doc.sections
-    new_secs = _clone_sections_rebased(src_sections, src_path, full_path)
+    new_secs = _rebase_sections(src_sections, src_path, full_path, clone=True)
     head = next(
         (
             s
