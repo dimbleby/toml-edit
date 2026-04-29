@@ -2257,8 +2257,7 @@ class Document(_StdTable):
     def render(self) -> str:
         """Serialize the document back to a TOML string.
 
-        Equivalent to `tomlrt.dumps(self)`. Restores the original
-        line-ending style detected at parse time.
+        Equivalent to `tomlrt.dumps(self)`.
         """
         if self._newline != "\n":
             _normalise_newlines(self._doc_node, self._newline)
