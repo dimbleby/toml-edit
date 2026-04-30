@@ -1,8 +1,9 @@
 """Tests for the cursor primitives on `tomlrt._scanner._Scanner`.
 
-The scanner will grow trivia / string / key / value methods in
-later steps; for now we only exercise the cursor + diagnostics
-contract.
+The higher-level scan_* methods (strings, keys, numbers, trivia)
+are exercised indirectly through the parser-level round-trip tests.
+This file pins only the cursor + diagnostics contract that those
+methods build on.
 """
 
 from __future__ import annotations
