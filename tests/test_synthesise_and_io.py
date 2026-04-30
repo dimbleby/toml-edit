@@ -18,7 +18,7 @@ import pytest
 
 import tomlrt
 from _toml_str import td
-from tomlrt import Table
+from tomlrt import Document, Table
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -299,22 +299,22 @@ def test_assign_aot_over_scalar() -> None:
 
 
 def test_document_factory_returns_empty_document() -> None:
-    doc = tomlrt.document()
+    doc = Document()
     assert isinstance(doc, tomlrt.Document)
     assert len(doc) == 0
     assert tomlrt.dumps(doc) == ""
 
 
 def test_document_factory_is_independent_of_other_calls() -> None:
-    a = tomlrt.document()
-    b = tomlrt.document()
+    a = Document()
+    b = Document()
     a["x"] = 1
     assert "x" not in b
     assert tomlrt.dumps(b) == ""
 
 
 def test_document_factory_supports_full_build_and_dump() -> None:
-    doc = tomlrt.document()
+    doc = Document()
     doc["title"] = "demo"
     doc["server"] = Table.section({"port": 8080})
     out = tomlrt.dumps(doc)
@@ -325,7 +325,7 @@ def test_document_factory_supports_full_build_and_dump() -> None:
 
 
 def test_document_factory_with_data_uses_sections_for_nested_mappings() -> None:
-    doc = tomlrt.document({"server": {"port": 8080, "host": "localhost"}})
+    doc = Document({"server": {"port": 8080, "host": "localhost"}})
     out = tomlrt.dumps(doc)
     assert "[server]" in out
     assert "{" not in out  # no inline tables
@@ -333,7 +333,7 @@ def test_document_factory_with_data_uses_sections_for_nested_mappings() -> None:
 
 
 def test_document_factory_with_data_uses_aot_for_list_of_mappings() -> None:
-    doc = tomlrt.document(
+    doc = Document(
         {"package": [{"name": "foo"}, {"name": "bar"}]},
     )
     out = tomlrt.dumps(doc)
@@ -342,14 +342,14 @@ def test_document_factory_with_data_uses_aot_for_list_of_mappings() -> None:
 
 
 def test_document_factory_with_data_keeps_leaf_arrays_inline() -> None:
-    doc = tomlrt.document({"xs": [1, 2, 3]})
+    doc = Document({"xs": [1, 2, 3]})
     out = tomlrt.dumps(doc)
     assert "[[" not in out  # not promoted to AoT
     assert tomlrt.parse(out) == {"xs": [1, 2, 3]}
 
 
 def test_document_factory_with_data_keeps_top_level_scalars_at_top() -> None:
-    doc = tomlrt.document({"title": "demo", "server": {"port": 8080}})
+    doc = Document({"title": "demo", "server": {"port": 8080}})
     out = tomlrt.dumps(doc)
     # Top-level scalar must precede the [server] section header.
     assert out.index('title = "demo"') < out.index("[server]")
@@ -364,7 +364,7 @@ def test_document_factory_with_data_recurses_deeply() -> None:
             },
         },
     }
-    doc = tomlrt.document(data)
+    doc = Document(data)
     out = tomlrt.dumps(doc)
     assert "[tool.poetry]" in out
     assert "[tool.poetry.dependencies]" in out
@@ -378,13 +378,13 @@ def test_document_factory_with_data_aot_with_nested_table() -> None:
             {"name": "bar", "version": "2.0"},
         ],
     }
-    doc = tomlrt.document(data)
+    doc = Document(data)
     out = tomlrt.dumps(doc)
     assert tomlrt.parse(out) == data
 
 
 def test_document_factory_with_empty_list_stays_inline_empty_array() -> None:
-    doc = tomlrt.document({"xs": []})
+    doc = Document({"xs": []})
     out = tomlrt.dumps(doc)
     assert "[[" not in out
     assert tomlrt.parse(out) == {"xs": []}
@@ -392,12 +392,19 @@ def test_document_factory_with_empty_list_stays_inline_empty_array() -> None:
 
 def test_document_factory_with_data_does_not_share_mutable_state() -> None:
     data: dict[str, object] = {"server": {"port": 8080}}
-    doc = tomlrt.document(data)
+    doc = Document(data)
     server_dict = data["server"]
     assert isinstance(server_dict, dict)
     server_dict["port"] = 9999  # mutate the source after construction
     server = doc.table("server")
     assert server["port"] == 8080
+
+
+def test_document_factory_emits_deprecation_warning() -> None:
+    with pytest.warns(DeprecationWarning, match="tomlrt.Document"):
+        doc = tomlrt.document({"x": 1})
+    assert isinstance(doc, Document)
+    assert doc["x"] == 1
 
 
 def test_deepcopy_preserves_document_structure() -> None:

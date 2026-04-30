@@ -11,7 +11,6 @@ semver-stable API:
 | ----------------------------------- | ---------- |
 | `loads`, `parse`, `load`            | function   |
 | `dumps`, `dump`                     | function   |
-| `document`                          | function   |
 | `Document`, `Table`, `Array`, `AoT` | class      |
 | `TomlInput`                         | type alias |
 | `TOMLError`, `TOMLParseError`       | exception  |
@@ -27,7 +26,6 @@ code.
 ::: tomlrt.load
 ::: tomlrt.dumps
 ::: tomlrt.dump
-::: tomlrt.document
 
 ## Containers
 

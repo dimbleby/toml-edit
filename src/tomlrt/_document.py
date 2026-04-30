@@ -2246,17 +2246,60 @@ def _rehome_table_subtree(
                     )
 
 
+def _populate_table(table: Table, data: Mapping[str, Any]) -> None:
+    """Recursively pour ``data`` into ``table``.
+
+    Uses section/AoT shapes for nested mappings and lists-of-mappings,
+    scalars for leaves.
+    """
+    for key, value in data.items():
+        if isinstance(value, Mapping):
+            sub = table.install(key, Table.section())
+            _populate_table(sub, value)
+        elif (
+            isinstance(value, list)
+            and value
+            and all(isinstance(item, Mapping) for item in value)
+        ):
+            aot = table.install(key, AoT())
+            for entry in value:
+                assert isinstance(entry, Mapping)
+                _populate_table(aot.add(), entry)
+        else:
+            table[key] = value
+
+
 class Document(_StdTable):
     """Top-level TOML document. Subclass of [`Table`][tomlrt.Table]."""
 
     __slots__ = ("_newline",)
 
-    def __init__(self, node: DocumentNode, *, newline: str = "\n") -> None:
-        # Hand the construction walk the full section list and an
-        # empty extras tuple. ``_iter_table`` then partitions sections
-        # by head as it descends, so each nested ``_StdTable`` only
-        # sees its own slice of the document — no per-level rescans.
-        super().__init__(node, (), _pool=node.sections, _extras=[])
+    def __init__(self, data: Mapping[str, Any] | None = None) -> None:
+        """Return a fresh empty document, optionally populated from ``data``.
+
+        With a mapping, recursively populates the document so that:
+
+        * nested mappings become standard ``[section]`` blocks (not
+          inline tables);
+        * lists of mappings become ``[[array.of.tables]]`` blocks;
+        * everything else is set with ordinary key-value assignment.
+
+        Existing [`Table`][tomlrt.Table] / [`AoT`][tomlrt.AoT] /
+        [`Array`][tomlrt.Array] views are deep-cloned, so the returned
+        document shares no mutable state with ``data``.
+        """
+        self._init_from_node(DocumentNode(), newline="\n")
+        if data is not None:
+            _populate_table(self, data)
+
+    @classmethod
+    def _from_node(cls, node: DocumentNode, *, newline: str = "\n") -> Document:
+        self = cls.__new__(cls)
+        self._init_from_node(node, newline=newline)
+        return self
+
+    def _init_from_node(self, node: DocumentNode, *, newline: str) -> None:
+        _StdTable.__init__(self, node, (), _pool=node.sections, _extras=[])
         self._newline = newline
 
     def render(self) -> str:
@@ -2272,11 +2315,13 @@ class Document(_StdTable):
     def __copy__(self) -> Document:
         # The CST is the source of truth; sharing it across "copies" would
         # mean mutations on one bled into the other. Always clone.
-        return Document(deepcopy(self._doc_node), newline=self._newline)
+        return Document._from_node(deepcopy(self._doc_node), newline=self._newline)
 
     @override
     def __deepcopy__(self, memo: dict[int, Any]) -> Document:
-        return Document(deepcopy(self._doc_node, memo), newline=self._newline)
+        return Document._from_node(
+            deepcopy(self._doc_node, memo), newline=self._newline
+        )
 
     @property
     def preamble(self) -> tuple[str, ...]:
