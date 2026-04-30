@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `Document(mapping=None)` public constructor.
+
+### Deprecated
+
+- `tomlrt.document(...)`; use `tomlrt.Document(...)` instead.
+
 ## [1.0.3] - 2026-04-30
 
 ### Changed
