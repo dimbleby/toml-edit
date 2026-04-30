@@ -7,10 +7,6 @@ messy, allocation-heavy bits like strings and trivia blocks) or a
 small tuple/`str` (for bare value tokens that the parser still
 needs to dispatch on).
 
-This module currently covers cursor primitives, trivia / comment
-scanners, and string scanners. Key and bare-value scanners migrate
-in subsequent steps.
-
 String scanning is, by design, *semantic* — escape sequences are
 decoded, surrogate code points are rejected, the leading newline
 after the opening triple-quote delimiter is trimmed, and the
