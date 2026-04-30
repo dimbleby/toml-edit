@@ -241,13 +241,6 @@ def test_datetime_values() -> None:
         '"unterminated\n',
         "x = 01\n",
         "x = 1__0\n",
-        td("""
-            [a]
-            x = 1
-            [a]
-            x = 2
-            """),
-        "x = 1\nx = 2\n",
         "x = 1.\n",
         "x = .1\n",
         # Inline table missing '=' between key and value.
@@ -301,6 +294,65 @@ def test_parse_error_is_value_error() -> None:
     # catchable the same way for drop-in compatibility.
     with pytest.raises(ValueError, match="expected"):
         tomlrt.parse("a =")
+
+
+# ---------------------------------------------------------------------------
+# Validator rules — pin the user-facing error message text for each rule
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("src", "message"),
+    [
+        # Header redefinition rules.
+        ("[a]\n[a]\n", r"redefinition of table 'a'"),
+        ("[a]\n[[a]]\n", r"cannot redefine table 'a' as an array-of-tables"),
+        ("[[a]]\n[a]\n", r"cannot redefine array-of-tables 'a' as a normal table"),
+        ("[a.b]\n[[a]]\n", r"already used as an implicit table"),
+        # Header / value-path conflicts.
+        ("a = 1\n[a]\n", r"cannot define 'a' as a table: already defined as a value"),
+        ("a = 1\n[a.b]\n", r"cannot use 'a' as a table: already defined as a value"),
+        # Key/value rules.
+        ("x = 1\nx = 2\n", r"duplicate key 'x'"),
+        ("[a.b]\n[a]\nb = 1\n", r"key 'a\.b' already defined as a table"),
+        (
+            "[a.b]\n[a]\nb.c = 1\n",
+            r"cannot extend explicitly-defined table 'a\.b' via dotted keys",
+        ),
+        (
+            "[[a.b]]\n[a]\nb.c = 1\n",
+            r"cannot extend array-of-tables 'a\.b' via dotted keys",
+        ),
+        # Inline-table key conflicts.
+        ("t = { x = 1, x = 2 }\n", r"duplicate key 'x' in inline table"),
+        (
+            "t = { a.b = 1, a = 2 }\n",
+            r"key 'a' in inline table conflicts with an existing dotted-key prefix",
+        ),
+        (
+            "t = { a = true }\n[t.a]\n",
+            r"cannot use 't' as a table: already defined as a value",
+        ),
+    ],
+)
+def test_parse_error_messages(src: str, message: str) -> None:
+    with pytest.raises(tomlrt.TOMLParseError, match=message):
+        tomlrt.parse(src)
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        # An AoT entry's bound keys / sub-headers must not collide with
+        # those of a sibling entry: the validator resets per entry.
+        "[[h]]\nx = 1\n[[h]]\nx = 2\n",
+        "[[h]]\n[h.sub]\n[[h]]\n[h.sub]\n",
+        # Nested AoTs reset their sub-tables along with the outer entry.
+        ("[[h]]\n[[h.inner]]\n[h.inner.leaf]\n[[h]]\n[[h.inner]]\n[h.inner.leaf]\n"),
+    ],
+)
+def test_aot_scope_resets_between_entries(src: str) -> None:
+    tomlrt.parse(src)
 
 
 def test_moderate_array_nesting_still_parses() -> None:
