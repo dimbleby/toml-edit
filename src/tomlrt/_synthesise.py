@@ -112,8 +112,6 @@ def _float_to_node(value: float) -> FloatNode:
         raw = "inf" if value > 0 else "-inf"
     else:
         raw = repr(value)
-        if "." not in raw and "e" not in raw and "E" not in raw:
-            raw += ".0"
     return FloatNode(raw=raw, value=value)
 
 

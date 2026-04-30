@@ -515,6 +515,20 @@ def test_copy_aot_subview_preserves_length() -> None:
     assert len(aot2) == 2
 
 
+def test_copy_table_subview_is_independent() -> None:
+    src = td("""
+        [t]
+        x = 1
+        """)
+    doc = tomlrt.loads(src)
+    t = doc.table("t")
+    t2 = copy(t)
+    t2["x"] = 99
+    assert t["x"] == 1
+    assert t2["x"] == 99
+    assert tomlrt.dumps(doc) == src
+
+
 def test_deepcopy_table_subview_supports_nested_mutation() -> None:
 
     src = td("""
