@@ -36,7 +36,7 @@ from tomlrt._nodes import (
 )
 
 if TYPE_CHECKING:
-    from tomlrt._nodes import IntStyle, ValueNode
+    from tomlrt._nodes import IntStyle, KeyKind, ValueNode
 
 # Comment body: anything except newline + control chars (tab is OK).
 _RE_COMMENT_BODY: Final = re.compile(r"[^\r\n\x00-\x08\x0b-\x1f\x7f]*")
@@ -325,34 +325,39 @@ class _Scanner:
     # Strings
     # ------------------------------------------------------------------
 
-    def scan_string(self, quote: str) -> StringNode:
+    def scan_string(self, *, allow_multiline: bool = True) -> StringNode:
         """Scan a string starting at the cursor; populate `raw`.
 
-        `quote` is the opening quote character (double or single).
-        The returned `StringNode` carries both the verbatim source
-        slice (for round-tripping) and the decoded value.
+        Dispatches on the opening quote character: `"` -> basic,
+        `'` -> literal. The returned `StringNode` carries both the
+        verbatim source slice (for round-tripping) and the decoded
+        value; its `style` reflects the chosen flavour.
+
+        `allow_multiline` defaults to True; key parsers pass False
+        to reject multi-line strings in key position.
+
+        Precondition: cursor is at `"` or `'`. Callers always peek
+        first; this is asserted, not validated.
         """
         start = self.pos
-        if quote == '"':
-            multiline = self.starts_with('"""')
-            node = self.scan_basic_string(allow_multiline=multiline)
+        ch = self.peek()
+        assert ch in ('"', "'"), f"scan_string called at {ch!r}"
+        if ch == '"':
+            node = self._scan_basic_string(allow_multiline=allow_multiline)
         else:
-            multiline = self.starts_with("'''")
-            node = self.scan_literal_string(allow_multiline=multiline)
+            node = self._scan_literal_string(allow_multiline=allow_multiline)
         node.raw = self.src[start : self.pos]
         return node
 
-    def scan_basic_string(self, *, allow_multiline: bool) -> StringNode:
+    def _scan_basic_string(self, *, allow_multiline: bool) -> StringNode:
         """Scan a basic string. Decodes escapes; never sets `raw`.
 
-        Callers that need round-trip-faithful raw text use
-        `scan_string` instead, which wraps this and fills `raw`.
+        Precondition: cursor is at `"`. Callers route through
+        `scan_string`, which sets `raw`.
         """
         if allow_multiline and self.starts_with('"""'):
             return self._scan_ml_basic_string()
-        if self.peek() != '"':
-            msg = "expected '\"' to start basic string"
-            raise self.error(msg)
+        assert self.peek() == '"'
         self.pos += 1
         src = self.src
         end = self.end
@@ -465,13 +470,15 @@ class _Scanner:
             out.append(ch)
             self.pos += 1
 
-    def scan_literal_string(self, *, allow_multiline: bool) -> StringNode:
-        """Scan a literal string. No escapes; never sets `raw`."""
+    def _scan_literal_string(self, *, allow_multiline: bool) -> StringNode:
+        """Scan a literal string. No escapes; never sets `raw`.
+
+        Precondition: cursor is at `'`. Callers route through
+        `scan_string`, which sets `raw`.
+        """
         if allow_multiline and self.starts_with("'''"):
             return self._scan_ml_literal_string()
-        if self.peek() != "'":
-            msg = 'expected "\'" to start literal string'
-            raise self.error(msg)
+        assert self.peek() == "'"
         self.pos += 1
         src = self.src
         end = self.end
@@ -589,14 +596,10 @@ class _Scanner:
         src = self.src
         pos = self.pos
         ch = src[pos] if pos < self.end else ""
-        if ch == '"':
-            start = pos
-            s = self.scan_basic_string(allow_multiline=False)
-            return KeyPart(src[start : self.pos], s.value, "basic")
-        if ch == "'":
-            start = pos
-            s = self.scan_literal_string(allow_multiline=False)
-            return KeyPart(src[start : self.pos], s.value, "literal")
+        if ch == '"' or ch == "'":
+            s = self.scan_string(allow_multiline=False)
+            kind: KeyKind = "basic" if s.style == "basic" else "literal"
+            return KeyPart(s.raw, s.value, kind)
         m = _RE_BARE_KEY.match(src, pos)
         if m is not None:
             end_pos = m.end()
@@ -816,10 +819,6 @@ class _Scanner:
                 raise self.error(msg, at=at)
             if len(mantissa) > 1 and mantissa.startswith("0"):
                 msg = f"leading zeros not allowed in float {token!r}"
-                raise self.error(msg, at=at)
-            if exp_pos == -1:
-                # No '.' and no 'e': not a float.
-                msg = f"invalid float {token!r}"
                 raise self.error(msg, at=at)
 
         value = float(sign + norm)

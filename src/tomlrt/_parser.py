@@ -181,10 +181,8 @@ class _Parser:
 
     def _parse_value(self) -> ValueNode:
         ch = self._sc.peek()
-        if ch == '"':
-            return self._sc.scan_string('"')
-        if ch == "'":
-            return self._sc.scan_string("'")
+        if ch == '"' or ch == "'":
+            return self._sc.scan_string()
         if ch == "[":
             return self._parse_nested_value(self._parse_array)
         if ch == "{":
@@ -307,11 +305,3 @@ class _Parser:
                 # Trailing comma followed by the closer (TOML 1.1).
                 self._sc.advance(1)
                 return node
-
-
-# Re-export convenience.
-def parse(src: str) -> DocumentNode:
-    return _Parser(src).parse()
-
-
-__all__ = ["parse"]
