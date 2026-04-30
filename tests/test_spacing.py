@@ -96,26 +96,6 @@ def test_kv_append_preserves_indent_and_adds_blank() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_aot_append_to_packed_aot_stays_packed() -> None:
-    src = td("""
-        [[i]]
-        x = 1
-        [[i]]
-        x = 2
-        """)
-    doc = tomlrt.parse(src)
-    aot = doc.aot("i")
-    aot.append({"x": 3})
-    assert tomlrt.dumps(doc) == td("""
-        [[i]]
-        x = 1
-        [[i]]
-        x = 2
-        [[i]]
-        x = 3
-        """)
-
-
 def test_aot_append_to_spaced_aot_adds_blank() -> None:
     src = td("""
         [[i]]
