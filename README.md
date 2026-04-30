@@ -33,4 +33,4 @@ print(tomlrt.dumps(doc))
 
 ## Documentation
 
-Full docs at <https://dimbleby.github.io/tomlrt/>:
+Full docs at <https://dimbleby.github.io/tomlrt/>.
