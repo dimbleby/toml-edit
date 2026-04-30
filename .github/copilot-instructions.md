@@ -30,11 +30,16 @@ If a change you are about to make could break that, stop and rethink.
 uv sync                          # install dev deps
 uv run pytest -q                 # run the test suite (~10s)
 uv run pytest --cov              # tests + branch coverage
+uv run pytest -m slow            # property + bytes-level fuzz suite
 uv run mypy                      # strict type-check src/ and tests/
 uv run ruff check .              # lint
 uv run ruff format .             # apply formatting
 uv run ruff format --check .     # CI-style format check
 ```
+
+A `Makefile` wraps the most common invocations (`make test`, `make
+fuzz`, `make coverage`, `make lint`, `make docs`, `make docs-serve`,
+`make bench`, `make clean`); use it if you prefer.
 
 All four checks (`pytest`, `mypy`, `ruff check`, `ruff format --check`)
 must pass before any commit. CI runs the same set on Python 3.10–3.14.
@@ -70,9 +75,21 @@ The codebase is small and deliberately layered. Read in this order:
   that hold every byte of the original source (including trivia,
   comments, and the literal lexeme of every value). Mutate these only
   through helpers that maintain the round-trip invariant.
+- **`_scanner.py`** — the `(src, end, pos)` cursor and the `scan_*`
+  primitives the parser drives (strings, keys, numbers, trivia
+  blocks, …). String scanning is *semantic*: escapes are decoded,
+  surrogate code points rejected, and the resulting `StringNode`
+  carries both the raw lexeme and the decoded value. Performance-
+  sensitive: prefer bulk `str` scans over per-character loops.
 - **`_parser.py`** — hand-written recursive-descent parser, TOML 1.0 +
-  1.1, that produces the CST. Performance-sensitive: prefer bulk
-  `str` scans over per-character loops.
+  1.1, that drives `_Scanner` to produce the CST and feeds each
+  header / `key = value` / inline-table key into `_Validator`.
+- **`_validator.py`** — semantic validator for the cross-section /
+  cross-line table rules that the syntactic CST cannot express on
+  its own (a key bound as a value cannot later be opened as a table,
+  `[H]` cannot redefine an already-opened table, dotted keys cannot
+  extend an explicitly defined table or AoT, inline-table local key
+  rules, …). Owned and invoked by `_parser.py`.
 - **`_synthesise.py`** — converts plain Python values (`str`, `int`,
   `bool`, `datetime`, `list`, `dict`, …) into newly synthesised CST
   nodes when the user assigns into the document.
@@ -124,10 +141,19 @@ usually right; a change that has to touch all of them is usually wrong.
 - `tests/test_hypothesis.py` — property-based round-trip tests. If you
   break round-tripping, this will usually catch it; add new strategies
   here when you add a new construct.
+- `tests/test_fuzz.py` — bytes-level grammar fuzzer that feeds the
+  parser arbitrary / near-valid input and asserts it either raises
+  `TOMLParseError` or accepts and round-trips byte-exactly. Marked
+  `slow`, so it is only picked up by `pytest -m slow` (`make fuzz`).
 - `tests/test_mutation.py` — the dict/list mutation API.
 - `tests/test_live_attach.py` — live-attach semantics for
   `Table.inline`, `Array`, and `AoT` when assigned into a document.
 - `tests/test_synthesise_and_io.py` — value synthesis and binary I/O.
+- `tests/test_scanner.py` — pins the cursor + diagnostics contract
+  on `_Scanner` that the higher-level `scan_*` helpers build on.
+- `tests/_toml_str.py` — internal `td(""" … """)` helper for writing
+  TOML fixtures as indented triple-quoted literals; prefer it over
+  walls of `\n`-escaped strings in new tests.
 
 When adding behaviour, add a focused unit test in the relevant file
 **and** consider whether the property tests should grow.
