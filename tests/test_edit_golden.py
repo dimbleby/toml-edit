@@ -30,7 +30,7 @@ else:
 import pytest
 
 import tomlrt
-from tomlrt import AoT, Array, Table
+from tomlrt import AoT, Array, Document, Table
 
 
 def _reparses(src: str) -> dict[str, Any]:
@@ -489,7 +489,7 @@ def test_cross_doc_table_assign_with_nested_aot() -> None:
         '[build-system]\nrequires = ["poetry-core"]\n'
     )
     a = tomlrt.parse(src)
-    b = tomlrt.document()
+    b = Document()
     for k, v in a.items():
         b[k] = v
     out = tomlrt.dumps(b)
@@ -519,7 +519,7 @@ def test_cross_doc_table_assign_preserves_comments() -> None:
         port = 80
         """)
     a = tomlrt.parse(src)
-    b = tomlrt.document()
+    b = Document()
     b["srv"] = a["srv"]
     out = tomlrt.dumps(b)
     assert "# inner" in out
@@ -543,7 +543,7 @@ def test_cross_doc_assign_whole_document() -> None:
         n = 1
         """)
     a = tomlrt.parse(src)
-    b = tomlrt.document()
+    b = Document()
     b["wrap"] = a
     out = tomlrt.dumps(b)
     assert _reparses(out) == {
@@ -566,7 +566,7 @@ def test_cross_doc_table_assign_dotted_kv_only_source() -> None:
         b.d = 2
         """)
     a = tomlrt.parse(src)
-    b = tomlrt.document()
+    b = Document()
     inner = a["a"].table("b")
     b["x"] = inner
     out = tomlrt.dumps(b)
@@ -588,7 +588,7 @@ def test_cross_doc_table_assign_merges_dotted_and_own_section() -> None:
         x = 2
         """)
     a = tomlrt.parse(src)
-    b = tomlrt.document()
+    b = Document()
     b["k"] = a
     out = tomlrt.dumps(b)
     assert _reparses(out) == {"k": {"pre": 1, "k": {"x": 2}}}
@@ -645,7 +645,7 @@ def test_cross_doc_splice_no_doubled_blank_lines() -> None:
         y = 2
         """)
     )
-    dst = tomlrt.document()
+    dst = Document()
     for k, v in src.items():
         dst[k] = v
     assert tomlrt.dumps(dst) == td("""
@@ -856,19 +856,19 @@ def test_chained_supertable_assignment_drops_empty_parent() -> None:
     dotted child key. Mirrors the long-standing behaviour of
     ``Document.install(("t", "c"), Table.section({}))``.
     """
-    doc = tomlrt.document()
+    doc = Document()
     doc["tool"] = Table.section({})
     doc["tool"]["poetry"] = Table.section({"name": "foo"})
     assert tomlrt.dumps(doc) == '[tool.poetry]\nname = "foo"\n'
 
     # Same behaviour with an AoT child.
-    doc2 = tomlrt.document()
+    doc2 = Document()
     doc2["tool"] = Table.section({})
     doc2["tool"]["list"] = AoT([{"n": 1}])
     assert tomlrt.dumps(doc2) == "[[tool.list]]\nn = 1\n"
 
     # Non-empty parent must be preserved.
-    doc3 = tomlrt.document()
+    doc3 = Document()
     doc3["tool"] = Table.section({"extra": 1})
     doc3["tool"]["poetry"] = Table.section({"name": "foo"})
     assert tomlrt.dumps(doc3) == td("""
@@ -890,7 +890,7 @@ def test_chained_supertable_assignment_drops_empty_parent() -> None:
         """)
 
     # An empty parent installed alone (no child) stays as the user wrote it.
-    doc5 = tomlrt.document()
+    doc5 = Document()
     doc5["tool"] = Table.section({})
     assert tomlrt.dumps(doc5) == "[tool]\n"
 
@@ -904,7 +904,7 @@ def test_subsection_under_non_last_aot_entry_lands_in_owned_range() -> None:
     on round-trip and producing duplicate header data corruption when
     multiple entries had the same sub-table key set.
     """
-    doc = tomlrt.document()
+    doc = Document()
     doc["package"] = AoT([{"n": "a"}, {"n": "b"}, {"n": "c"}])
     doc["package"][0]["source"] = Table.section({"x": 1})
     doc["package"][1]["source"] = Table.section({"y": 2})
@@ -927,7 +927,7 @@ def test_aot_constructor_preserves_nested_section_specs() -> None:
     """``AoT([Table.section({..., k: Table.section({...})})])`` must
     install the nested section as ``[path.k]`` under the entry, not
     silently inline it via the synthesiser."""
-    doc = tomlrt.document()
+    doc = Document()
     doc["package"] = AoT(
         [
             Table.section(
@@ -950,7 +950,7 @@ def test_aot_constructor_preserves_nested_section_specs() -> None:
 
 
 def test_aot_constructor_preserves_nested_aot() -> None:
-    doc = tomlrt.document()
+    doc = Document()
     doc["pkg"] = AoT(
         [
             Table.section({"name": "A", "tags": AoT([{"k": 1}, {"k": 2}])}),
@@ -1245,7 +1245,7 @@ def test_section_subkey_across_aot_entries_keeps_values_separate() -> None:
     overwrote it — corrupting earlier entries and leaving the later
     [aot.k] section partly empty.
     """
-    doc = tomlrt.document()
+    doc = Document()
     doc["package"] = AoT(
         [{"n": "git1"}, {"n": "git2"}, {"n": "url1"}, {"n": "url2"}],
     )
@@ -1286,7 +1286,7 @@ def test_section_subkey_across_identical_aot_entries() -> None:
     sibling's range and put the new content next to its existing
     ``[..source]`` — corrupting both on round-trip.
     """
-    doc = tomlrt.document()
+    doc = Document()
     doc["package"] = AoT([{"n": "a"}, {"n": "b"}, {"n": "b"}])
     doc["package"][0]["source"] = Table.section({"x": "prev"})
     doc["package"][1]["source"] = Table.section({"x": "c"})
@@ -1835,7 +1835,7 @@ def test_array_set_multiline_indent_preserved_on_install() -> None:
     # revert to the indent passed to the Array constructor.
     arr = tomlrt.Array([1, 2, 3])
     arr.set_multiline(multiline=True, indent="  ")
-    doc = tomlrt.document()
+    doc = Document()
     doc["x"] = arr
     assert tomlrt.dumps(doc) == td("""
         x = [
@@ -2559,7 +2559,7 @@ def test_preamble_set_on_empty_doc_renders_before_added_content() -> None:
     comment must migrate to the top of the file rather than render
     after the new structural element.
     """
-    doc = tomlrt.document()
+    doc = Document()
     doc.preamble = ("This is a comment",)
     doc["x"] = 1
     rendered = tomlrt.dumps(doc)
@@ -2581,7 +2581,7 @@ def test_preamble_migration_for_install_section_and_aot() -> None:
         ("nested_install_section", lambda d: d.install("a.b", Table.section({"k": 1}))),
     ]
     for op_name, build in cases:
-        doc = tomlrt.document()
+        doc = Document()
         doc.preamble = ("Top",)
         build(doc)
         rendered = tomlrt.dumps(doc)

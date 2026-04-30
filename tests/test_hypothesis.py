@@ -13,6 +13,7 @@ from hypothesis import strategies as st
 
 import tomlrt
 from _toml_str import td
+from tomlrt import Document
 
 pytestmark = pytest.mark.slow
 
@@ -381,7 +382,7 @@ def _py_dict(max_depth: int) -> st.SearchStrategy[dict[str, Any]]:
 @settings(max_examples=200, deadline=None)
 @given(data=_py_dict(max_depth=2))
 def test_synthesise_roundtrip(data: dict[str, Any]) -> None:
-    doc = tomlrt.document(data)
+    doc = Document(data)
     out = tomlrt.dumps(doc)
     recovered = tomlrt.parse(out).to_dict()
     assert _deep_equal(recovered, data)

@@ -25,10 +25,10 @@ print(tomlrt.dumps(doc))   # comments and layout are preserved
 Build a document from scratch:
 
 ```python
-import tomlrt
+from tomlrt import Document, dumps
 
-doc = tomlrt.document({"project": {"name": "demo", "version": "0.1.0"}})
-print(tomlrt.dumps(doc))
+doc = Document({"project": {"name": "demo", "version": "0.1.0"}})
+print(dumps(doc))
 ```
 
 ## Documentation

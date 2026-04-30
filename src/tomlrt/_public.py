@@ -2,67 +2,35 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import IO, Any
+import warnings
+from typing import IO, TYPE_CHECKING, Any
 
-from tomlrt._document import Document, Table
-from tomlrt._nodes import DocumentNode
+from tomlrt._document import Document
 from tomlrt._parser import _Parser
 
-
-def _populate(table: Table, data: Mapping[str, Any]) -> None:
-    """Recursively pour ``data`` into ``table``.
-
-    Uses section/AoT shapes for nested mappings and lists-of-mappings,
-    scalars for leaves.
-    """
-    from tomlrt._document import AoT  # noqa: PLC0415
-
-    for key, value in data.items():
-        if isinstance(value, Mapping):
-            sub = table.install(key, Table.section())
-            _populate(sub, value)
-        elif (
-            isinstance(value, list)
-            and value
-            and all(isinstance(item, Mapping) for item in value)
-        ):
-            aot = table.install(key, AoT())
-            for entry in value:
-                assert isinstance(entry, Mapping)
-                _populate(aot.add(), entry)
-        else:
-            table[key] = value
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 
 def document(data: Mapping[str, Any] | None = None) -> Document:
-    """Return a fresh [`Document`][tomlrt.Document], optionally populated from ``data``.
+    """Deprecated alias for [`Document`][tomlrt.Document].
 
-    Without arguments, returns an empty document.
-
-    With a mapping, recursively populates the document so that:
-
-    * nested mappings become standard ``[section]`` blocks (not
-      inline tables);
-    * lists of mappings become ``[[array.of.tables]]`` blocks;
-    * everything else is set with ordinary key-value assignment.
-
-    Existing [`Table`][tomlrt.Table] / [`AoT`][tomlrt.AoT] /
-    [`Array`][tomlrt.Array] views are
-    deep-cloned, so the returned document shares no mutable state
-    with ``data``.
+    Use ``Document(data)`` instead. This wrapper is retained for
+    backwards compatibility and will be removed in a future release.
     """
-    doc = Document(DocumentNode())
-    if data is not None:
-        _populate(doc, data)
-    return doc
+    warnings.warn(
+        "tomlrt.document() is deprecated; use tomlrt.Document() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return Document(data)
 
 
 def loads(text: str) -> Document:
     """Parse a TOML document string into a [`Document`][tomlrt.Document]."""
     parser = _Parser(text)
     cst = parser.parse()
-    return Document(cst, newline=parser.detected_newline())
+    return Document._from_node(cst, newline=parser.detected_newline())  # noqa: SLF001
 
 
 def parse(text: str) -> Document:

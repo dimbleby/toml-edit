@@ -20,7 +20,7 @@ print(tomlrt.dumps(doc))   # comments and layout are preserved
 ## Where next
 
 - [Quickstart](quickstart.md) — parse, edit, dump.
-- [Building documents](building.md) — start from scratch with `document()`.
+- [Building documents](building.md) — start from scratch with `Document()`.
 - [Typed access](access.md) — type-safe traversal and conversion back to plain
   Python.
 - [Editing documents](editing.md) — structural assignment, live views, layout

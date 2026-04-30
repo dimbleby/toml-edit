@@ -3,11 +3,11 @@
 ## From scratch
 
 ```python
-import tomlrt
+from tomlrt import Document, dumps
 
-doc = tomlrt.document()
+doc = Document()
 doc["title"] = "example"
-print(tomlrt.dumps(doc))
+print(dumps(doc))
 # title = "example"
 ```
 
@@ -16,6 +16,8 @@ print(tomlrt.dumps(doc))
 Pass a mapping to populate the document recursively:
 
 ```python
+from tomlrt import Document, dumps
+
 data = {
     "project": {
         "name": "demo",
@@ -25,8 +27,8 @@ data = {
     "tool": {"ruff": {"line-length": 88}},
 }
 
-doc = tomlrt.document(data)
-print(tomlrt.dumps(doc))
+doc = Document(data)
+print(dumps(doc))
 ```
 
 ```toml
