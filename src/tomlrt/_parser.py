@@ -83,6 +83,10 @@ class _Parser:
 
         return doc
 
+    def detected_newline(self) -> str:
+        """Document-wide newline kind seen during scanning."""
+        return self._sc.detected_newline()
+
     # ------------------------------------------------------------------
     # Headers
     # ------------------------------------------------------------------

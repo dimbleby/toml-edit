@@ -81,12 +81,28 @@ _SIMPLE_ESCAPES: Final[dict[str, str]] = {
 
 
 class _Scanner:
-    __slots__ = ("end", "pos", "src")
+    __slots__ = ("_seen_crlf", "_seen_lf", "end", "pos", "src")
 
     def __init__(self, src: str) -> None:
         self.src = src
         self.end = len(src)
         self.pos = 0
+        # Track newline kinds as we scan so the Document layer doesn't
+        # have to walk the entire CST to discover the file's line
+        # ending. ``"\r\n"`` is reported only when every emitted newline
+        # was CRLF; mixed or LF-only documents report ``"\n"``.
+        self._seen_lf = False
+        self._seen_crlf = False
+
+    def detected_newline(self) -> str:
+        r"""Return the document-wide newline kind seen during scanning.
+
+        ``"\r\n"`` if every emitted newline was CRLF; ``"\n"``
+        otherwise (LF-only, mixed, or no newlines at all).
+        """
+        if self._seen_crlf and not self._seen_lf:
+            return "\r\n"
+        return "\n"
 
     # ------------------------------------------------------------------
     # Cursor primitives
@@ -196,6 +212,7 @@ class _Scanner:
             elif ch == "\n":
                 pos += 1
                 pieces.append(NewlineNode("\n"))
+                self._seen_lf = True
             elif ch == "\r":
                 if pos + 1 >= end or src[pos + 1] != "\n":
                     self.pos = pos
@@ -203,6 +220,7 @@ class _Scanner:
                     raise self.error(msg)
                 pos += 2
                 pieces.append(NewlineNode("\r\n"))
+                self._seen_crlf = True
             else:
                 break
         self.pos = pos
@@ -257,9 +275,11 @@ class _Scanner:
             elif ch == "\n":
                 pos += 1
                 pieces.append(NewlineNode("\n"))
+                self._seen_lf = True
             elif ch == "\r" and pos + 1 < end and src[pos + 1] == "\n":
                 pos += 2
                 pieces.append(NewlineNode("\r\n"))
+                self._seen_crlf = True
             elif ch == "#":
                 self.pos = pos
                 pieces.append(self.scan_comment())
@@ -291,9 +311,11 @@ class _Scanner:
         if ch == "\n":
             self.pos = pos + 1
             newline = NewlineNode("\n")
+            self._seen_lf = True
         elif ch == "\r" and pos + 1 < end and src[pos + 1] == "\n":
             self.pos = pos + 2
             newline = NewlineNode("\r\n")
+            self._seen_crlf = True
         elif pos < end:
             msg = f"expected newline or end of file, got {ch!r}"
             raise self.error(msg)
