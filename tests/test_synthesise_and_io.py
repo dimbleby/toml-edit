@@ -466,7 +466,11 @@ def test_deepcopy_array_subview_does_not_double_cst() -> None:
     # the array node in isolation should reflect exactly four entries.
     arr2.append(4)
     assert list(arr2) == [1, 2, 3, 4]
-    assert arr2._node.render() == "[1, 2, 3, 4]"  # noqa: SLF001
+    # Re-attach the detached copy to a fresh document and render through
+    # the public API: any doubled CST items would surface here.
+    fresh = tomlrt.parse("")
+    fresh["ys"] = arr2
+    assert tomlrt.dumps(fresh) == "ys = [1, 2, 3, 4]\n"
     # Original is untouched.
     assert tomlrt.dumps(doc) == src
 
@@ -497,7 +501,9 @@ def test_copy_array_subview_does_not_double_cst() -> None:
     arr = doc.array("xs")
     arr2 = copy(arr)
     arr2.append(4)
-    assert arr2._node.render() == "[1, 2, 3, 4]"  # noqa: SLF001
+    fresh = tomlrt.parse("")
+    fresh["ys"] = arr2
+    assert tomlrt.dumps(fresh) == "ys = [1, 2, 3, 4]\n"
     assert tomlrt.dumps(doc) == src
 
 
