@@ -51,20 +51,6 @@ def _walk_newline_nodes(node: object) -> Iterator[NewlineNode]:
             stack.extend(getattr(current, f.name) for f in dataclasses.fields(current))
 
 
-def _detect_newline(node: DocumentNode) -> str:
-    r"""Return the document's line ending if uniform, else ``"\\n"``.
-
-    Mixed-newline documents return ``"\\n"`` and are left alone — picking
-    either ending would break the no-mutation round-trip invariant.
-    """
-    saw_any = False
-    for nl in _walk_newline_nodes(node):
-        saw_any = True
-        if nl.text != "\r\n":
-            return "\n"
-    return "\r\n" if saw_any else "\n"
-
-
 def _normalise_newlines(node: DocumentNode, target: str) -> None:
     """Set every `NewlineNode` in ``node`` to ``target``."""
     for nl in _walk_newline_nodes(node):

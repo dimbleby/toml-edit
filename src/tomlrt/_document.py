@@ -88,7 +88,6 @@ from tomlrt._synthesise import (
 from tomlrt._trivia import (
     _clone_trivia,
     _detect_indent,
-    _detect_newline,
     _ensure_trailing_newline,
     _extract_trailing_comment_block,
     _first_gap_is_blank,
@@ -2252,13 +2251,13 @@ class Document(_StdTable):
 
     __slots__ = ("_newline",)
 
-    def __init__(self, node: DocumentNode) -> None:
+    def __init__(self, node: DocumentNode, *, newline: str = "\n") -> None:
         # Hand the construction walk the full section list and an
         # empty extras tuple. ``_iter_table`` then partitions sections
         # by head as it descends, so each nested ``_StdTable`` only
         # sees its own slice of the document — no per-level rescans.
         super().__init__(node, (), _pool=node.sections, _extras=[])
-        self._newline = _detect_newline(node)
+        self._newline = newline
 
     def render(self) -> str:
         """Serialize the document back to a TOML string.
@@ -2273,11 +2272,11 @@ class Document(_StdTable):
     def __copy__(self) -> Document:
         # The CST is the source of truth; sharing it across "copies" would
         # mean mutations on one bled into the other. Always clone.
-        return Document(deepcopy(self._doc_node))
+        return Document(deepcopy(self._doc_node), newline=self._newline)
 
     @override
     def __deepcopy__(self, memo: dict[int, Any]) -> Document:
-        return Document(deepcopy(self._doc_node, memo))
+        return Document(deepcopy(self._doc_node, memo), newline=self._newline)
 
     @property
     def preamble(self) -> tuple[str, ...]:

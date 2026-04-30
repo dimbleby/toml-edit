@@ -7,7 +7,7 @@ from typing import IO, Any
 
 from tomlrt._document import Document, Table
 from tomlrt._nodes import DocumentNode
-from tomlrt._parser import parse as _parse_to_cst
+from tomlrt._parser import _Parser
 
 
 def _populate(table: Table, data: Mapping[str, Any]) -> None:
@@ -60,8 +60,9 @@ def document(data: Mapping[str, Any] | None = None) -> Document:
 
 def loads(text: str) -> Document:
     """Parse a TOML document string into a [`Document`][tomlrt.Document]."""
-    cst = _parse_to_cst(text)
-    return Document(cst)
+    parser = _Parser(text)
+    cst = parser.parse()
+    return Document(cst, newline=parser.detected_newline())
 
 
 def parse(text: str) -> Document:
