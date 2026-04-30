@@ -130,6 +130,33 @@ def test_quoted_key_when_bare_invalid() -> None:
     assert _reparses(out) == {"weird key.com": 1}
 
 
+def test_delete_top_level_dotted_key_in_preamble() -> None:
+    # ``a.b = 1`` lives in the headerless preamble: deleting ``a``
+    # must classify it as a dotted KV in an unattached section.
+    doc = tomlrt.parse("a.b = 1\nc = 2\n")
+    del doc["a"]
+    assert "a" not in doc
+    assert tomlrt.dumps(doc) == "c = 2\n"
+
+
+def test_delete_dotted_key_inside_aot_entry() -> None:
+    # An AoT entry holds ``foo.bar = 1`` as a dotted KV: deleting
+    # ``foo`` walks the AoT-anchored slow path in ``_classify``.
+    doc = tomlrt.parse("[[items]]\nfoo.bar = 1\nkeep = 2\n")
+    del doc.aot("items")[0]["foo"]
+    assert "foo" not in doc.aot("items")[0]
+    assert doc.aot("items")[0]["keep"] == 2
+
+
+def test_overwrite_implicit_supertable_inside_aot_entry() -> None:
+    # An AoT entry has a deeper ``[items.deep.nested]`` sub-section,
+    # so ``items[0]['deep']`` is an implicit super-table; assigning
+    # a scalar to it must purge the deeper section.
+    doc = tomlrt.parse("[[items]]\n[items.deep.nested]\nx = 2\n")
+    doc.aot("items")[0]["deep"] = "scalar"
+    assert doc.aot("items")[0]["deep"] == "scalar"
+
+
 # ---------------------------------------------------------------------------
 # Inline table mutation
 # ---------------------------------------------------------------------------
@@ -185,6 +212,13 @@ def test_inline_table_rejects_section_spec() -> None:
     obj = doc.table("obj")
     with pytest.raises(tomlrt.TOMLError, match="inline-style table"):
         obj["bad"] = Table.section({"x": 1})
+
+
+def test_inline_table_rejects_aot_value() -> None:
+    doc = tomlrt.parse("obj = { a = 1 }\n")
+    obj = doc.table("obj")
+    with pytest.raises(tomlrt.TOMLError, match="array-of-tables inside an inline"):
+        obj["bad"] = tomlrt.AoT()
 
 
 # ---------------------------------------------------------------------------
@@ -847,6 +881,87 @@ def test_aot_remove_missing_raises_value_error() -> None:
         aot.remove({"x": 999})
 
 
+def test_aot_slice_replace_contiguous() -> None:
+    doc = tomlrt.parse(
+        td("""
+            [[items]]
+            name = "a"
+
+            [[items]]
+            name = "b"
+
+            [[items]]
+            name = "c"
+            """)
+    )
+    items = doc.aot("items")
+    items[1:3] = [
+        tomlrt.Table.inline({"name": "B"}),
+        tomlrt.Table.inline({"name": "C"}),
+    ]
+    assert [t["name"] for t in items] == ["a", "B", "C"]
+    assert _reparses(tomlrt.dumps(doc))["items"] == [
+        {"name": "a"},
+        {"name": "B"},
+        {"name": "C"},
+    ]
+
+
+def test_aot_slice_replace_extended_matching_length() -> None:
+    doc = tomlrt.parse(
+        td("""
+            [[items]]
+            name = "a"
+
+            [[items]]
+            name = "b"
+
+            [[items]]
+            name = "c"
+            """)
+    )
+    items = doc.aot("items")
+    items[::2] = [
+        tomlrt.Table.inline({"name": "A"}),
+        tomlrt.Table.inline({"name": "C"}),
+    ]
+    assert [t["name"] for t in items] == ["A", "b", "C"]
+
+
+def test_aot_slice_replace_extended_mismatched_length_raises() -> None:
+    doc = tomlrt.parse(
+        td("""
+            [[items]]
+            name = "a"
+
+            [[items]]
+            name = "b"
+
+            [[items]]
+            name = "c"
+            """)
+    )
+    items = doc.aot("items")
+    with pytest.raises(ValueError, match="extended slice"):
+        items[::2] = [tomlrt.Table.inline({"name": "only"})]
+
+
+def test_aot_reverse_on_empty_is_noop() -> None:
+    doc = tomlrt.parse("[[items]]\n")
+    items = doc.aot("items")
+    items.clear()
+    items.reverse()
+    assert list(items) == []
+
+
+def test_aot_sort_on_empty_is_noop() -> None:
+    doc = tomlrt.parse("[[items]]\n")
+    items = doc.aot("items")
+    items.clear()
+    items.sort(key=lambda t: t.get("name", ""))
+    assert list(items) == []
+
+
 # ---------------------------------------------------------------------------
 # Array.sort(key=...), Array *= n, Array.table() type-error
 # ---------------------------------------------------------------------------
@@ -893,6 +1008,63 @@ def test_array_array_typed_accessor_raises_on_non_array_item() -> None:
     xs = doc.array("xs")
     with pytest.raises(TypeError, match="not an Array"):
         xs.array(0)
+
+
+def test_array_append_aot_raises() -> None:
+    # An AoT only renders as ``[[ ... ]]`` sections; trying to splice
+    # one into an inline array has no valid serialisation.
+    doc = tomlrt.parse("xs = [1]\n")
+    with pytest.raises(tomlrt.TOMLError, match="Cannot store an array-of-tables"):
+        doc.array("xs").append(tomlrt.AoT())
+
+
+def test_dotted_subtable_delitem_missing_key_raises_keyerror() -> None:
+    doc = tomlrt.parse("a.b = 1\n")
+    sub = doc["a"]
+    assert isinstance(sub, Table)
+    with pytest.raises(KeyError, match="missing"):
+        del sub["missing"]
+
+
+# ---------------------------------------------------------------------------
+# install / typed-accessor key-path validation
+# ---------------------------------------------------------------------------
+
+
+def test_install_rejects_empty_string_path() -> None:
+    doc = tomlrt.parse("")
+    with pytest.raises(tomlrt.TOMLError, match="must not be empty"):
+        doc.install("", 1)
+
+
+def test_install_rejects_empty_tuple_path() -> None:
+    doc = tomlrt.parse("")
+    with pytest.raises(tomlrt.TOMLError, match="must not be empty"):
+        doc.install((), 1)
+
+
+def test_install_rejects_string_path_with_empty_segment() -> None:
+    doc = tomlrt.parse("")
+    with pytest.raises(tomlrt.TOMLError, match="empty segment"):
+        doc.install("a..b", 1)
+
+
+def test_install_rejects_tuple_path_with_empty_segment() -> None:
+    doc = tomlrt.parse("")
+    with pytest.raises(tomlrt.TOMLError, match="empty segment"):
+        doc.install(("a", ""), 1)
+
+
+def test_install_rejects_non_string_path() -> None:
+    doc = tomlrt.parse("")
+    with pytest.raises(TypeError, match="key path must be str or tuple"):
+        doc.install(123, 1)  # type: ignore[arg-type]
+
+
+def test_install_rejects_tuple_with_non_string_segment() -> None:
+    doc = tomlrt.parse("")
+    with pytest.raises(TypeError, match="segment must be str"):
+        doc.install(("a", 1), 1)  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------

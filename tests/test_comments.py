@@ -421,6 +421,82 @@ def test_promote_unknown_key_raises_keyerror() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Inline tables reject the comment / header / promotion APIs
+# ---------------------------------------------------------------------------
+
+
+def _inline_in_doc() -> tomlrt.Table:
+    doc = tomlrt.parse("t = { a = 1 }\n")
+    return doc.table("t")
+
+
+def test_inline_table_comments_raises() -> None:
+    t = _inline_in_doc()
+    with pytest.raises(tomlrt.TOMLError, match="comment API"):
+        _ = t.comments
+
+
+def test_inline_table_leading_comments_raises() -> None:
+    t = _inline_in_doc()
+    with pytest.raises(tomlrt.TOMLError, match="comment API"):
+        _ = t.leading_comments
+
+
+def test_inline_table_header_comment_get_raises() -> None:
+    t = _inline_in_doc()
+    with pytest.raises(tomlrt.TOMLError, match="header comment API"):
+        _ = t.header_comment
+
+
+def test_inline_table_header_comment_set_raises() -> None:
+    t = _inline_in_doc()
+    with pytest.raises(tomlrt.TOMLError, match="header comment API"):
+        t.header_comment = "x"
+
+
+def test_inline_table_header_comment_del_raises() -> None:
+    t = _inline_in_doc()
+    with pytest.raises(tomlrt.TOMLError, match="header comment API"):
+        del t.header_comment
+
+
+def test_inline_table_header_leading_comments_get_raises() -> None:
+    t = _inline_in_doc()
+    with pytest.raises(tomlrt.TOMLError, match="header comment API"):
+        _ = t.header_leading_comments
+
+
+def test_inline_table_header_leading_comments_set_raises() -> None:
+    t = _inline_in_doc()
+    with pytest.raises(tomlrt.TOMLError, match="header comment API"):
+        t.header_leading_comments = ("x",)
+
+
+def test_inline_table_header_leading_comments_del_raises() -> None:
+    t = _inline_in_doc()
+    with pytest.raises(tomlrt.TOMLError, match="header comment API"):
+        del t.header_leading_comments
+
+
+def test_inline_table_promote_inline_raises() -> None:
+    t = _inline_in_doc()
+    with pytest.raises(tomlrt.TOMLError, match="inline-table promotion"):
+        t.promote_inline("a")
+
+
+def test_inline_table_promote_array_raises() -> None:
+    t = _inline_in_doc()
+    with pytest.raises(tomlrt.TOMLError, match="array-of-tables promotion"):
+        t.promote_array("a")
+
+
+def test_inline_table_install_section_raises() -> None:
+    t = _inline_in_doc()
+    with pytest.raises(tomlrt.TOMLError, match="not section-backed"):
+        t._install_section(("x",))  # noqa: SLF001
+
+
+# ---------------------------------------------------------------------------
 # Round-trips
 # ---------------------------------------------------------------------------
 
@@ -1042,6 +1118,51 @@ def test_array_array_wrong_kind_raises_typeerror() -> None:
     doc = tomlrt.parse("xs = [1, 2]\n")
     with pytest.raises(TypeError, match="not an Array"):
         doc.array("xs").array(0)
+
+
+def test_array_table_wrong_kind_raises_typeerror() -> None:
+    doc = tomlrt.parse("xs = [1, 2]\n")
+    with pytest.raises(TypeError, match="not a Table"):
+        doc.array("xs").table(0)
+
+
+def test_table_typed_dotted_descent_through_non_table_raises() -> None:
+    doc = tomlrt.parse("x = 1\n")
+    with pytest.raises(TypeError, match="cannot descend into 'x'"):
+        doc.table("x.y")
+
+
+def test_table_get_typed_returns_default_for_missing_key() -> None:
+    doc = tomlrt.parse("x = 1\n")
+    assert doc.get_table("missing") is None
+    assert doc.get_array("missing", "fallback") == "fallback"
+    assert doc.get_aot("missing") is None
+
+
+def test_table_get_typed_wrong_kind_raises_typeerror() -> None:
+    doc = tomlrt.parse("x = 1\n")
+    with pytest.raises(TypeError, match="not a Table"):
+        doc.get_table("x")
+    with pytest.raises(TypeError, match="not an Array"):
+        doc.get_array("x")
+    with pytest.raises(TypeError, match="not an AoT"):
+        doc.get_aot("x")
+
+
+def test_array_get_typed_returns_default_for_out_of_range() -> None:
+    doc = tomlrt.parse("xs = [1, 2]\n")
+    arr = doc.array("xs")
+    assert arr.get_array(99) is None
+    assert arr.get_table(99, "fallback") == "fallback"
+
+
+def test_array_get_typed_wrong_kind_raises_typeerror() -> None:
+    doc = tomlrt.parse("xs = [1, 2]\n")
+    arr = doc.array("xs")
+    with pytest.raises(TypeError, match="not an Array"):
+        arr.get_array(0)
+    with pytest.raises(TypeError, match="not a Table"):
+        arr.get_table(0)
 
 
 # ---------------------------------------------------------------------------

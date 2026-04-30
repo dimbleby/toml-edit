@@ -258,6 +258,12 @@ def test_datetime_values() -> None:
         # Stray CR (no following LF) inside multi-line strings.
         'x = """ab\rcd"""\n',
         "x = '''ab\rcd'''\n",
+        # Malformed time literals.
+        "t = 12:30:\n",
+        "t = 12:30T05\n",
+        "t = 12:30:00.\n",
+        # Control character U+007F is not allowed in basic strings.
+        's = "ab\x7fcd"\n',
     ],
 )
 def test_parse_errors(src: str) -> None:
