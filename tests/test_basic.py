@@ -109,6 +109,14 @@ ROUND_TRIP_CORPUS: list[str] = [
         lt2 = 00:32:00.999999
         """,
     ),
+    # CRLF immediately after a multi-line string opening triple is
+    # trimmed by the parser, so it must be re-emitted verbatim too.
+    # CRLF inside the body must also pass through unchanged.
+    'a = """\r\nfirst\r\nsecond\r\n"""\n',
+    "b = '''\r\nfirst\r\nsecond\r\n'''\n",
+    # CRLF inside an array body — exercises the scanner's CRLF
+    # newline-detection path.
+    "arr = [\r\n  1,\r\n  2,\r\n]\r\n",
 ]
 
 
@@ -242,6 +250,21 @@ def test_datetime_values() -> None:
         "x = 1\nx = 2\n",
         "x = 1.\n",
         "x = .1\n",
+        # Inline table missing '=' between key and value.
+        "t = { a 1 }\n",
+        # Hex/oct/bin integers with consecutive underscores.
+        "x = 0xff__ff\n",
+        "x = 0o7__7\n",
+        "x = 0b1__1\n",
+        # Signed integer with no body.
+        "x = +\n",
+        "x = -\n",
+        # Float with no mantissa, and float with leading-zero mantissa.
+        "x = +e5\n",
+        "x = 01e1\n",
+        # Stray CR (no following LF) inside multi-line strings.
+        'x = """ab\rcd"""\n',
+        "x = '''ab\rcd'''\n",
     ],
 )
 def test_parse_errors(src: str) -> None:
