@@ -120,3 +120,4 @@ convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["D", "DOC"]
+"benchmarks/**" = ["T201"]

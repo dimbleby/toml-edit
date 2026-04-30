@@ -11,6 +11,7 @@ help:
 	@echo "  make lint         # ruff check + mypy --strict"
 	@echo "  make docs         # build the MkDocs site (strict)"
 	@echo "  make docs-serve   # preview the docs locally"
+	@echo "  make bench        # run the parse-throughput benchmark"
 	@echo "  make clean        # remove caches and build artefacts"
 
 .PHONY: test
@@ -47,6 +48,10 @@ docs:
 .PHONY: docs-serve
 docs-serve:
 	$(UV) run --group docs zensical serve
+
+.PHONY: bench
+bench:
+	benchmarks/bench_parse.py
 
 .PHONY: clean
 clean:
