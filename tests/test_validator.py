@@ -157,9 +157,7 @@ def test_dotted_key_cannot_extend_explicit_table() -> None:
     v = _validator()
     _enter(v, "a", "b")
     _enter(v, "a")
-    with pytest.raises(
-        TOMLParseError, match="cannot extend explicitly-defined table"
-    ):
+    with pytest.raises(TOMLParseError, match="cannot extend explicitly-defined table"):
         _record(v, "b", "c")
 
 
@@ -227,9 +225,7 @@ def test_check_inline_key_conflict_dotted_prefix() -> None:
     seen_p: set[tuple[str, ...]] = set()
     v.check_inline_key_conflict(("a", "b"), seen, seen_p, at=0)
     seen.add(("a", "b"))
-    with pytest.raises(
-        TOMLParseError, match=r"key 'a' in inline table conflicts with"
-    ):
+    with pytest.raises(TOMLParseError, match=r"key 'a' in inline table conflicts with"):
         v.check_inline_key_conflict(("a",), seen, seen_p, at=0)
 
 

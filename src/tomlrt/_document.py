@@ -1292,8 +1292,14 @@ class _StdTable(Table):
         plen = len(self._path)
         if plen == 0:
             return None
-        scope = self._scope()
-        sections = scope if scope is not None else self._doc_node.sections
+        # Prefer the construction-time pool hint so we don't re-derive
+        # the scope (which would call ``aot_entry_block`` and trigger
+        # an O(N) back-scan inside an O(N) populate loop).
+        if self._init_pool is not None:
+            sections = self._init_pool
+        else:
+            scope = self._scope()
+            sections = scope if scope is not None else self._doc_node.sections
         out: list[tuple[tuple[str, ...], KeyValueNode]] = []
         for sec in sections:
             hdr = sec.header
@@ -3369,6 +3375,43 @@ class AoT(list[Table]):
 # ---------------------------------------------------------------------------
 
 
+def _aot_scopes_in_pool(
+    pool: list[SectionNode],
+    aot_path: tuple[str, ...],
+    anchors: list[SectionNode],
+) -> list[list[SectionNode]]:
+    """Per-entry scope for every AoT anchor at ``aot_path`` within ``pool``.
+
+    Single forward pass equivalent to calling
+    `DocumentNode.aot_entry_block` once per anchor, but O(len(pool))
+    overall instead of O(len(pool) * len(anchors)). Returned in the
+    order of ``anchors``.
+
+    The scope for an entry is ``[anchor, *owned]`` where ``owned`` is
+    the run of subsequent sections whose header strictly extends
+    ``aot_path``. The run terminates at the next entry of the same
+    AoT, at any sibling/outer section, or at a synthetic root section
+    (``header is None``).
+    """
+    plen = len(aot_path)
+    scopes_by_id: dict[int, list[SectionNode]] = {}
+    current: list[SectionNode] | None = None
+    for sec in pool:
+        hdr = sec.header
+        if hdr is None:
+            current = None
+            continue
+        hpath = hdr.key.path
+        if hdr.kind == "array" and hpath == aot_path:
+            current = [sec]
+            scopes_by_id[id(sec)] = current
+        elif current is not None and len(hpath) > plen and hpath[:plen] == aot_path:
+            current.append(sec)
+        else:
+            current = None
+    return [scopes_by_id.get(id(a), [a]) for a in anchors]
+
+
 def _iter_table(
     doc_node: DocumentNode,
     path: tuple[str, ...],
@@ -3451,8 +3494,14 @@ def _iter_table(
         sub_secs = sub_by_head.get(head, [])
 
         if aot_secs:
+            # Precompute every entry's owned-section range in one pass
+            # over ``pool`` so the per-entry ``_StdTable`` constructor
+            # can skip the back-scan that ``aot_entry_block`` would
+            # otherwise do (turning O(N^2) into O(N) for large AoTs).
+            scopes = _aot_scopes_in_pool(pool, (*path, head), aot_secs)
             tables: list[Table] = [
-                _StdTable(doc_node, (*path, head), anchor=s) for s in aot_secs
+                _StdTable(doc_node, (*path, head), anchor=s, _pool=scope)
+                for s, scope in zip(aot_secs, scopes, strict=True)
             ]
             yield head, AoT._attached_to(doc_node, (*path, head), tables)  # noqa: SLF001
             continue
@@ -3506,9 +3555,9 @@ def _iter_table(
         # on the AoT entry's owned range, computed lazily via
         # ``_scope``.
         child_owner = anchor or owner_anchor
+        child_extras = [(kv.key.path[1:], kv) for kv in nested_kvs]
+        child_extras.extend((rp[1:], kv) for rp, kv in nested_extras)
         if child_owner is None:
-            child_extras = [(kv.key.path[1:], kv) for kv in nested_kvs]
-            child_extras.extend((rp[1:], kv) for rp, kv in nested_extras)
             yield (
                 head,
                 _StdTable(
@@ -3519,9 +3568,19 @@ def _iter_table(
                 ),
             )
         else:
+            # Inside an AoT entry: the child still needs ``owner_anchor``
+            # to bound post-mutation reads, but for the initial populate
+            # we hand it the per-head bucket (already a subset of the
+            # entry's scope) so it skips ``_scope`` and the back-scan.
             yield (
                 head,
-                _StdTable(doc_node, (*path, head), owner_anchor=child_owner),
+                _StdTable(
+                    doc_node,
+                    (*path, head),
+                    owner_anchor=child_owner,
+                    _pool=sub_secs,
+                    _extras=child_extras,
+                ),
             )
 
 
