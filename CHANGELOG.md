@@ -7,40 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-04-30
+
 ### Changed
 
-- Faster parsing, especially on large documents with many
-  arrays-of-tables.
+- Faster parsing, especially on large documents with many arrays-of-tables.
 
 ## [1.0.2] - 2026-04-27
 
 ### Changed
 
-- Documentation pass and small typing tightenings across the public
-  API. The `Document.cst` escape hatch is gone.
+- Documentation pass and small typing tightenings across the public API.
+  The `Document.cst` escape hatch is gone.
 
 ## [1.0.1] - 2026-04-26
 
 ### Fixed
 
-- Synthesising parent headers and installing sections no longer mix
-  blank-line and compact styles.
-- Replacing an AoT entry no longer injects a stray blank between
-  the new entry and its surviving sibling in compact documents.
-- Newly appended/inserted AoT entries now adopt the indent style of
-  their siblings' KV lines instead of rendering flush-left.
+- Synthesising parent headers and installing sections no longer mix blank-line
+  and compact styles.
+- Replacing an AoT entry no longer injects a stray blank between the new entry
+  and its surviving sibling in compact documents.
+- Newly appended/inserted AoT entries now adopt the indent style of their
+  siblings' KV lines instead of rendering flush-left.
 
 ## [1.0.0] - 2026-04-26
 
 ### Added
 
-- Public `TomlInput` type alias for typing helpers that build or
-  mutate document fragments.
+- Public `TomlInput` type alias for typing helpers that build or mutate document
+  fragments.
 
 ### Changed
 
-- `AoT.sort()` now requires the `key=` argument, since `Table` entries
-  are not orderable.
+- `AoT.sort()` now requires the `key=` argument, since `Table` entries are not
+  orderable.
 
 ### Removed
 
@@ -48,8 +49,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `Table.inline()` now renders with spaced braces (`{ k = v }`),
-  matching the style produced when assigning a plain `dict`.
+- `Table.inline()` now renders with spaced braces (`{ k = v }`), matching the
+  style produced when assigning a plain `dict`.
 
 ## [0.6.0] - 2026-04-26
 
@@ -59,9 +60,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- A wide range of round-trip, comment-preservation, and structural
-  mutation bugs across tables, arrays-of-tables, and multi-line
-  arrays.
+- A wide range of round-trip, comment-preservation, and structural mutation bugs
+  across tables, arrays-of-tables, and multi-line arrays.
 
 ## [0.4.0] - 2026-04-23
 
@@ -71,19 +71,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of structural change: assignment into and through array-of-tables,
   append/insert/pop on multi-line arrays with comments, attached-AoT
   installation, comment-trivia preservation across promotion and shifts, CRLF
-  line-ending preservation, and copy/deepcopy of `Array` and `AoT`
-  subviews.
-  Several silent corruptions (CST and dict-side state diverging after a
-  mutation) are gone, and a number of error messages are now more specific about
-  which value was rejected and why.
+  line-ending preservation, and copy/deepcopy of `Array` and `AoT` subviews.
+  Several silent corruptions (CST and dict-side state diverging after a mutation)
+  are gone, and a number of error messages are now more specific about which value
+  was rejected and why.
 
 ## [0.3.0] - 2026-04-21
 
 ### Changed
 
-- **Structural assignment is now driven by the value, not the method name.**
-  The parallel `set_table` / `set_aot` / `set_array` methods have been removed
-  in favour of a single assignment path:
+- **Structural assignment is now driven by the value, not the method name.** The
+  parallel `set_table` / `set_aot` / `set_array` methods have been removed in
+  favour of a single assignment path:
 
   ```python
   doc[k] = Table.section({...})          # [k] standard section
