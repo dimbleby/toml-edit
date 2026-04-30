@@ -491,9 +491,9 @@ def test_inline_table_promote_array_raises() -> None:
 
 
 def test_inline_table_install_section_raises() -> None:
-    t = _inline_in_doc()
+    doc = tomlrt.parse("t = { a = 1 }\n")
     with pytest.raises(tomlrt.TOMLError, match="not section-backed"):
-        t._install_section(("x",))  # noqa: SLF001
+        doc.install("t.x.y", 99)
 
 
 # ---------------------------------------------------------------------------
