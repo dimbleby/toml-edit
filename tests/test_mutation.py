@@ -1058,13 +1058,13 @@ def test_install_rejects_tuple_path_with_empty_segment() -> None:
 def test_install_rejects_non_string_path() -> None:
     doc = tomlrt.parse("")
     with pytest.raises(TypeError, match="key path must be str or tuple"):
-        doc.install(123, 1)  # type: ignore[arg-type]
+        doc.install(123, 1)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
 
 def test_install_rejects_tuple_with_non_string_segment() -> None:
     doc = tomlrt.parse("")
     with pytest.raises(TypeError, match="segment must be str"):
-        doc.install(("a", 1), 1)  # type: ignore[arg-type]
+        doc.install(("a", 1), 1)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
 
 # ---------------------------------------------------------------------------
