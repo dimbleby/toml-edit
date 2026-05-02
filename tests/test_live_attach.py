@@ -55,7 +55,7 @@ def test_inline_factory_can_be_populated_before_assignment() -> None:
 def test_inline_factory_renders_with_spaced_braces() -> None:
     # Synthesised inline tables use the same spaced ({ k = v }) style
     # as plain dicts assigned through value_to_node. Empty stays {}.
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     doc["a"] = Table.inline({"key": "v"})
     doc["b"] = {"key": "v"}
     doc["c"] = Table.inline()
@@ -78,7 +78,7 @@ def test_inline_factory_renders_with_spaced_braces() -> None:
 
 
 def test_mutation_after_assignment_is_visible_in_document() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     t = Table.inline({"a": 1})
     doc["foo"] = t
     t["b"] = 2
@@ -88,14 +88,14 @@ def test_mutation_after_assignment_is_visible_in_document() -> None:
 
 
 def test_assigned_inline_is_user_reference() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     t = Table.inline({"a": 1})
     doc["foo"] = t
     assert doc["foo"] is t
 
 
 def test_incremental_population_then_assign_then_more_mutations() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     t = Table.inline()
     t["x"] = 1
     t["y"] = 2
@@ -105,7 +105,7 @@ def test_incremental_population_then_assign_then_more_mutations() -> None:
 
 
 def test_mutation_through_doc_visible_on_user_reference() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     t = Table.inline({"a": 1})
     doc["foo"] = t
     doc["foo"]["c"] = 3
@@ -113,7 +113,7 @@ def test_mutation_through_doc_visible_on_user_reference() -> None:
 
 
 def test_del_through_doc_visible_on_user_reference() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     t = Table.inline({"a": 1, "b": 2})
     doc["foo"] = t
     del doc["foo"]["a"]
@@ -126,7 +126,7 @@ def test_del_through_doc_visible_on_user_reference() -> None:
 
 
 def test_double_assign_clones_second_slot() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     t = Table.inline({"k": "v"})
     doc["p"] = t
     doc["q"] = t
@@ -140,8 +140,8 @@ def test_double_assign_clones_second_slot() -> None:
 
 
 def test_cross_document_assignment_clones() -> None:
-    d1 = tomlrt.parse("")
-    d2 = tomlrt.parse("")
+    d1 = tomlrt.loads("")
+    d2 = tomlrt.loads("")
     t = Table.inline({"k": 1})
     d1["a"] = t
     d2["a"] = d1["a"]
@@ -152,7 +152,7 @@ def test_cross_document_assignment_clones() -> None:
 
 
 def test_intra_document_assignment_clones() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     doc["a"] = Table.inline({"k": 1})
     doc["b"] = doc["a"]
     assert doc["b"] is not doc["a"]
@@ -167,7 +167,7 @@ def test_intra_document_assignment_clones() -> None:
 
 
 def test_plain_dict_assignment_is_snapshot() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     plain = {"a": 1}
     doc["foo"] = plain
     plain["b"] = 2  # plain dict mutation must not reach doc
@@ -175,7 +175,7 @@ def test_plain_dict_assignment_is_snapshot() -> None:
 
 
 def test_plain_dict_assignment_returns_a_view_not_user_reference() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     plain = {"a": 1}
     doc["foo"] = plain
     assert doc["foo"] is not plain
@@ -188,7 +188,7 @@ def test_plain_dict_assignment_returns_a_view_not_user_reference() -> None:
 
 def test_parse_dump_byte_exact_unchanged() -> None:
     src = "# header\nfoo = { a = 1, b = 2 }\n[section]\nx = 1\n"
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     assert tomlrt.dumps(doc) == src
 
 
@@ -198,7 +198,7 @@ def test_parse_dump_byte_exact_unchanged() -> None:
 
 
 def test_detached_inline_still_writable() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     t = Table.inline({"a": 1})
     doc["foo"] = t
     # Overwrite ``foo`` -- ``t`` is now detached.
@@ -211,7 +211,7 @@ def test_detached_inline_still_writable() -> None:
 
 
 def test_reassign_after_detach_attaches_again() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     t = Table.inline({"a": 1})
     doc["foo"] = t
     doc["foo"] = Table.inline({"placeholder": True})
@@ -244,7 +244,7 @@ def test_array_factory_returns_array_view() -> None:
 
 
 def test_array_mutation_after_assignment_visible_in_document() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     arr = Array([1, 2, 3])
     doc["xs"] = arr
     arr.append(4)
@@ -253,14 +253,14 @@ def test_array_mutation_after_assignment_visible_in_document() -> None:
 
 
 def test_assigned_array_is_user_reference() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     arr = Array([1, 2, 3])
     doc["xs"] = arr
     assert doc["xs"] is arr
 
 
 def test_incremental_array_population_then_assign_then_more() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     arr = Array()
     arr.append(1)
     arr.append(2)
@@ -270,7 +270,7 @@ def test_incremental_array_population_then_assign_then_more() -> None:
 
 
 def test_mutation_through_doc_visible_on_user_reference_array() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     arr = Array([1, 2])
     doc["xs"] = arr
     doc["xs"].append(3)
@@ -278,7 +278,7 @@ def test_mutation_through_doc_visible_on_user_reference_array() -> None:
 
 
 def test_array_double_assign_clones_second_slot() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     arr = Array([1, 2])
     doc["p"] = arr
     doc["q"] = arr
@@ -290,8 +290,8 @@ def test_array_double_assign_clones_second_slot() -> None:
 
 
 def test_array_cross_document_assignment_clones() -> None:
-    d1 = tomlrt.parse("")
-    d2 = tomlrt.parse("")
+    d1 = tomlrt.loads("")
+    d2 = tomlrt.loads("")
     arr = Array([1, 2, 3])
     d1["xs"] = arr
     d2["xs"] = d1["xs"]
@@ -302,7 +302,7 @@ def test_array_cross_document_assignment_clones() -> None:
 
 
 def test_array_multiline_layout_preserved_through_live_attach() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     arr = Array([1, 2, 3], multiline=True)
     doc["xs"] = arr
     assert doc["xs"] is arr
@@ -313,7 +313,7 @@ def test_array_multiline_layout_preserved_through_live_attach() -> None:
 
 
 def test_plain_list_assignment_is_snapshot() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     plain = [1, 2, 3]
     doc["xs"] = plain
     plain.append(99)
@@ -321,7 +321,7 @@ def test_plain_list_assignment_is_snapshot() -> None:
 
 
 def test_detached_array_still_writable() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     arr = Array([1, 2])
     doc["xs"] = arr
     doc["xs"] = Array([10, 20])  # arr is now detached
@@ -331,7 +331,7 @@ def test_detached_array_still_writable() -> None:
 
 
 def test_reassign_array_after_detach_attaches_again() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     arr = Array([1, 2])
     doc["xs"] = arr
     doc["xs"] = Array([99])
@@ -347,7 +347,7 @@ def test_reassign_array_after_detach_attaches_again() -> None:
 
 
 def test_array_inside_inline_table_both_live() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     arr = Array([1, 2])
     inline = Table.inline({"xs": arr})
     doc["t"] = inline
@@ -369,14 +369,14 @@ def test_aot_factory_returns_unattached() -> None:
 
 
 def test_aot_assignment_is_user_reference() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     aot = tomlrt.AoT([{"name": "a"}])
     doc["servers"] = aot
     assert doc["servers"] is aot
 
 
 def test_aot_mutation_after_assignment_visible_in_document() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     aot = tomlrt.AoT([{"name": "a"}])
     doc["servers"] = aot
     aot.append({"name": "b"})
@@ -385,7 +385,7 @@ def test_aot_mutation_after_assignment_visible_in_document() -> None:
 
 
 def test_aot_entry_mutation_after_assignment_visible_in_document() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     aot = tomlrt.AoT([{"name": "a"}])
     doc["servers"] = aot
     aot[0]["extra"] = 42
@@ -394,7 +394,7 @@ def test_aot_entry_mutation_after_assignment_visible_in_document() -> None:
 
 
 def test_empty_aot_attaches_then_appends_via_user_reference() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     aot = tomlrt.AoT()
     doc["servers"] = aot
     aot.append({"name": "a"})
@@ -404,7 +404,7 @@ def test_empty_aot_attaches_then_appends_via_user_reference() -> None:
 
 
 def test_aot_double_assign_clones_second_slot() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     aot = tomlrt.AoT([{"name": "a"}])
     doc["p"] = aot
     doc["q"] = aot
@@ -416,10 +416,10 @@ def test_aot_double_assign_clones_second_slot() -> None:
 
 
 def test_aot_cross_document_assignment_clones() -> None:
-    d1 = tomlrt.parse("")
+    d1 = tomlrt.loads("")
     aot = tomlrt.AoT([{"name": "a"}])
     d1["servers"] = aot
-    d2 = tomlrt.parse("")
+    d2 = tomlrt.loads("")
     d2["servers"] = d1["servers"]
     assert d1["servers"] is aot
     assert d2["servers"] is not d1["servers"]
@@ -431,7 +431,7 @@ def test_aot_cross_document_assignment_clones() -> None:
 
 
 def test_aot_intra_document_assignment_clones() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     aot = tomlrt.AoT([{"name": "a"}])
     doc["p"] = aot
     doc["q"] = doc["p"]
@@ -443,7 +443,7 @@ def test_aot_intra_document_assignment_clones() -> None:
 
 
 def test_detached_aot_reattaches_live() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     aot = tomlrt.AoT([{"name": "a"}])
     doc["servers"] = aot
     doc["servers"] = tomlrt.AoT([{"name": "z"}])  # aot now detached
@@ -468,7 +468,7 @@ def test_detached_table_writes_survive_reattach() -> None:
     untouched. Re-attaching the view (which deep-clones the orphan)
     therefore silently dropped any post-detach writes.
     """
-    doc = tomlrt.parse("[t]\na = 1\n")
+    doc = tomlrt.loads("[t]\na = 1\n")
     t = doc.table("t")
     del doc["t"]  # t is now detached against an orphan doc_node
     t["b"] = 2
@@ -481,7 +481,7 @@ def test_detached_table_writes_survive_reattach() -> None:
 def test_aot_entry_view_identity_preserved_through_attach() -> None:
     aot = tomlrt.AoT([{"name": "a"}])
     entry = aot[0]
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     doc["servers"] = aot
     # The same Table view the user grabbed before assignment is still
     # the live entry post-attach.
@@ -504,7 +504,7 @@ def test_aot_held_nested_section_under_entry_survives_attach() -> None:
     nested = Table.section({"x": 1})
     aot = AoT([{"name": "first"}])
     aot[0]["cfg"] = nested
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     doc["pkgs"] = aot
     nested["y"] = 2
     parsed = _reparses(tomlrt.dumps(doc))
@@ -518,7 +518,7 @@ def test_aot_held_nested_section_under_entry_survives_attach() -> None:
 
 
 def test_inline_inside_plain_dict_attaches_live() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     inner = Table.inline({"z": 1})
     doc["x"] = {"y": inner}
     inner["extra"] = 99
@@ -527,7 +527,7 @@ def test_inline_inside_plain_dict_attaches_live() -> None:
 
 
 def test_array_inside_plain_dict_attaches_live() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     arr = Array([1, 2])
     doc["x"] = {"xs": arr}
     arr.append(3)
@@ -536,7 +536,7 @@ def test_array_inside_plain_dict_attaches_live() -> None:
 
 
 def test_inline_inside_plain_list_attaches_live() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     inner = Table.inline({"z": 1})
     doc["xs"] = [inner, {"q": 2}]
     inner["extra"] = 99
@@ -545,7 +545,7 @@ def test_inline_inside_plain_list_attaches_live() -> None:
 
 
 def test_array_inside_array_attaches_live() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     inner = Array([1, 2])
     doc["xs"] = Array([inner, [3, 4]])
     inner.append(99)
@@ -557,7 +557,7 @@ def test_outer_plain_dict_remains_snapshot() -> None:
     # The plain-dict outer is still a snapshot: mutating it after
     # assignment does *not* show up in the document, even though a
     # nested typed container inside it attaches live.
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     plain: dict[str, object] = {"y": Table.inline({"z": 1})}
     doc["x"] = plain
     plain["new"] = 42  # outer is snapshot — not visible in doc
@@ -582,14 +582,14 @@ def test_section_factory_returns_a_table() -> None:
 
 
 def test_section_assigned_is_user_reference() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     t = Table.section({"x": 1})
     doc["a"] = t
     assert doc["a"] is t
 
 
 def test_section_post_assign_scalar_mutation_visible_in_dump() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     t = Table.section()
     doc["a"] = t
     t["x"] = 1
@@ -597,7 +597,7 @@ def test_section_post_assign_scalar_mutation_visible_in_dump() -> None:
 
 
 def test_section_pre_assign_population_carries_through() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     t = Table.section()
     t["x"] = 1
     t["y"] = 2
@@ -607,7 +607,7 @@ def test_section_pre_assign_population_carries_through() -> None:
 
 
 def test_section_double_assign_clones_second_slot() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     t = Table.section({"x": 1})
     doc["a"] = t
     doc["b"] = t
@@ -619,7 +619,7 @@ def test_section_double_assign_clones_second_slot() -> None:
 
 
 def test_section_held_nested_section_survives_parent_attach() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     parent = Table.section({"name": "p"})
     child = Table.section({"k": "v"})
     parent["child"] = child
@@ -631,7 +631,7 @@ def test_section_held_nested_section_survives_parent_attach() -> None:
 
 
 def test_section_held_nested_aot_survives_parent_attach() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     parent = Table.section()
     pkgs = AoT([{"name": "a"}])
     parent["pkgs"] = pkgs
@@ -644,7 +644,7 @@ def test_section_held_nested_aot_survives_parent_attach() -> None:
 
 
 def test_section_into_aot_entry_is_scoped_to_that_entry() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     doc["pkg"] = AoT([{"name": "a"}, {"name": "b"}])
     src = Table.section({"url": "u1"})
     doc["pkg"][0]["source"] = src
@@ -659,7 +659,7 @@ def test_section_into_aot_entry_is_scoped_to_that_entry() -> None:
 
 
 def test_section_structural_mutation_through_held_child() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     parent = Table.section()
     child = Table.section()
     parent["child"] = child
@@ -673,7 +673,7 @@ def test_section_structural_mutation_through_held_child() -> None:
 
 
 def test_section_install_multi_segment_path() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     t = Table.section({"x": 1})
     doc.install(("a", "b"), t)
     assert doc["a"]["b"] is t
@@ -682,14 +682,14 @@ def test_section_install_multi_segment_path() -> None:
 
 
 def test_section_inside_inline_is_rejected() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     doc["inline"] = Table.inline({"a": 1})
     with pytest.raises(tomlrt.TOMLError):
         doc["inline"]["nested"] = Table.section({"x": 1})
 
 
 def test_section_placeholder_does_not_leak_into_dump() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     parent = Table.section({"name": "p"})
     parent["sub"] = Table.section({"k": "v"})
     doc["root"] = parent

@@ -14,21 +14,21 @@ from _toml_str import td
 
 def test_eol_comment_present() -> None:
     src = 'name = "ada"  # the lovelace\n'
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     assert doc.comments["name"] == "the lovelace"
     assert "name" in doc.comments
 
 
 def test_eol_comment_absent_means_key_not_in_mapping() -> None:
     src = 'name = "ada"\n'
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     assert "name" not in doc.comments
     with pytest.raises(KeyError):
         _ = doc.comments["name"]
 
 
 def test_eol_comment_unknown_key_raises_keyerror() -> None:
-    doc = tomlrt.parse("a = 1\n")
+    doc = tomlrt.loads("a = 1\n")
     with pytest.raises(KeyError):
         _ = doc.comments["missing"]
 
@@ -39,7 +39,7 @@ def test_eol_comment_iter_yields_only_commented_keys() -> None:
         b = 2
         c = 3  # three
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     assert list(doc.comments) == ["a", "c"]
     assert dict(doc.comments) == {"a": "one", "c": "three"}
     assert len(doc.comments) == 2
@@ -51,13 +51,13 @@ def test_leading_comments_present() -> None:
         # of two lines
         name = 1
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     assert doc.leading_comments["name"] == ("a section", "of two lines")
     assert "name" in doc.leading_comments
 
 
 def test_leading_comments_absent_raises_on_get() -> None:
-    doc = tomlrt.parse("name = 1\n")
+    doc = tomlrt.loads("name = 1\n")
     assert "name" not in doc.leading_comments
     with pytest.raises(KeyError):
         _ = doc.leading_comments["name"]
@@ -69,7 +69,7 @@ def test_leading_comments_absent_raises_on_get() -> None:
 
 
 def test_set_eol_comment_on_uncommented_key() -> None:
-    doc = tomlrt.parse('name = "ada"\n')
+    doc = tomlrt.loads('name = "ada"\n')
     doc.comments["name"] = "the lovelace"
     assert tomlrt.dumps(doc) == 'name = "ada" # the lovelace\n'
     assert doc.comments["name"] == "the lovelace"
@@ -77,7 +77,7 @@ def test_set_eol_comment_on_uncommented_key() -> None:
 
 def test_set_eol_comment_replaces_existing() -> None:
     src = 'name = "ada"  # old\n'
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     doc.comments["name"] = "new"
     assert tomlrt.dumps(doc) == 'name = "ada"  # new\n'
 
@@ -88,7 +88,7 @@ def test_set_eol_comment_to_empty_string_writes_bare_hash() -> None:
     # parsed bare '#'. Use ``del`` (or assign ``None`` for the header
     # variants) to actually remove a comment.
     src = 'name = "ada"  # old\n'
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     doc.comments["name"] = ""
     assert tomlrt.dumps(doc) == 'name = "ada"  #\n'
     assert doc.comments["name"] == ""
@@ -96,7 +96,7 @@ def test_set_eol_comment_to_empty_string_writes_bare_hash() -> None:
 
 def test_del_eol_comment_removes_it() -> None:
     src = 'name = "ada"  # old\n'
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     del doc.comments["name"]
     assert tomlrt.dumps(doc) == 'name = "ada"\n'
     assert "name" not in doc.comments
@@ -108,7 +108,7 @@ def test_set_eol_comment_round_trips_text_with_hash_prefix() -> None:
     # The API takes comment *content*, never the '#' marker. A user
     # whose content genuinely starts with '#' (e.g. "#hashtag") gets
     # exactly that back on read; the renderer prepends its own marker.
-    doc = tomlrt.parse("a = 1\n")
+    doc = tomlrt.loads("a = 1\n")
     doc.comments["a"] = "## emphasised"
     assert tomlrt.dumps(doc) == "a = 1 # ## emphasised\n"
     assert doc.comments["a"] == "## emphasised"
@@ -125,10 +125,10 @@ def test_comment_views_are_idempotent_under_self_assignment() -> None:
             c = 3  # #hashtag
             d = 4  # ## emphasised
             """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     for key in ("a", "b", "c", "d"):
         doc.comments[key] = doc.comments[key]
-    re = tomlrt.parse(tomlrt.dumps(doc))
+    re = tomlrt.loads(tomlrt.dumps(doc))
     assert dict(re.comments) == dict(doc.comments)
     assert dict(doc.comments) == {
         "a": "plain",
@@ -142,15 +142,15 @@ def test_empty_comment_in_source_round_trips_through_view() -> None:
     # A bare '#' (empty comment) in the source must read as ''
     # *and* be present, and writing '' back must be a no-op. The
     # ``del``-via-empty-string shortcut would have broken this.
-    doc = tomlrt.parse("a = 1  #\nb = 2\n")
+    doc = tomlrt.loads("a = 1  #\nb = 2\n")
     assert doc.comments["a"] == ""
     assert "a" in doc.comments
     doc.comments["a"] = doc.comments["a"]
-    assert tomlrt.parse(tomlrt.dumps(doc)).comments["a"] == ""
+    assert tomlrt.loads(tomlrt.dumps(doc)).comments["a"] == ""
 
 
 def test_set_eol_comment_rejects_newline() -> None:
-    doc = tomlrt.parse("a = 1\n")
+    doc = tomlrt.loads("a = 1\n")
     with pytest.raises(tomlrt.TOMLError):
         doc.comments["a"] = "no\nway"
 
@@ -161,13 +161,13 @@ def test_set_eol_comment_rejects_other_control_chars(ch: str) -> None:
     # other control char would be rejected by the parser on round-trip.
     # The setter must refuse them up front rather than silently produce
     # output that no longer reparses.
-    doc = tomlrt.parse("a = 1\n")
+    doc = tomlrt.loads("a = 1\n")
     with pytest.raises(tomlrt.TOMLError):
         doc.comments["a"] = f"bad{ch}stuff"
 
 
 def test_set_eol_comment_allows_tab() -> None:
-    doc = tomlrt.parse("a = 1\n")
+    doc = tomlrt.loads("a = 1\n")
     doc.comments["a"] = "with\ttab"
     out = tomlrt.dumps(doc)
     # round-trips cleanly
@@ -176,7 +176,7 @@ def test_set_eol_comment_allows_tab() -> None:
 
 def test_set_leading_comments_replaces_block() -> None:
     src = "# old comment\nname = 1\n"
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     doc.leading_comments["name"] = ("fresh", "block")
     assert tomlrt.dumps(doc) == td("""
         # fresh
@@ -191,7 +191,7 @@ def test_set_leading_comments_to_empty_clears_block() -> None:
         # preamble
         name = 1
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     doc.leading_comments["name"] = ()
     assert tomlrt.dumps(doc) == "name = 1\n"
     assert "name" not in doc.leading_comments
@@ -199,7 +199,7 @@ def test_set_leading_comments_to_empty_clears_block() -> None:
 
 def test_del_leading_comments_clears_block() -> None:
     src = "# above\nname = 1\n"
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     del doc.leading_comments["name"]
     assert tomlrt.dumps(doc) == "name = 1\n"
 
@@ -210,7 +210,7 @@ def test_set_leading_comments_preserves_indent_in_subtable() -> None:
             # explanation
             x = 1
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     tbl = doc.table("tbl")
     assert tbl.leading_comments["x"] == ("explanation",)
     tbl.leading_comments["x"] = ("replaced",)
@@ -232,7 +232,7 @@ def test_dict_of_comments_round_trips_via_update() -> None:
         b = 2
         c = 3
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     doc.comments.update({"a": "first", "c": "third"})
     assert dict(doc.comments) == {"a": "first", "c": "third"}
     assert tomlrt.dumps(doc) == td("""
@@ -243,14 +243,14 @@ def test_dict_of_comments_round_trips_via_update() -> None:
 
 
 def test_comments_view_is_live_not_snapshot() -> None:
-    doc = tomlrt.parse("a = 1  # original\n")
+    doc = tomlrt.loads("a = 1  # original\n")
     view = doc.comments
     doc.comments["a"] = "updated"
     assert view["a"] == "updated"
 
 
 def test_comments_view_repr_shows_pairs() -> None:
-    doc = tomlrt.parse("a = 1  # one\n")
+    doc = tomlrt.loads("a = 1  # one\n")
     r = repr(doc.comments)
     assert "'a': 'one'" in r
 
@@ -262,7 +262,7 @@ def test_comments_view_repr_shows_pairs() -> None:
 
 def test_comments_on_inline_table_raises_with_helpful_message() -> None:
     src = 'pkg = { name = "tomlrt", version = "0.1" }\n'
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     pkg = doc.table("pkg")
     with pytest.raises(tomlrt.TOMLError, match="comment API"):
         pkg.comments["name"] = "x"
@@ -272,7 +272,7 @@ def test_comments_on_inline_table_raises_with_helpful_message() -> None:
 
 def test_inline_table_promotion_basic() -> None:
     src = 'pkg = { name = "tomlrt", version = "0.1" }\n'
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     promoted = doc.promote_inline("pkg")
     assert isinstance(promoted, tomlrt.Table)
     assert promoted["name"] == "tomlrt"
@@ -286,7 +286,7 @@ def test_inline_table_promotion_basic() -> None:
 
 def test_inline_table_promotion_preserves_leading_comments() -> None:
     src = '# the package\npkg = { name = "tomlrt" }\n'
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     doc.promote_inline("pkg")
     assert tomlrt.dumps(doc) == td("""
         # the package
@@ -297,14 +297,14 @@ def test_inline_table_promotion_preserves_leading_comments() -> None:
 
 def test_inline_table_promotion_preserves_eol_comment_on_header() -> None:
     src = 'pkg = { name = "tomlrt" }  # describes pkg\n'
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     doc.promote_inline("pkg")
     assert tomlrt.dumps(doc) == '[pkg]  # describes pkg\nname = "tomlrt"\n'
 
 
 def test_inline_promotion_then_set_comment_on_member() -> None:
     src = 'pkg = { name = "tomlrt", version = "0.1" }\n'
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     promoted = doc.promote_inline("pkg")
     promoted.comments["version"] = "calver soon"
     assert tomlrt.dumps(doc) == (
@@ -323,7 +323,7 @@ def test_promote_inline_refuses_when_inner_comments_would_be_lost() -> None:
             x = 1,
         }
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     with pytest.raises(tomlrt.TOMLError, match="inner comments"):
         doc.promote_inline("pkg")
     # Nothing was mutated.
@@ -337,7 +337,7 @@ def test_promote_inline_refuses_on_eol_comment_inside_entry() -> None:
             y = 2,
         }
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     with pytest.raises(tomlrt.TOMLError, match="inner comments"):
         doc.promote_inline("pkg")
 
@@ -349,7 +349,7 @@ def test_promote_array_refuses_when_item_eol_comment_would_be_lost() -> None:
             {x=2},
         ]
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     with pytest.raises(tomlrt.TOMLError, match="comments that would be lost"):
         doc.promote_array("a")
     assert tomlrt.dumps(doc) == src
@@ -362,7 +362,7 @@ def test_promote_array_refuses_when_array_final_comment_would_be_lost() -> None:
             # trailing
         ]
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     with pytest.raises(tomlrt.TOMLError, match="comments that would be lost"):
         doc.promote_array("a")
 
@@ -376,7 +376,7 @@ def test_promote_array_refuses_when_inner_inline_table_has_comments() -> None:
             },
         ]
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     with pytest.raises(tomlrt.TOMLError, match="inner comments"):
         doc.promote_array("a")
 
@@ -389,7 +389,7 @@ def test_inline_promotion_inserts_after_parent_block() -> None:
         [other]
         b = 2
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     parent = doc.table("parent")
     parent.promote_inline("pkg")
     # A blank line separates the parent's direct entries from the
@@ -409,13 +409,13 @@ def test_inline_promotion_inserts_after_parent_block() -> None:
 
 
 def test_promote_non_inline_raises() -> None:
-    doc = tomlrt.parse("a = 1\n")
+    doc = tomlrt.loads("a = 1\n")
     with pytest.raises(tomlrt.TOMLError, match="not an inline table"):
         doc.promote_inline("a")
 
 
 def test_promote_unknown_key_raises_keyerror() -> None:
-    doc = tomlrt.parse("a = 1\n")
+    doc = tomlrt.loads("a = 1\n")
     with pytest.raises(KeyError):
         doc.promote_inline("missing")
 
@@ -426,7 +426,7 @@ def test_promote_unknown_key_raises_keyerror() -> None:
 
 
 def _inline_in_doc() -> tomlrt.Table:
-    doc = tomlrt.parse("t = { a = 1 }\n")
+    doc = tomlrt.loads("t = { a = 1 }\n")
     return doc.table("t")
 
 
@@ -491,7 +491,7 @@ def test_inline_table_promote_array_raises() -> None:
 
 
 def test_inline_table_install_section_raises() -> None:
-    doc = tomlrt.parse("t = { a = 1 }\n")
+    doc = tomlrt.loads("t = { a = 1 }\n")
     with pytest.raises(tomlrt.TOMLError, match="not section-backed"):
         doc.install("t.x.y", 99)
 
@@ -502,12 +502,12 @@ def test_inline_table_install_section_raises() -> None:
 
 
 def test_round_trip_after_set_and_clear() -> None:
-    doc = tomlrt.parse("x = 1\n")
+    doc = tomlrt.loads("x = 1\n")
     doc.comments["x"] = "trailing"
     doc.leading_comments["x"] = ("above",)
     out = tomlrt.dumps(doc)
     assert out == "# above\nx = 1 # trailing\n"
-    again = tomlrt.parse(out)
+    again = tomlrt.loads(out)
     assert again.comments["x"] == "trailing"
     assert again.leading_comments["x"] == ("above",)
 
@@ -519,24 +519,24 @@ def test_round_trip_after_set_and_clear() -> None:
 
 def test_header_comment_present() -> None:
     src = "[server] # in DC1\nhost = 'a'\n"
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     assert doc.table("server").header_comment == "in DC1"
 
 
 def test_header_comment_absent() -> None:
     src = "[server]\nhost = 'a'\n"
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     assert doc.table("server").header_comment is None
 
 
 def test_header_comment_set_round_trips() -> None:
-    doc = tomlrt.parse("[server]\nhost = 'a'\n")
+    doc = tomlrt.loads("[server]\nhost = 'a'\n")
     doc.table("server").header_comment = "in DC1"
     assert tomlrt.dumps(doc) == "[server] # in DC1\nhost = 'a'\n"
 
 
 def test_header_comment_replace_existing() -> None:
-    doc = tomlrt.parse("[server] # old\nhost = 'a'\n")
+    doc = tomlrt.loads("[server] # old\nhost = 'a'\n")
     doc.table("server").header_comment = "new"
     assert tomlrt.dumps(doc) == "[server] # new\nhost = 'a'\n"
 
@@ -544,20 +544,20 @@ def test_header_comment_replace_existing() -> None:
 def test_header_comment_empty_string_writes_bare_hash() -> None:
     # An empty header_comment is a bare '#', not a clear: pass None
     # (or use ``del``) to actually remove it.
-    doc = tomlrt.parse("[server] # old\nhost = 'a'\n")
+    doc = tomlrt.loads("[server] # old\nhost = 'a'\n")
     doc.table("server").header_comment = ""
     assert tomlrt.dumps(doc) == "[server] #\nhost = 'a'\n"
     assert doc.table("server").header_comment == ""
 
 
 def test_header_comment_clear_with_none() -> None:
-    doc = tomlrt.parse("[server] # old\nhost = 'a'\n")
+    doc = tomlrt.loads("[server] # old\nhost = 'a'\n")
     doc.table("server").header_comment = None
     assert tomlrt.dumps(doc) == "[server]\nhost = 'a'\n"
 
 
 def test_header_comment_del() -> None:
-    doc = tomlrt.parse("[server] # old\nhost = 'a'\n")
+    doc = tomlrt.loads("[server] # old\nhost = 'a'\n")
     del doc.table("server").header_comment
     assert doc.table("server").header_comment is None
 
@@ -565,7 +565,7 @@ def test_header_comment_del() -> None:
 def test_header_comment_del_no_comment_preserves_trailing_whitespace() -> None:
     """Deleting a header comment that doesn't exist must be a no-op."""
     src = "[server]   \nhost = 'a'\n"
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     del doc.table("server").header_comment
     assert tomlrt.dumps(doc) == src
 
@@ -573,7 +573,7 @@ def test_header_comment_del_no_comment_preserves_trailing_whitespace() -> None:
 def test_header_comment_set_none_no_comment_preserves_trailing_whitespace() -> None:
     """Same for the setter when value is None."""
     src = "[server]   \nhost = 'a'\n"
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     doc.table("server").header_comment = None
     assert tomlrt.dumps(doc) == src
 
@@ -587,7 +587,7 @@ def test_header_leading_comments_extract_block_only() -> None:
         [server]
         host = 'a'
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     # Only the *contiguous* block above the header counts.
     assert doc.table("server").header_leading_comments == ("active 1", "active 2")
 
@@ -598,7 +598,7 @@ def test_header_leading_comments_round_trip() -> None:
         [server]
         host = 'a'
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     assert tomlrt.dumps(doc) == src
 
 
@@ -610,7 +610,7 @@ def test_header_leading_comments_set_preserves_older_block() -> None:
         [server]
         host = 'a'
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     doc.table("server").header_leading_comments = ("brand new",)
     out = tomlrt.dumps(doc)
     # Older blank-separated comment must remain untouched.
@@ -626,7 +626,7 @@ def test_header_leading_comments_set_preserves_older_block() -> None:
 
 
 def test_header_leading_comments_set_on_empty() -> None:
-    doc = tomlrt.parse("[server]\nhost = 'a'\n")
+    doc = tomlrt.loads("[server]\nhost = 'a'\n")
     doc.table("server").header_leading_comments = ("hello", "world")
     assert tomlrt.dumps(doc) == td("""
         # hello
@@ -637,7 +637,7 @@ def test_header_leading_comments_set_on_empty() -> None:
 
 
 def test_header_leading_comments_clear_with_empty_tuple() -> None:
-    doc = tomlrt.parse(
+    doc = tomlrt.loads(
         td("""
         # above
         [server]
@@ -649,7 +649,7 @@ def test_header_leading_comments_clear_with_empty_tuple() -> None:
 
 
 def test_header_leading_comments_del() -> None:
-    doc = tomlrt.parse(
+    doc = tomlrt.loads(
         td("""
         # above
         [server]
@@ -668,7 +668,7 @@ def test_header_comment_on_aot_entry() -> None:
         [[items]]
         name = 'b'
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     items = doc.aot("items")
     items[0].header_comment = "first"
     items[1].header_leading_comments = ("about the second",)
@@ -686,7 +686,7 @@ def test_header_comment_on_aot_entry() -> None:
 
 
 def test_header_comment_on_document_raises() -> None:
-    doc = tomlrt.parse("a = 1\n")
+    doc = tomlrt.loads("a = 1\n")
     with pytest.raises(tomlrt.TOMLError):
         _ = doc.header_comment
     with pytest.raises(tomlrt.TOMLError):
@@ -696,7 +696,7 @@ def test_header_comment_on_document_raises() -> None:
 
 
 def test_header_comment_on_inline_table_raises() -> None:
-    doc = tomlrt.parse("a = { x = 1, y = 2 }\n")
+    doc = tomlrt.loads("a = { x = 1, y = 2 }\n")
     a = doc.table("a")
     with pytest.raises(tomlrt.TOMLError):
         _ = a.header_comment
@@ -706,7 +706,7 @@ def test_header_comment_on_inline_table_raises() -> None:
 
 def test_header_comment_on_implicit_parent_raises() -> None:
     # `parent` exists logically but has no `[parent]` section in source.
-    doc = tomlrt.parse("[parent.child]\nx = 1\n")
+    doc = tomlrt.loads("[parent.child]\nx = 1\n")
     parent = doc.table("parent")
     with pytest.raises(tomlrt.TOMLError):
         _ = parent.header_comment
@@ -727,7 +727,7 @@ def test_leading_comments_extract_block_only() -> None:
         # active 2
         name = 'x'
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     assert doc.leading_comments["name"] == ("active 1", "active 2")
 
 
@@ -738,7 +738,7 @@ def test_leading_comments_set_preserves_older_block() -> None:
         # active
         name = 'x'
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     doc.leading_comments["name"] = ("brand new",)
     assert tomlrt.dumps(doc) == (
         td("""
@@ -763,7 +763,7 @@ def test_array_eol_comments_read_multiline() -> None:
           3, # three
         ]
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     arr = doc.array("arr")
     assert dict(arr.comments) == {0: "one", 1: "two", 2: "three"}
 
@@ -775,7 +775,7 @@ def test_array_eol_comment_read_last_no_trailing_comma() -> None:
           2 # last
         ]
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     arr = doc.array("arr")
     assert dict(arr.comments) == {1: "last"}
 
@@ -790,7 +790,7 @@ def test_array_leading_comments_read() -> None:
           2,
         ]
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     arr = doc.array("arr")
     assert dict(arr.leading_comments) == {
         0: ("before 0",),
@@ -805,37 +805,37 @@ def test_array_round_trip_with_comments() -> None:
           2, # two
         ]
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     assert tomlrt.dumps(doc) == src
 
 
 def test_array_set_eol_on_single_line_promotes_to_multiline() -> None:
-    doc = tomlrt.parse("arr = [1, 2, 3]\n")
+    doc = tomlrt.loads("arr = [1, 2, 3]\n")
     arr = doc.array("arr")
     arr.comments[1] = "two"
     out = tomlrt.dumps(doc)
-    re = tomlrt.parse(out)
+    re = tomlrt.loads(out)
     re_arr = re.array("arr")
     assert list(re_arr) == [1, 2, 3]
     assert dict(re_arr.comments) == {1: "two"}
 
 
 def test_array_set_eol_on_last_item_no_comma_breaks_before_close() -> None:
-    doc = tomlrt.parse("arr = [1, 2, 3]\n")
+    doc = tomlrt.loads("arr = [1, 2, 3]\n")
     arr = doc.array("arr")
     arr.comments[2] = "last"
     out = tomlrt.dumps(doc)
     # `]` must not be on the same line as the comment.
     assert "# last\n" in out
     assert out.rstrip().endswith("]")
-    re = tomlrt.parse(out)
+    re = tomlrt.loads(out)
     re_arr = re.array("arr")
     assert list(re_arr) == [1, 2, 3]
     assert dict(re_arr.comments) == {2: "last"}
 
 
 def test_array_set_eol_on_last_item_with_trailing_comma() -> None:
-    doc = tomlrt.parse(
+    doc = tomlrt.loads(
         td("""
         arr = [
           1,
@@ -846,14 +846,14 @@ def test_array_set_eol_on_last_item_with_trailing_comma() -> None:
     arr = doc.array("arr")
     arr.comments[1] = "second"
     out = tomlrt.dumps(doc)
-    re = tomlrt.parse(out)
+    re = tomlrt.loads(out)
     re_arr = re.array("arr")
     assert list(re_arr) == [1, 2]
     assert dict(re_arr.comments) == {1: "second"}
 
 
 def test_array_replace_existing_eol_comment() -> None:
-    doc = tomlrt.parse(
+    doc = tomlrt.loads(
         td("""
         arr = [
           1, # old
@@ -869,7 +869,7 @@ def test_array_replace_existing_eol_comment() -> None:
 
 
 def test_array_delete_eol_comment() -> None:
-    doc = tomlrt.parse(
+    doc = tomlrt.loads(
         td("""
         arr = [
           1, # one
@@ -881,34 +881,34 @@ def test_array_delete_eol_comment() -> None:
     del arr.comments[0]
     out = tomlrt.dumps(doc)
     assert "# one" not in out
-    re = tomlrt.parse(out)
+    re = tomlrt.loads(out)
     assert list(re.array("arr")) == [1, 2]
 
 
 def test_array_set_leading_on_single_line_promotes_to_multiline() -> None:
-    doc = tomlrt.parse("arr = [1, 2, 3]\n")
+    doc = tomlrt.loads("arr = [1, 2, 3]\n")
     arr = doc.array("arr")
     arr.leading_comments[1] = ("before two",)
     out = tomlrt.dumps(doc)
-    re = tomlrt.parse(out)
+    re = tomlrt.loads(out)
     re_arr = re.array("arr")
     assert list(re_arr) == [1, 2, 3]
     assert dict(re_arr.leading_comments) == {1: ("before two",)}
 
 
 def test_array_set_leading_on_first_item() -> None:
-    doc = tomlrt.parse("arr = [1, 2, 3]\n")
+    doc = tomlrt.loads("arr = [1, 2, 3]\n")
     arr = doc.array("arr")
     arr.leading_comments[0] = ("first",)
     out = tomlrt.dumps(doc)
-    re = tomlrt.parse(out)
+    re = tomlrt.loads(out)
     re_arr = re.array("arr")
     assert list(re_arr) == [1, 2, 3]
     assert dict(re_arr.leading_comments) == {0: ("first",)}
 
 
 def test_array_set_multiple_leading_lines() -> None:
-    doc = tomlrt.parse(
+    doc = tomlrt.loads(
         td("""
         arr = [
           1,
@@ -919,7 +919,7 @@ def test_array_set_multiple_leading_lines() -> None:
     arr = doc.array("arr")
     arr.leading_comments[1] = ("line one", "line two")
     out = tomlrt.dumps(doc)
-    re = tomlrt.parse(out)
+    re = tomlrt.loads(out)
     re_arr = re.array("arr")
     assert dict(re_arr.leading_comments) == {1: ("line one", "line two")}
 
@@ -932,17 +932,17 @@ def test_array_delete_leading_comments() -> None:
           2,
         ]
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     arr = doc.array("arr")
     del arr.leading_comments[0]
     out = tomlrt.dumps(doc)
     assert "# before" not in out
-    re = tomlrt.parse(out)
+    re = tomlrt.loads(out)
     assert list(re.array("arr")) == [1, 2]
 
 
 def test_array_append_migrates_last_eol_comment() -> None:
-    doc = tomlrt.parse(
+    doc = tomlrt.loads(
         td("""
         arr = [
           1,
@@ -954,7 +954,7 @@ def test_array_append_migrates_last_eol_comment() -> None:
     assert dict(arr.comments) == {1: "last"}
     arr.append(3)
     out = tomlrt.dumps(doc)
-    re = tomlrt.parse(out)
+    re = tomlrt.loads(out)
     re_arr = re.array("arr")
     assert list(re_arr) == [1, 2, 3]
     # The EOL must still belong to item 1, not item 2.
@@ -969,7 +969,7 @@ def test_array_comments_view_contains_iter_len() -> None:
           3, # three
         ]
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     arr = doc.array("arr")
     assert 0 in arr.comments
     assert 1 not in arr.comments
@@ -980,7 +980,7 @@ def test_array_comments_view_contains_iter_len() -> None:
 
 
 def test_array_comments_view_empty_array() -> None:
-    doc = tomlrt.parse("arr = []\n")
+    doc = tomlrt.loads("arr = []\n")
     arr = doc.array("arr")
     assert len(arr.comments) == 0
     assert list(arr.comments) == []
@@ -992,7 +992,7 @@ def test_array_comments_view_empty_array() -> None:
 
 
 def test_array_comments_non_int_key_raises() -> None:
-    doc = tomlrt.parse("arr = [1, 2]\n")
+    doc = tomlrt.loads("arr = [1, 2]\n")
     arr = doc.array("arr")
     with pytest.raises(TypeError):
         _ = arr.comments["x"]  # type: ignore[index]  # ty: ignore[invalid-argument-type]
@@ -1001,7 +1001,7 @@ def test_array_comments_non_int_key_raises() -> None:
 
 
 def test_array_comments_out_of_range_raises() -> None:
-    doc = tomlrt.parse("arr = [1, 2]\n")
+    doc = tomlrt.loads("arr = [1, 2]\n")
     arr = doc.array("arr")
     with pytest.raises(KeyError):
         arr.comments[5] = "nope"
@@ -1012,10 +1012,10 @@ def test_array_comments_out_of_range_raises() -> None:
 
 
 def test_array_comment_with_hash_prefix_round_trips() -> None:
-    doc = tomlrt.parse("arr = [1, 2]\n")
+    doc = tomlrt.loads("arr = [1, 2]\n")
     arr = doc.array("arr")
     arr.comments[0] = "#hashtag"
-    re = tomlrt.parse(tomlrt.dumps(doc))
+    re = tomlrt.loads(tomlrt.dumps(doc))
     # Content that happens to start with '#' is preserved verbatim.
     assert dict(re.array("arr").comments) == {0: "#hashtag"}
 
@@ -1027,10 +1027,10 @@ def test_array_set_value_via_indexing_preserves_eol_comment() -> None:
           2, # two
         ]
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     arr = doc.array("arr")
     arr[0] = 99
-    re = tomlrt.parse(tomlrt.dumps(doc))
+    re = tomlrt.loads(tomlrt.dumps(doc))
     re_arr = re.array("arr")
     assert list(re_arr) == [99, 2]
     # Comment ownership shouldn't change.
@@ -1043,7 +1043,7 @@ def test_array_set_value_via_indexing_preserves_eol_comment() -> None:
 
 
 def test_table_array_returns_array() -> None:
-    doc = tomlrt.parse("xs = [1, 2]\n")
+    doc = tomlrt.loads("xs = [1, 2]\n")
     arr = doc.array("xs")
     assert isinstance(arr, tomlrt.Array)
     arr.comments[0] = "first"
@@ -1051,7 +1051,7 @@ def test_table_array_returns_array() -> None:
 
 
 def test_table_table_returns_table() -> None:
-    doc = tomlrt.parse("[server]\nport = 80\n")
+    doc = tomlrt.loads("[server]\nport = 80\n")
     tbl = doc.table("server")
     assert isinstance(tbl, tomlrt.Table)
     tbl.header_comment = "production"
@@ -1059,7 +1059,7 @@ def test_table_table_returns_table() -> None:
 
 
 def test_table_aot_returns_aot() -> None:
-    doc = tomlrt.parse(
+    doc = tomlrt.loads(
         td("""
         [[products]]
         name = 'a'
@@ -1073,25 +1073,25 @@ def test_table_aot_returns_aot() -> None:
 
 
 def test_table_array_wrong_kind_raises_typeerror() -> None:
-    doc = tomlrt.parse("x = 1\n")
+    doc = tomlrt.loads("x = 1\n")
     with pytest.raises(TypeError, match="not an Array"):
         doc.array("x")
 
 
 def test_table_table_wrong_kind_raises_typeerror() -> None:
-    doc = tomlrt.parse("x = 1\n")
+    doc = tomlrt.loads("x = 1\n")
     with pytest.raises(TypeError, match="not a Table"):
         doc.table("x")
 
 
 def test_table_aot_wrong_kind_raises_typeerror() -> None:
-    doc = tomlrt.parse("x = 1\n")
+    doc = tomlrt.loads("x = 1\n")
     with pytest.raises(TypeError, match="not an AoT"):
         doc.aot("x")
 
 
 def test_table_typed_accessors_propagate_keyerror() -> None:
-    doc = tomlrt.parse("x = 1\n")
+    doc = tomlrt.loads("x = 1\n")
     with pytest.raises(KeyError):
         doc.array("missing")
     with pytest.raises(KeyError):
@@ -1101,46 +1101,46 @@ def test_table_typed_accessors_propagate_keyerror() -> None:
 
 
 def test_array_array_returns_nested_array() -> None:
-    doc = tomlrt.parse("xs = [[1, 2], [3, 4]]\n")
+    doc = tomlrt.loads("xs = [[1, 2], [3, 4]]\n")
     inner = doc.array("xs").array(0)
     assert isinstance(inner, tomlrt.Array)
     assert list(inner) == [1, 2]
 
 
 def test_array_table_returns_nested_inline_table() -> None:
-    doc = tomlrt.parse("xs = [{a = 1}, {a = 2}]\n")
+    doc = tomlrt.loads("xs = [{a = 1}, {a = 2}]\n")
     tbl = doc.array("xs").table(0)
     assert isinstance(tbl, tomlrt.Table)
     assert tbl["a"] == 1
 
 
 def test_array_array_wrong_kind_raises_typeerror() -> None:
-    doc = tomlrt.parse("xs = [1, 2]\n")
+    doc = tomlrt.loads("xs = [1, 2]\n")
     with pytest.raises(TypeError, match="not an Array"):
         doc.array("xs").array(0)
 
 
 def test_array_table_wrong_kind_raises_typeerror() -> None:
-    doc = tomlrt.parse("xs = [1, 2]\n")
+    doc = tomlrt.loads("xs = [1, 2]\n")
     with pytest.raises(TypeError, match="not a Table"):
         doc.array("xs").table(0)
 
 
 def test_table_typed_dotted_descent_through_non_table_raises() -> None:
-    doc = tomlrt.parse("x = 1\n")
+    doc = tomlrt.loads("x = 1\n")
     with pytest.raises(TypeError, match="cannot descend into 'x'"):
         doc.table("x.y")
 
 
 def test_table_get_typed_returns_default_for_missing_key() -> None:
-    doc = tomlrt.parse("x = 1\n")
+    doc = tomlrt.loads("x = 1\n")
     assert doc.get_table("missing") is None
     assert doc.get_array("missing", "fallback") == "fallback"
     assert doc.get_aot("missing") is None
 
 
 def test_table_get_typed_wrong_kind_raises_typeerror() -> None:
-    doc = tomlrt.parse("x = 1\n")
+    doc = tomlrt.loads("x = 1\n")
     with pytest.raises(TypeError, match="not a Table"):
         doc.get_table("x")
     with pytest.raises(TypeError, match="not an Array"):
@@ -1150,14 +1150,14 @@ def test_table_get_typed_wrong_kind_raises_typeerror() -> None:
 
 
 def test_array_get_typed_returns_default_for_out_of_range() -> None:
-    doc = tomlrt.parse("xs = [1, 2]\n")
+    doc = tomlrt.loads("xs = [1, 2]\n")
     arr = doc.array("xs")
     assert arr.get_array(99) is None
     assert arr.get_table(99, "fallback") == "fallback"
 
 
 def test_array_get_typed_wrong_kind_raises_typeerror() -> None:
-    doc = tomlrt.parse("xs = [1, 2]\n")
+    doc = tomlrt.loads("xs = [1, 2]\n")
     arr = doc.array("xs")
     with pytest.raises(TypeError, match="not an Array"):
         arr.get_array(0)
@@ -1335,33 +1335,33 @@ def test_preamble_rejects_embedded_newline() -> None:
 
 
 def test_table_comments_delitem_missing_raises_keyerror() -> None:
-    doc = tomlrt.parse("a = 1\n")
+    doc = tomlrt.loads("a = 1\n")
     with pytest.raises(KeyError, match="a"):
         del doc.comments["a"]
 
 
 def test_table_leading_comments_delitem_missing_raises_keyerror() -> None:
-    doc = tomlrt.parse("a = 1\n")
+    doc = tomlrt.loads("a = 1\n")
     with pytest.raises(KeyError, match="a"):
         del doc.leading_comments["a"]
 
 
 def test_table_comments_repr_lists_only_present_keys() -> None:
-    doc = tomlrt.parse("a = 1  # alpha\nb = 2\n")
+    doc = tomlrt.loads("a = 1  # alpha\nb = 2\n")
     body = repr(doc.comments)
     assert "'a': 'alpha'" in body
     assert "'b'" not in body
 
 
 def test_array_comments_typeerror_on_non_int_key() -> None:
-    doc = tomlrt.parse("xs = [1, 2, 3]\n")
+    doc = tomlrt.loads("xs = [1, 2, 3]\n")
     arr = doc.array("xs")
     with pytest.raises(TypeError, match="must be int"):
         _ = arr.comments["zero"]  # type: ignore[index]  # ty: ignore[invalid-argument-type]
 
 
 def test_array_comments_keyerror_on_out_of_range() -> None:
-    doc = tomlrt.parse("xs = [1, 2]\n")
+    doc = tomlrt.loads("xs = [1, 2]\n")
     arr = doc.array("xs")
     with pytest.raises(KeyError):
         _ = arr.comments[5]
@@ -1370,7 +1370,7 @@ def test_array_comments_keyerror_on_out_of_range() -> None:
 
 
 def test_array_comments_negative_index_mirrors_array_indexing() -> None:
-    doc = tomlrt.parse("xs = [1, 2, 3]\n")
+    doc = tomlrt.loads("xs = [1, 2, 3]\n")
     arr = doc.array("xs")
     arr.comments[-1] = "last"
     assert arr.comments[-1] == "last"
@@ -1384,7 +1384,7 @@ def test_array_comments_negative_index_mirrors_array_indexing() -> None:
 
 
 def test_array_comments_delitem_missing_raises_keyerror() -> None:
-    doc = tomlrt.parse("xs = [1, 2]\n")
+    doc = tomlrt.loads("xs = [1, 2]\n")
     arr = doc.array("xs")
     with pytest.raises(KeyError):
         del arr.comments[0]
@@ -1393,7 +1393,7 @@ def test_array_comments_delitem_missing_raises_keyerror() -> None:
 def test_array_comments_setitem_empty_string_writes_bare_hash() -> None:
     # An empty array-item comment is a bare '#', not a delete: use
     # ``del`` to actually remove it.
-    doc = tomlrt.parse(
+    doc = tomlrt.loads(
         td("""
         xs = [
           1,
@@ -1405,12 +1405,12 @@ def test_array_comments_setitem_empty_string_writes_bare_hash() -> None:
     assert arr.comments[1] == "tail"
     arr.comments[1] = ""
     assert arr.comments[1] == ""
-    re = tomlrt.parse(tomlrt.dumps(doc))
+    re = tomlrt.loads(tomlrt.dumps(doc))
     assert re.array("xs").comments[1] == ""
 
 
 def test_array_comments_repr_lists_only_present_indices() -> None:
-    doc = tomlrt.parse("xs = [1, 2  # mid\n]\n")
+    doc = tomlrt.loads("xs = [1, 2  # mid\n]\n")
     arr = doc.array("xs")
     body = repr(arr.comments)
     assert "1: 'mid'" in body
@@ -1418,35 +1418,35 @@ def test_array_comments_repr_lists_only_present_indices() -> None:
 
 
 def test_array_leading_comments_typeerror_on_non_int_key() -> None:
-    doc = tomlrt.parse("xs = [1, 2]\n")
+    doc = tomlrt.loads("xs = [1, 2]\n")
     arr = doc.array("xs")
     with pytest.raises(TypeError, match="must be int"):
         _ = arr.leading_comments["zero"]  # type: ignore[index]  # ty: ignore[invalid-argument-type]
 
 
 def test_array_leading_comments_keyerror_out_of_range() -> None:
-    doc = tomlrt.parse("xs = [1, 2]\n")
+    doc = tomlrt.loads("xs = [1, 2]\n")
     arr = doc.array("xs")
     with pytest.raises(KeyError):
         _ = arr.leading_comments[5]
 
 
 def test_array_leading_comments_keyerror_when_absent() -> None:
-    doc = tomlrt.parse("xs = [1, 2]\n")
+    doc = tomlrt.loads("xs = [1, 2]\n")
     arr = doc.array("xs")
     with pytest.raises(KeyError):
         _ = arr.leading_comments[1]
 
 
 def test_array_leading_comments_delitem_missing_raises_keyerror() -> None:
-    doc = tomlrt.parse("xs = [1, 2]\n")
+    doc = tomlrt.loads("xs = [1, 2]\n")
     arr = doc.array("xs")
     with pytest.raises(KeyError):
         del arr.leading_comments[0]
 
 
 def test_array_leading_comments_repr_lists_only_present_indices() -> None:
-    doc = tomlrt.parse(
+    doc = tomlrt.loads(
         td("""
         xs = [
           # first
@@ -1462,7 +1462,7 @@ def test_array_leading_comments_repr_lists_only_present_indices() -> None:
 
 
 def test_array_comments_on_last_no_comma_forces_bracket_to_new_line() -> None:
-    doc = tomlrt.parse("xs = [1, 2]\n")
+    doc = tomlrt.loads("xs = [1, 2]\n")
     arr = doc.array("xs")
     arr.comments[1] = "tail"
     out = tomlrt.dumps(doc)

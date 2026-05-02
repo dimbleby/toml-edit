@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 def test_loads_is_alias_for_parse() -> None:
     src = "x = 1\ny = 'hi'\n"
     a = tomlrt.loads(src)
-    b = tomlrt.parse(src)
+    b = tomlrt.loads(src)
     assert tomlrt.dumps(a) == tomlrt.dumps(b) == src
 
 
@@ -73,14 +73,14 @@ def test_crlf_document_keeps_crlf_after_mutation() -> None:
 
 
 def test_dump_writes_to_binary_stream() -> None:
-    doc = tomlrt.parse("x = 1\n")
+    doc = tomlrt.loads("x = 1\n")
     out = io.BytesIO()
     tomlrt.dump(doc, out)
     assert out.getvalue() == b"x = 1\n"
 
 
 def test_dump_emits_utf8_for_non_ascii() -> None:
-    doc = tomlrt.parse("name = 'café'\n")
+    doc = tomlrt.loads("name = 'café'\n")
     out = io.BytesIO()
     tomlrt.dump(doc, out)
     assert out.getvalue() == "name = 'café'\n".encode()
@@ -109,12 +109,12 @@ def test_dump_emits_utf8_for_non_ascii() -> None:
 def test_string_escape_emits_canonical_form(
     py_value: str, expected_quoted: str
 ) -> None:
-    doc = tomlrt.parse("x = 0\n")
+    doc = tomlrt.loads("x = 0\n")
     doc["x"] = py_value
     out = tomlrt.dumps(doc)
     assert out == f"x = {expected_quoted}\n"
     # And it round-trips back to the same Python value.
-    assert tomlrt.parse(out)["x"] == py_value
+    assert tomlrt.loads(out)["x"] == py_value
 
 
 # ---------------------------------------------------------------------------
@@ -123,43 +123,43 @@ def test_string_escape_emits_canonical_form(
 
 
 def test_assign_bool_renders_as_toml_bool() -> None:
-    doc = tomlrt.parse("x = 0\n")
+    doc = tomlrt.loads("x = 0\n")
     doc["x"] = True
     doc["y"] = False
     out = tomlrt.dumps(doc)
     assert "x = true" in out
     assert "y = false" in out
-    re = tomlrt.parse(out)
+    re = tomlrt.loads(out)
     assert re["x"] is True
     assert re["y"] is False
 
 
 def test_assign_int_renders_decimal() -> None:
-    doc = tomlrt.parse("x = 0\n")
+    doc = tomlrt.loads("x = 0\n")
     doc["x"] = -123
     assert tomlrt.dumps(doc) == "x = -123\n"
 
 
 def test_assign_float_basic_gets_dot_zero_when_missing() -> None:
-    doc = tomlrt.parse("x = 0\n")
+    doc = tomlrt.loads("x = 0\n")
     doc["x"] = 3.0
     out = tomlrt.dumps(doc)
     # repr(3.0) is "3.0" already, but values like 1e10 round-trip via repr
     # which emits no dot; the helper appends one.
     assert "x = 3.0" in out
-    assert tomlrt.parse(out)["x"] == 3.0
+    assert tomlrt.loads(out)["x"] == 3.0
 
 
 def test_assign_float_scientific_no_dot_added() -> None:
-    doc = tomlrt.parse("x = 0\n")
+    doc = tomlrt.loads("x = 0\n")
     doc["x"] = 1e20
     out = tomlrt.dumps(doc)
-    re = tomlrt.parse(out)
+    re = tomlrt.loads(out)
     assert re["x"] == 1e20
 
 
 def test_assign_float_inf_and_nan() -> None:
-    doc = tomlrt.parse("x = 0\n")
+    doc = tomlrt.loads("x = 0\n")
     doc["x"] = math.inf
     doc["y"] = -math.inf
     doc["z"] = math.nan
@@ -167,66 +167,66 @@ def test_assign_float_inf_and_nan() -> None:
     assert "x = inf" in out
     assert "y = -inf" in out
     assert "z = nan" in out
-    re = tomlrt.parse(out)
+    re = tomlrt.loads(out)
     assert re["x"] == math.inf
     assert re["y"] == -math.inf
     assert math.isnan(re["z"])
 
 
 def test_assign_local_date() -> None:
-    doc = tomlrt.parse("x = 0\n")
+    doc = tomlrt.loads("x = 0\n")
     doc["x"] = date(2024, 7, 4)
     out = tomlrt.dumps(doc)
     assert "x = 2024-07-04" in out
-    assert tomlrt.parse(out)["x"] == date(2024, 7, 4)
+    assert tomlrt.loads(out)["x"] == date(2024, 7, 4)
 
 
 def test_assign_local_time() -> None:
-    doc = tomlrt.parse("x = 0\n")
+    doc = tomlrt.loads("x = 0\n")
     doc["x"] = time(13, 30, 45)
     out = tomlrt.dumps(doc)
     assert "x = 13:30:45" in out
-    assert tomlrt.parse(out)["x"] == time(13, 30, 45)
+    assert tomlrt.loads(out)["x"] == time(13, 30, 45)
 
 
 def test_assign_local_datetime() -> None:
-    doc = tomlrt.parse("x = 0\n")
+    doc = tomlrt.loads("x = 0\n")
     doc["x"] = datetime(2024, 7, 4, 12, 0, 0)  # noqa: DTZ001
     out = tomlrt.dumps(doc)
     assert "x = 2024-07-04T12:00:00" in out
-    assert tomlrt.parse(out)["x"] == datetime(2024, 7, 4, 12, 0, 0)  # noqa: DTZ001
+    assert tomlrt.loads(out)["x"] == datetime(2024, 7, 4, 12, 0, 0)  # noqa: DTZ001
 
 
 def test_assign_offset_datetime() -> None:
-    doc = tomlrt.parse("x = 0\n")
+    doc = tomlrt.loads("x = 0\n")
     tz = timezone(timedelta(hours=2))
     doc["x"] = datetime(2024, 7, 4, 12, 0, 0, tzinfo=tz)
     out = tomlrt.dumps(doc)
-    re_value = tomlrt.parse(out)["x"]
+    re_value = tomlrt.loads(out)["x"]
     assert isinstance(re_value, datetime)
     assert re_value == datetime(2024, 7, 4, 12, 0, 0, tzinfo=tz)
 
 
 def test_assign_plain_list_becomes_inline_array() -> None:
-    doc = tomlrt.parse("x = 0\n")
+    doc = tomlrt.loads("x = 0\n")
     doc["x"] = [1, 2, 3]
     out = tomlrt.dumps(doc)
-    re = tomlrt.parse(out)
+    re = tomlrt.loads(out)
     assert list(re.array("x")) == [1, 2, 3]
 
 
 def test_assign_plain_dict_becomes_inline_table() -> None:
-    doc = tomlrt.parse("x = 0\n")
+    doc = tomlrt.loads("x = 0\n")
     doc["x"] = {"a": 1, "b": "two"}
     out = tomlrt.dumps(doc)
-    re = tomlrt.parse(out)
+    re = tomlrt.loads(out)
     tbl = re.table("x")
     assert tbl["a"] == 1
     assert tbl["b"] == "two"
 
 
 def test_assign_tuple_rejected() -> None:
-    doc = tomlrt.parse("x = 0\n")
+    doc = tomlrt.loads("x = 0\n")
     with pytest.raises(TypeError, match="tuple"):
         doc["x"] = (1, 2, 3)
 
@@ -234,34 +234,34 @@ def test_assign_tuple_rejected() -> None:
 def test_assign_mappingproxy_becomes_inline_table() -> None:
     from types import MappingProxyType  # noqa: PLC0415
 
-    doc = tomlrt.parse("x = 0\n")
+    doc = tomlrt.loads("x = 0\n")
     doc["x"] = MappingProxyType({"a": 1, "b": 2})
     out = tomlrt.dumps(doc)
-    re = tomlrt.parse(out)
+    re = tomlrt.loads(out)
     tbl = re.table("x")
     assert tbl["a"] == 1
     assert tbl["b"] == 2
 
 
 def test_assign_bytes_rejected() -> None:
-    doc = tomlrt.parse("x = 0\n")
+    doc = tomlrt.loads("x = 0\n")
     with pytest.raises(TypeError, match="bytes"):
         doc["x"] = b"hi"
 
 
 def test_assign_nested_dict_in_list() -> None:
-    doc = tomlrt.parse("x = 0\n")
+    doc = tomlrt.loads("x = 0\n")
     doc["x"] = [{"a": 1}, {"a": 2}]
     out = tomlrt.dumps(doc)
-    re = tomlrt.parse(out)
+    re = tomlrt.loads(out)
     arr = re.array("x")
     assert arr.table(0)["a"] == 1
     assert arr.table(1)["a"] == 2
 
 
 def test_assign_existing_array_deep_copies() -> None:
-    src = tomlrt.parse("source = [1, 2, 3]\n")
-    dest = tomlrt.parse("dest = []\n")
+    src = tomlrt.loads("source = [1, 2, 3]\n")
+    dest = tomlrt.loads("dest = []\n")
     dest["dest"] = src.array("source")
     src.array("source")[0] = 99
     # The mutation on `source` must not leak into `dest`.
@@ -269,21 +269,21 @@ def test_assign_existing_array_deep_copies() -> None:
 
 
 def test_assign_existing_inline_table_deep_copies() -> None:
-    src = tomlrt.parse("source = {a = 1}\n")
-    dest = tomlrt.parse("dest = {}\n")
+    src = tomlrt.loads("source = {a = 1}\n")
+    dest = tomlrt.loads("dest = {}\n")
     dest["dest"] = src.table("source")
     src.table("source")["a"] = 99
     assert dest.table("dest")["a"] == 1
 
 
 def test_assign_unsupported_type_raises() -> None:
-    doc = tomlrt.parse("x = 0\n")
+    doc = tomlrt.loads("x = 0\n")
     with pytest.raises(TypeError, match="Cannot convert"):
         doc["x"] = object()
 
 
 def test_assign_aot_over_scalar() -> None:
-    src = tomlrt.parse(
+    src = tomlrt.loads(
         td("""
             [[products]]
             name = 'a'
@@ -291,7 +291,7 @@ def test_assign_aot_over_scalar() -> None:
             name = 'b'
             """),
     )
-    dest = tomlrt.parse("dest = 0\n")
+    dest = tomlrt.loads("dest = 0\n")
     dest["dest"] = src.aot("products")
     assert tomlrt.loads(tomlrt.dumps(dest)) == {
         "dest": [{"name": "a"}, {"name": "b"}],
@@ -318,7 +318,7 @@ def test_document_factory_supports_full_build_and_dump() -> None:
     doc["title"] = "demo"
     doc["server"] = Table.section({"port": 8080})
     out = tomlrt.dumps(doc)
-    parsed = tomlrt.parse(out)
+    parsed = tomlrt.loads(out)
     assert parsed["title"] == "demo"
     server = parsed.table("server")
     assert server["port"] == 8080
@@ -329,7 +329,7 @@ def test_document_factory_with_data_uses_sections_for_nested_mappings() -> None:
     out = tomlrt.dumps(doc)
     assert "[server]" in out
     assert "{" not in out  # no inline tables
-    assert tomlrt.parse(out) == {"server": {"port": 8080, "host": "localhost"}}
+    assert tomlrt.loads(out) == {"server": {"port": 8080, "host": "localhost"}}
 
 
 def test_document_factory_with_data_uses_aot_for_list_of_mappings() -> None:
@@ -338,14 +338,14 @@ def test_document_factory_with_data_uses_aot_for_list_of_mappings() -> None:
     )
     out = tomlrt.dumps(doc)
     assert out.count("[[package]]") == 2
-    assert tomlrt.parse(out) == {"package": [{"name": "foo"}, {"name": "bar"}]}
+    assert tomlrt.loads(out) == {"package": [{"name": "foo"}, {"name": "bar"}]}
 
 
 def test_document_factory_with_data_keeps_leaf_arrays_inline() -> None:
     doc = Document({"xs": [1, 2, 3]})
     out = tomlrt.dumps(doc)
     assert "[[" not in out  # not promoted to AoT
-    assert tomlrt.parse(out) == {"xs": [1, 2, 3]}
+    assert tomlrt.loads(out) == {"xs": [1, 2, 3]}
 
 
 def test_document_factory_with_data_keeps_top_level_scalars_at_top() -> None:
@@ -368,7 +368,7 @@ def test_document_factory_with_data_recurses_deeply() -> None:
     out = tomlrt.dumps(doc)
     assert "[tool.poetry]" in out
     assert "[tool.poetry.dependencies]" in out
-    assert tomlrt.parse(out) == data
+    assert tomlrt.loads(out) == data
 
 
 def test_document_factory_with_data_aot_with_nested_table() -> None:
@@ -380,14 +380,14 @@ def test_document_factory_with_data_aot_with_nested_table() -> None:
     }
     doc = Document(data)
     out = tomlrt.dumps(doc)
-    assert tomlrt.parse(out) == data
+    assert tomlrt.loads(out) == data
 
 
 def test_document_factory_with_empty_list_stays_inline_empty_array() -> None:
     doc = Document({"xs": []})
     out = tomlrt.dumps(doc)
     assert "[[" not in out
-    assert tomlrt.parse(out) == {"xs": []}
+    assert tomlrt.loads(out) == {"xs": []}
 
 
 def test_document_factory_with_data_does_not_share_mutable_state() -> None:
@@ -403,6 +403,13 @@ def test_document_factory_with_data_does_not_share_mutable_state() -> None:
 def test_document_factory_emits_deprecation_warning() -> None:
     with pytest.warns(DeprecationWarning, match="tomlrt.Document"):
         doc = tomlrt.document({"x": 1})
+    assert isinstance(doc, Document)
+    assert doc["x"] == 1
+
+
+def test_parse_emits_deprecation_warning() -> None:
+    with pytest.warns(DeprecationWarning, match="tomlrt.loads"):
+        doc = tomlrt.parse("x = 1\n")
     assert isinstance(doc, Document)
     assert doc["x"] == 1
 
@@ -475,7 +482,7 @@ def test_deepcopy_array_subview_does_not_double_cst() -> None:
     assert list(arr2) == [1, 2, 3, 4]
     # Re-attach the detached copy to a fresh document and render through
     # the public API: any doubled CST items would surface here.
-    fresh = tomlrt.parse("")
+    fresh = tomlrt.loads("")
     fresh["ys"] = arr2
     assert tomlrt.dumps(fresh) == "ys = [1, 2, 3, 4]\n"
     # Original is untouched.
@@ -508,7 +515,7 @@ def test_copy_array_subview_does_not_double_cst() -> None:
     arr = doc.array("xs")
     arr2 = copy(arr)
     arr2.append(4)
-    fresh = tomlrt.parse("")
+    fresh = tomlrt.loads("")
     fresh["ys"] = arr2
     assert tomlrt.dumps(fresh) == "ys = [1, 2, 3, 4]\n"
     assert tomlrt.dumps(doc) == src

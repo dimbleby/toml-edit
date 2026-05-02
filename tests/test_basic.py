@@ -122,7 +122,7 @@ ROUND_TRIP_CORPUS: list[str] = [
 
 @pytest.mark.parametrize("src", ROUND_TRIP_CORPUS)
 def test_round_trip(src: str) -> None:
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     assert tomlrt.dumps(doc) == src
 
 
@@ -132,7 +132,7 @@ def test_round_trip(src: str) -> None:
 
 
 def test_basic_value_access() -> None:
-    doc = tomlrt.parse(
+    doc = tomlrt.loads(
         dedent(
             """\
             title = "Example"
@@ -155,14 +155,14 @@ def test_basic_value_access() -> None:
 
 
 def test_arrays_are_real_lists() -> None:
-    doc = tomlrt.parse("xs = [1, 2, 3]\n")
+    doc = tomlrt.loads("xs = [1, 2, 3]\n")
     xs = doc["xs"]
     assert isinstance(xs, list)
     assert xs == [1, 2, 3]
 
 
 def test_inline_table_access() -> None:
-    doc = tomlrt.parse("p = { x = 1, y = 2 }\n")
+    doc = tomlrt.loads("p = { x = 1, y = 2 }\n")
     p = doc["p"]
     assert isinstance(p, tomlrt.Table)
     assert dict(p) == {"x": 1, "y": 2}
@@ -178,7 +178,7 @@ def test_nested_tables_and_dotted_keys() -> None:
         x = 2
         """,
     )
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     a = doc["a"]
     assert isinstance(a, tomlrt.Table)
     assert a["x"] == 2
@@ -199,7 +199,7 @@ def test_array_of_tables() -> None:
         name = "Nail"
         """,
     )
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     products = doc["products"]
     assert isinstance(products, list)
     assert len(products) == 2
@@ -212,7 +212,7 @@ def test_array_of_tables() -> None:
 
 
 def test_datetime_values() -> None:
-    doc = tomlrt.parse(
+    doc = tomlrt.loads(
         dedent(
             """\
             odt = 1979-05-27T07:32:00Z
@@ -268,19 +268,19 @@ def test_datetime_values() -> None:
 )
 def test_parse_errors(src: str) -> None:
     with pytest.raises(tomlrt.TOMLParseError):
-        tomlrt.parse(src)
+        tomlrt.loads(src)
 
 
 def test_deep_array_nesting_raises_parse_error_not_recursionerror() -> None:
     payload = "x = " + "[" * 500 + "1" + "]" * 500 + "\n"
     with pytest.raises(tomlrt.TOMLParseError, match="nesting exceeds"):
-        tomlrt.parse(payload)
+        tomlrt.loads(payload)
 
 
 def test_deep_inline_table_nesting_raises_parse_error() -> None:
     payload = "x = " + "{a=" * 500 + "1" + "}" * 500 + "\n"
     with pytest.raises(tomlrt.TOMLParseError, match="nesting exceeds"):
-        tomlrt.parse(payload)
+        tomlrt.loads(payload)
 
 
 def test_inline_table_dotted_key_conflict_reports_inline_position() -> None:
@@ -289,7 +289,7 @@ def test_inline_table_dotted_key_conflict_reports_inline_position() -> None:
     # the next line.
     src = "a = { x = 1, x.y = 2 }\n"
     with pytest.raises(tomlrt.TOMLParseError) as exc_info:
-        tomlrt.parse(src)
+        tomlrt.loads(src)
     assert exc_info.value.line == 1
     # The conflicting "x.y" key starts at column 14 (1-based).
     assert exc_info.value.col == 14
@@ -299,7 +299,7 @@ def test_parse_error_is_value_error() -> None:
     # `tomllib.TOMLDecodeError` extends `ValueError`; tomlrt should be
     # catchable the same way for drop-in compatibility.
     with pytest.raises(ValueError, match="expected"):
-        tomlrt.parse("a =")
+        tomlrt.loads("a =")
 
 
 # ---------------------------------------------------------------------------
@@ -343,7 +343,7 @@ def test_parse_error_is_value_error() -> None:
 )
 def test_parse_error_messages(src: str, message: str) -> None:
     with pytest.raises(tomlrt.TOMLParseError, match=message):
-        tomlrt.parse(src)
+        tomlrt.loads(src)
 
 
 @pytest.mark.parametrize(
@@ -358,12 +358,12 @@ def test_parse_error_messages(src: str, message: str) -> None:
     ],
 )
 def test_aot_scope_resets_between_entries(src: str) -> None:
-    tomlrt.parse(src)
+    tomlrt.loads(src)
 
 
 def test_moderate_array_nesting_still_parses() -> None:
     payload = "x = " + "[" * 50 + "1" + "]" * 50 + "\n"
-    doc = tomlrt.parse(payload)
+    doc = tomlrt.loads(payload)
     assert tomlrt.dumps(doc) == payload
 
 
@@ -379,7 +379,7 @@ def test_iteration_order_child_section_before_parent() -> None:
         [a]
         y = 2
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     a = doc.table("a")
     assert list(a) == ["b", "y"]
 
@@ -393,7 +393,7 @@ def test_iteration_order_parent_then_child_then_more_direct_keys() -> None:
         [a.b]
         y = 2
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     assert list(doc.table("a")) == ["x", "b"]
 
 
@@ -406,7 +406,7 @@ def test_iteration_order_sibling_interleaved_between_parent_and_child() -> None:
         [a.sub]
         z = 3
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     assert list(doc) == ["a", "b"]
     assert list(doc.table("a")) == ["x", "sub"]
 
@@ -420,7 +420,7 @@ def test_iteration_order_aot_then_sibling_then_more_aot() -> None:
         [[fruits]]
         name = "banana"
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     assert list(doc) == ["fruits", "other"]
     fruits = doc.aot("fruits")
     assert [t["name"] for t in fruits] == ["apple", "banana"]

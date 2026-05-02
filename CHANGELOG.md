@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Table.install` and `Table.ensure_table` now accept any `Sequence[str]`
   for the key path, not just `tuple[str, ...]`.
 
+### Deprecated
+
+- `tomlrt.parse()`; use `tomlrt.loads()` instead.
+
 ## [1.1.0] - 2026-04-30
 
 ### Added

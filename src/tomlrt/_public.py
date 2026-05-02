@@ -34,7 +34,16 @@ def loads(text: str) -> Document:
 
 
 def parse(text: str) -> Document:
-    """Alias for [`loads`][tomlrt.parse]."""
+    """Deprecated alias for [`loads`][tomlrt.loads].
+
+    Use ``tomlrt.loads(text)`` instead. This wrapper is retained for
+    backwards compatibility and will be removed in a future release.
+    """
+    warnings.warn(
+        "tomlrt.parse() is deprecated; use tomlrt.loads() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     return loads(text)
 
 
