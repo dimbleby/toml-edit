@@ -20,11 +20,12 @@ print(tomlrt.dumps(doc))   # comments and layout are preserved
 ## Where next
 
 - [Quickstart](quickstart.md) — parse, edit, dump.
-- [Building documents](building.md) — start from scratch with `Document()`.
+- [Building documents](building.md) — construct a `Document` from scratch or
+  from a `dict`.
 - [Reading documents](reading.md) — typed accessors, dotted paths, and
   conversion back to plain Python.
-- [Editing documents](editing.md) — structural assignment, live views, layout
-  control.
+- [Editing documents](editing.md) — dotted-path mutation, structural
+  assignment, live views, layout control.
 - [Comments](comments.md) — the comment API.
 - [Errors](errors.md) — exception types.
 - [API reference](api.md) — full public surface.
