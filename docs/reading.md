@@ -1,9 +1,15 @@
-# Typed access
+# Reading documents
 
-Plain `doc["key"]` returns `Any`.
-The typed accessors give you a shape-checked `Table`, `Array`, or `AoT` directly.
+Plain `doc["key"]` returns `Any`. This page covers the richer read API:
+shape-checked typed accessors, dotted-path navigation, untyped path lookups,
+and conversion back to plain Python.
 
-## Strict accessors
+## Typed accessors
+
+The typed accessors give you a shape-checked `Table`, `Array`, or `AoT`
+directly.
+
+### Strict accessors
 
 Each raises `KeyError` if the key is missing and `TypeError` if the value at the
 key has the wrong shape:
@@ -21,7 +27,7 @@ first_pkg = pkgs.table(0)             # -> Table
 nested    = some_array.array(2)       # -> Array
 ```
 
-## Lenient accessors
+### Lenient accessors
 
 `get_table` / `get_array` / `get_aot` mirror `dict.get`: return the value when
 the shape matches, otherwise the `default` (default `None`).
@@ -56,11 +62,12 @@ maybe = doc.get_entry("tool.poetry.licence")    # None if missing
 
 ## Back to plain Python
 
-`Table.to_dict()` and `Array.to_list()` (and `AoT.to_list()`) return deep copies
-that share no state with the document — useful for handing data to consumers
-that don't know about tomlrt:
+`Table.to_dict()`, `Array.to_list()`, and `AoT.to_list()` return a deep copy
+made of plain `dict` / `list` / scalar values, sharing no state with the
+document. Use one when you want to mutate the result without affecting the
+document, or to hand data off to code that will outlive the document:
 
 ```python
 plain = doc.to_dict()
-import json; print(json.dumps(plain))
+plain["project"]["name"] = "renamed"   # does not touch the document
 ```
