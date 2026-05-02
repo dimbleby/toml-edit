@@ -40,7 +40,7 @@ _TOML_ALPHABET = (
 def _check(src: str) -> None:
     """Parse ``src`` -- on success the document must round-trip byte-exact."""
     try:
-        doc = tomlrt.parse(src)
+        doc = tomlrt.loads(src)
     except tomlrt.TOMLParseError:
         return
     assert tomlrt.dumps(doc) == src

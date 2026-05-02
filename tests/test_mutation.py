@@ -37,7 +37,7 @@ def test_replace_scalar_preserves_surrounding_format() -> None:
         name = 'old'  # inline
         port = 80
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     doc["name"] = "new"
     out = tomlrt.dumps(doc)
     assert out == td("""
@@ -50,7 +50,7 @@ def test_replace_scalar_preserves_surrounding_format() -> None:
 
 def test_add_top_level_key_appends() -> None:
     src = "name = 'foo'\n"
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     doc["count"] = 3
     out = tomlrt.dumps(doc)
     assert out == "name = 'foo'\ncount = 3\n"
@@ -58,7 +58,7 @@ def test_add_top_level_key_appends() -> None:
 
 def test_add_top_level_key_when_only_section_exists() -> None:
     src = "[srv]\nport = 8080\n"
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     doc["name"] = "demo"
     out = tomlrt.dumps(doc)
     # Pre-header section is created at index 0; a blank line separates
@@ -74,7 +74,7 @@ def test_add_top_level_key_when_only_section_exists() -> None:
 
 def test_add_key_inside_existing_section() -> None:
     src = "[srv]\nport = 80\n"
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     srv = doc.table("srv")
     srv["host"] = "127.0.0.1"
     out = tomlrt.dumps(doc)
@@ -93,21 +93,21 @@ def test_delete_scalar_removes_line_with_leading_trivia() -> None:
         b = 2
         c = 3
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     del doc["b"]
     out = tomlrt.dumps(doc)
     assert out == "a = 1\nc = 3\n"
 
 
 def test_delete_missing_key_raises_keyerror() -> None:
-    doc = tomlrt.parse("a = 1\n")
+    doc = tomlrt.loads("a = 1\n")
     with pytest.raises(KeyError):
         del doc["missing"]
 
 
 def test_set_overwrites_dotted_prefix() -> None:
     src = "[a]\nb.c = 1\n"
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     a = doc.table("a")
     a["b"] = 2
     out = tomlrt.dumps(doc)
@@ -116,14 +116,14 @@ def test_set_overwrites_dotted_prefix() -> None:
 
 def test_set_overwrites_implicit_child_table() -> None:
     src = "[a.b]\nx = 1\n"
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     doc["a"] = 5
     out = tomlrt.dumps(doc)
     assert _reparses(out) == {"a": 5}
 
 
 def test_quoted_key_when_bare_invalid() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     doc["weird key.com"] = 1
     out = tomlrt.dumps(doc)
     assert '"weird key.com"' in out
@@ -133,7 +133,7 @@ def test_quoted_key_when_bare_invalid() -> None:
 def test_delete_top_level_dotted_key_in_preamble() -> None:
     # ``a.b = 1`` lives in the headerless preamble: deleting ``a``
     # must classify it as a dotted KV in an unattached section.
-    doc = tomlrt.parse("a.b = 1\nc = 2\n")
+    doc = tomlrt.loads("a.b = 1\nc = 2\n")
     del doc["a"]
     assert "a" not in doc
     assert tomlrt.dumps(doc) == "c = 2\n"
@@ -142,7 +142,7 @@ def test_delete_top_level_dotted_key_in_preamble() -> None:
 def test_delete_dotted_key_inside_aot_entry() -> None:
     # An AoT entry holds ``foo.bar = 1`` as a dotted KV: deleting
     # ``foo`` walks the AoT-anchored slow path in ``_classify``.
-    doc = tomlrt.parse("[[items]]\nfoo.bar = 1\nkeep = 2\n")
+    doc = tomlrt.loads("[[items]]\nfoo.bar = 1\nkeep = 2\n")
     del doc.aot("items")[0]["foo"]
     assert "foo" not in doc.aot("items")[0]
     assert doc.aot("items")[0]["keep"] == 2
@@ -152,7 +152,7 @@ def test_overwrite_implicit_supertable_inside_aot_entry() -> None:
     # An AoT entry has a deeper ``[items.deep.nested]`` sub-section,
     # so ``items[0]['deep']`` is an implicit super-table; assigning
     # a scalar to it must purge the deeper section.
-    doc = tomlrt.parse("[[items]]\n[items.deep.nested]\nx = 2\n")
+    doc = tomlrt.loads("[[items]]\n[items.deep.nested]\nx = 2\n")
     doc.aot("items")[0]["deep"] = "scalar"
     assert doc.aot("items")[0]["deep"] == "scalar"
 
@@ -164,7 +164,7 @@ def test_overwrite_implicit_supertable_inside_aot_entry() -> None:
 
 def test_inline_table_replace() -> None:
     src = "obj = { a = 1, b = 2 }\n"
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     obj = doc.table("obj")
     obj["a"] = 99
     out = tomlrt.dumps(doc)
@@ -173,7 +173,7 @@ def test_inline_table_replace() -> None:
 
 def test_inline_table_append() -> None:
     src = "obj = { a = 1 }\n"
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     obj = doc.table("obj")
     obj["b"] = 2
     out = tomlrt.dumps(doc)
@@ -184,7 +184,7 @@ def test_inline_table_append() -> None:
 
 def test_inline_table_delete_last_clears_trailing_comma() -> None:
     src = "obj = { a = 1, b = 2 }\n"
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     obj = doc.table("obj")
     del obj["b"]
     out = tomlrt.dumps(doc)
@@ -197,7 +197,7 @@ def test_inline_table_accepts_standalone_array_with_live_attach() -> None:
     # the requested multiline layout is preserved (TOML 1.1 admits
     # multi-line arrays inside inline tables).
     src = "obj = { a = 1 }\n"
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     obj = doc.table("obj")
     arr = Array([1, 2, 3], multiline=True)
     obj["xs"] = arr
@@ -208,14 +208,14 @@ def test_inline_table_accepts_standalone_array_with_live_attach() -> None:
 
 
 def test_inline_table_rejects_section_spec() -> None:
-    doc = tomlrt.parse("obj = { a = 1 }\n")
+    doc = tomlrt.loads("obj = { a = 1 }\n")
     obj = doc.table("obj")
     with pytest.raises(tomlrt.TOMLError, match="inline-style table"):
         obj["bad"] = Table.section({"x": 1})
 
 
 def test_inline_table_rejects_aot_value() -> None:
-    doc = tomlrt.parse("obj = { a = 1 }\n")
+    doc = tomlrt.loads("obj = { a = 1 }\n")
     obj = doc.table("obj")
     with pytest.raises(tomlrt.TOMLError, match="array-of-tables inside an inline"):
         obj["bad"] = tomlrt.AoT()
@@ -228,7 +228,7 @@ def test_inline_table_rejects_aot_value() -> None:
 
 def test_array_append() -> None:
     src = "xs = [1, 2, 3]\n"
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     xs = doc.array("xs")
     xs.append(4)
     assert list(xs) == [1, 2, 3, 4]
@@ -240,14 +240,14 @@ def test_array_append_to_empty_with_tab_indented_comment_preserves_tab() -> None
     # The only indent signal in the empty container is the tab before
     # the comment line. Appending must reuse it instead of falling back
     # to the four-space default.
-    doc = tomlrt.parse("a = [\n\t# hi\n]\n")
+    doc = tomlrt.loads("a = [\n\t# hi\n]\n")
     arr = doc.array("a")
     arr.append(1)
     assert tomlrt.dumps(doc) == "a = [\n\t# hi\n\t1,\n]\n"
 
 
 def test_array_pop() -> None:
-    doc = tomlrt.parse("xs = [10, 20, 30]\n")
+    doc = tomlrt.loads("xs = [10, 20, 30]\n")
     xs = doc.array("xs")
     v = xs.pop()
     assert v == 30
@@ -257,7 +257,7 @@ def test_array_pop() -> None:
 
 
 def test_array_setitem_int() -> None:
-    doc = tomlrt.parse("xs = [1, 2, 3]\n")
+    doc = tomlrt.loads("xs = [1, 2, 3]\n")
     xs = doc.array("xs")
     xs[1] = 22
     out = tomlrt.dumps(doc)
@@ -265,7 +265,7 @@ def test_array_setitem_int() -> None:
 
 
 def test_array_setitem_slice() -> None:
-    doc = tomlrt.parse("xs = [1, 2, 3, 4]\n")
+    doc = tomlrt.loads("xs = [1, 2, 3, 4]\n")
     xs = doc.array("xs")
     xs[1:3] = [22, 33, 44]
     out = tomlrt.dumps(doc)
@@ -277,7 +277,7 @@ def test_array_setitem_slice_matches_list_semantics() -> None:
     # ``list``), and reject non-iterables with TypeError. The previous
     # implementation used ``assert``, which silently did the wrong
     # thing under ``python -O``.
-    doc = tomlrt.parse("xs = [1, 2, 3]\n")
+    doc = tomlrt.loads("xs = [1, 2, 3]\n")
     xs = doc.array("xs")
     # Strings iterate to characters, like list.__setitem__ does.
     xs[0:1] = "ab"
@@ -288,7 +288,7 @@ def test_array_setitem_slice_matches_list_semantics() -> None:
 
 
 def test_array_delitem_slice() -> None:
-    doc = tomlrt.parse("xs = [1, 2, 3, 4]\n")
+    doc = tomlrt.loads("xs = [1, 2, 3, 4]\n")
     xs = doc.array("xs")
     del xs[1:3]
     out = tomlrt.dumps(doc)
@@ -296,7 +296,7 @@ def test_array_delitem_slice() -> None:
 
 
 def test_array_clear_and_append() -> None:
-    doc = tomlrt.parse("xs = [1, 2, 3]\n")
+    doc = tomlrt.loads("xs = [1, 2, 3]\n")
     xs = doc.array("xs")
     xs.clear()
     xs.append("hi")
@@ -305,7 +305,7 @@ def test_array_clear_and_append() -> None:
 
 
 def test_array_extend_iadd() -> None:
-    doc = tomlrt.parse("xs = []\n")
+    doc = tomlrt.loads("xs = []\n")
     xs = doc.array("xs")
     xs.extend([1, 2])
     xs += [3, 4]
@@ -314,7 +314,7 @@ def test_array_extend_iadd() -> None:
 
 
 def test_array_sort_reverse() -> None:
-    doc = tomlrt.parse("xs = [3, 1, 2]\n")
+    doc = tomlrt.loads("xs = [3, 1, 2]\n")
     xs = doc.array("xs")
     xs.sort()
     assert list(xs) == [1, 2, 3]
@@ -324,7 +324,7 @@ def test_array_sort_reverse() -> None:
 
 
 def test_array_imul() -> None:
-    doc = tomlrt.parse("xs = [1, 2]\n")
+    doc = tomlrt.loads("xs = [1, 2]\n")
     xs = doc.array("xs")
     xs *= 3
     out = tomlrt.dumps(doc)
@@ -332,7 +332,7 @@ def test_array_imul() -> None:
 
 
 def test_array_remove() -> None:
-    doc = tomlrt.parse("xs = [1, 2, 3, 2]\n")
+    doc = tomlrt.loads("xs = [1, 2, 3, 2]\n")
     xs = doc.array("xs")
     xs.remove(2)
     out = tomlrt.dumps(doc)
@@ -340,7 +340,7 @@ def test_array_remove() -> None:
 
 
 def test_array_insert() -> None:
-    doc = tomlrt.parse("xs = [1, 3]\n")
+    doc = tomlrt.loads("xs = [1, 3]\n")
     xs = doc.array("xs")
     xs.insert(1, 2)
     out = tomlrt.dumps(doc)
@@ -351,7 +351,7 @@ def test_array_insert_at_zero_does_not_duplicate_leading_comment() -> None:
     # The header comment ``# head`` is anchored to the array's opening
     # bracket (no newline before it). On insert(0, ...) it must stay
     # there, and the new item must land on its own indented line.
-    doc = tomlrt.parse(
+    doc = tomlrt.loads(
         td("""
         a = [# head
          1,
@@ -404,7 +404,7 @@ def test_every_array_mutator_is_overridden(name: str) -> None:
 
 def test_assigning_array_deep_clones() -> None:
     src = "src = [1, 2, 3]\n"
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     src_arr = doc.array("src")
     doc["dst"] = src_arr
     dst = doc.array("dst")
@@ -417,21 +417,21 @@ def test_assigning_array_deep_clones() -> None:
 
 
 def test_assigning_dict_creates_inline_table() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     doc["obj"] = {"a": 1, "b": "two"}
     out = tomlrt.dumps(doc)
     assert _reparses(out) == {"obj": {"a": 1, "b": "two"}}
 
 
 def test_assigning_list_creates_inline_array() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     doc["nums"] = [1, 2, 3]
     out = tomlrt.dumps(doc)
     assert _reparses(out) == {"nums": [1, 2, 3]}
 
 
 def test_replace_scalar_with_array() -> None:
-    doc = tomlrt.parse("x = 1\n")
+    doc = tomlrt.loads("x = 1\n")
     doc["x"] = [True, False]
     out = tomlrt.dumps(doc)
     assert _reparses(out) == {"x": [True, False]}
@@ -443,7 +443,7 @@ def test_replace_scalar_with_array() -> None:
 
 
 def _aot_doc() -> tomlrt.Document:
-    return tomlrt.parse(
+    return tomlrt.loads(
         '[[pkg]]\nname = "a"\n\n'
         "[pkg.dep]\nx = 1\n\n"
         '[[pkg]]\nname = "b"\n\n'
@@ -524,7 +524,7 @@ def test_aot_delitem_slice_removes_range() -> None:
 
 
 def test_aot_delitem_slice_with_step() -> None:
-    doc = tomlrt.parse(
+    doc = tomlrt.loads(
         td("""
             [[p]]
             n=1
@@ -589,7 +589,7 @@ def test_aot_iadd_appends_entries_to_cst() -> None:
 
 
 def test_aot_imul_replicates_entries_in_cst() -> None:
-    doc = tomlrt.parse(
+    doc = tomlrt.loads(
         td("""
         [[t]]
         x = 1
@@ -611,7 +611,7 @@ def test_aot_imul_replicates_entries_in_cst() -> None:
 
 
 def test_aot_imul_zero_clears() -> None:
-    doc = tomlrt.parse(
+    doc = tomlrt.loads(
         td("""
         [[t]]
         x = 1
@@ -625,7 +625,7 @@ def test_aot_imul_zero_clears() -> None:
 
 
 def test_aot_reverse_reorders_cst() -> None:
-    doc = tomlrt.parse(
+    doc = tomlrt.loads(
         td("""
         [[t]]
         x = 1
@@ -641,7 +641,7 @@ def test_aot_reverse_reorders_cst() -> None:
 
 
 def test_aot_sort_reorders_cst() -> None:
-    doc = tomlrt.parse(
+    doc = tomlrt.loads(
         td("""
         [[t]]
         x = 3
@@ -664,7 +664,7 @@ def test_aot_imul_preserves_inter_entry_separator() -> None:
         [[t]]
         x = 2  # two
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     doc.aot("t").__imul__(2)
     assert tomlrt.dumps(doc) == (
         "[[t]]\nx = 1  # one\n\n[[t]]\nx = 2  # two\n\n"
@@ -682,7 +682,7 @@ def test_aot_imul_preserves_per_entry_leading_comments() -> None:
         [[t]]
         x = 2
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     doc.aot("t").__imul__(2)
     assert tomlrt.dumps(doc) == (
         "# A\n[[t]]\nx = 1\n\n# B\n[[t]]\nx = 2\n\n"
@@ -701,7 +701,7 @@ def test_aot_sort_preserves_formatting_byte_exact() -> None:
         [[t]]
         x = 2  # second
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     doc.aot("t").sort(key=lambda e: e["x"])
     assert tomlrt.dumps(doc) == (
         td("""
@@ -725,7 +725,7 @@ def test_aot_reverse_preserves_formatting_byte_exact() -> None:
         [[t]]
         name = "b"  # second
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     doc.aot("t").reverse()
     assert tomlrt.dumps(doc) == (
         td("""
@@ -739,7 +739,7 @@ def test_aot_reverse_preserves_formatting_byte_exact() -> None:
 
 
 def test_aot_reverse_preserves_owned_subtables() -> None:
-    doc = tomlrt.parse(
+    doc = tomlrt.loads(
         td("""
             [[t]]
             name = "a"
@@ -774,7 +774,7 @@ def test_aot_reverse_moves_leading_comments_with_entries() -> None:
         [[t]]
         x = 3
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     doc.aot("t").reverse()
     assert tomlrt.dumps(doc) == (
         td("""
@@ -807,7 +807,7 @@ def test_aot_sort_moves_leading_comments_with_entries() -> None:
         [[t]]
         x = 1
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     doc.aot("t").sort(key=lambda e: e["x"])
     assert tomlrt.dumps(doc) == (
         td("""
@@ -841,7 +841,7 @@ def test_aot_reverse_with_partial_leading_comments() -> None:
         [[t]]
         x = 3
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     doc.aot("t").reverse()
     assert tomlrt.dumps(doc) == (
         td("""
@@ -859,7 +859,7 @@ def test_aot_reverse_with_partial_leading_comments() -> None:
 
 
 def test_aot_remove_drops_first_matching_entry_from_cst() -> None:
-    doc = tomlrt.parse(
+    doc = tomlrt.loads(
         td("""
         [[t]]
         x = 1
@@ -875,14 +875,14 @@ def test_aot_remove_drops_first_matching_entry_from_cst() -> None:
 
 
 def test_aot_remove_missing_raises_value_error() -> None:
-    doc = tomlrt.parse("[[t]]\nx = 1\n")
+    doc = tomlrt.loads("[[t]]\nx = 1\n")
     aot = doc.aot("t")
     with pytest.raises(ValueError, match="not in list"):
         aot.remove({"x": 999})
 
 
 def test_aot_slice_replace_contiguous() -> None:
-    doc = tomlrt.parse(
+    doc = tomlrt.loads(
         td("""
             [[items]]
             name = "a"
@@ -908,7 +908,7 @@ def test_aot_slice_replace_contiguous() -> None:
 
 
 def test_aot_slice_replace_extended_matching_length() -> None:
-    doc = tomlrt.parse(
+    doc = tomlrt.loads(
         td("""
             [[items]]
             name = "a"
@@ -929,7 +929,7 @@ def test_aot_slice_replace_extended_matching_length() -> None:
 
 
 def test_aot_slice_replace_extended_mismatched_length_raises() -> None:
-    doc = tomlrt.parse(
+    doc = tomlrt.loads(
         td("""
             [[items]]
             name = "a"
@@ -947,7 +947,7 @@ def test_aot_slice_replace_extended_mismatched_length_raises() -> None:
 
 
 def test_aot_reverse_on_empty_is_noop() -> None:
-    doc = tomlrt.parse("[[items]]\n")
+    doc = tomlrt.loads("[[items]]\n")
     items = doc.aot("items")
     items.clear()
     items.reverse()
@@ -955,7 +955,7 @@ def test_aot_reverse_on_empty_is_noop() -> None:
 
 
 def test_aot_sort_on_empty_is_noop() -> None:
-    doc = tomlrt.parse("[[items]]\n")
+    doc = tomlrt.loads("[[items]]\n")
     items = doc.aot("items")
     items.clear()
     items.sort(key=lambda t: t.get("name", ""))
@@ -968,14 +968,14 @@ def test_aot_sort_on_empty_is_noop() -> None:
 
 
 def test_array_sort_with_key_callable() -> None:
-    doc = tomlrt.parse('xs = ["bb", "a", "ccc"]\n')
+    doc = tomlrt.loads('xs = ["bb", "a", "ccc"]\n')
     xs = doc.array("xs")
     xs.sort(key=lambda v: len(str(v)))
     assert _reparses(tomlrt.dumps(doc)) == {"xs": ["a", "bb", "ccc"]}
 
 
 def test_array_imul_zero_clears() -> None:
-    doc = tomlrt.parse("xs = [1, 2, 3]\n")
+    doc = tomlrt.loads("xs = [1, 2, 3]\n")
     xs = doc.array("xs")
     xs *= 0
     assert list(xs) == []
@@ -983,28 +983,28 @@ def test_array_imul_zero_clears() -> None:
 
 
 def test_array_imul_negative_clears() -> None:
-    doc = tomlrt.parse("xs = [1, 2]\n")
+    doc = tomlrt.loads("xs = [1, 2]\n")
     xs = doc.array("xs")
     xs *= -3
     assert list(xs) == []
 
 
 def test_array_imul_repeats_items() -> None:
-    doc = tomlrt.parse("xs = [1, 2]\n")
+    doc = tomlrt.loads("xs = [1, 2]\n")
     xs = doc.array("xs")
     xs *= 3
     assert _reparses(tomlrt.dumps(doc)) == {"xs": [1, 2, 1, 2, 1, 2]}
 
 
 def test_array_table_typed_accessor_raises_on_non_table_item() -> None:
-    doc = tomlrt.parse("xs = [1, 2]\n")
+    doc = tomlrt.loads("xs = [1, 2]\n")
     xs = doc.array("xs")
     with pytest.raises(TypeError, match="not a Table"):
         xs.table(0)
 
 
 def test_array_array_typed_accessor_raises_on_non_array_item() -> None:
-    doc = tomlrt.parse("xs = [1, 2]\n")
+    doc = tomlrt.loads("xs = [1, 2]\n")
     xs = doc.array("xs")
     with pytest.raises(TypeError, match="not an Array"):
         xs.array(0)
@@ -1013,13 +1013,13 @@ def test_array_array_typed_accessor_raises_on_non_array_item() -> None:
 def test_array_append_aot_raises() -> None:
     # An AoT only renders as ``[[ ... ]]`` sections; trying to splice
     # one into an inline array has no valid serialisation.
-    doc = tomlrt.parse("xs = [1]\n")
+    doc = tomlrt.loads("xs = [1]\n")
     with pytest.raises(tomlrt.TOMLError, match="Cannot store an array-of-tables"):
         doc.array("xs").append(tomlrt.AoT())
 
 
 def test_dotted_subtable_delitem_missing_key_raises_keyerror() -> None:
-    doc = tomlrt.parse("a.b = 1\n")
+    doc = tomlrt.loads("a.b = 1\n")
     sub = doc["a"]
     assert isinstance(sub, Table)
     with pytest.raises(KeyError, match="missing"):
@@ -1032,49 +1032,49 @@ def test_dotted_subtable_delitem_missing_key_raises_keyerror() -> None:
 
 
 def test_install_rejects_empty_string_path() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     with pytest.raises(tomlrt.TOMLError, match="must not be empty"):
         doc.install("", 1)
 
 
 def test_install_rejects_empty_tuple_path() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     with pytest.raises(tomlrt.TOMLError, match="must not be empty"):
         doc.install((), 1)
 
 
 def test_install_rejects_string_path_with_empty_segment() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     with pytest.raises(tomlrt.TOMLError, match="empty segment"):
         doc.install("a..b", 1)
 
 
 def test_install_rejects_tuple_path_with_empty_segment() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     with pytest.raises(tomlrt.TOMLError, match="empty segment"):
         doc.install(("a", ""), 1)
 
 
 def test_install_rejects_non_string_path() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     with pytest.raises(TypeError, match="key path must be str or sequence"):
         doc.install(123, 1)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
 
 def test_install_rejects_tuple_with_non_string_segment() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     with pytest.raises(TypeError, match="segment must be str"):
         doc.install(("a", 1), 1)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
 
 def test_install_accepts_list_path() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     doc.install(["tool", "ruff", "line-length"], 88)
     assert tomlrt.dumps(doc) == "[tool.ruff]\nline-length = 88\n"
 
 
 def test_ensure_table_accepts_list_path() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     t = doc.ensure_table(["tool", "ruff"])
     t["line-length"] = 88
     assert tomlrt.dumps(doc) == "[tool.ruff]\nline-length = 88\n"
@@ -1086,7 +1086,7 @@ def test_ensure_table_accepts_list_path() -> None:
 
 
 def test_aot_add_returns_new_table_view() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     doc["pkg"] = AoT()
     aot = doc["pkg"]
     pkg = aot.add({"name": "foo"})
@@ -1096,7 +1096,7 @@ def test_aot_add_returns_new_table_view() -> None:
 
 
 def test_aot_add_default_empty_returns_blank_entry_for_population() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     doc["pkg"] = AoT()
     aot = doc["pkg"]
     pkg = aot.add()
@@ -1109,7 +1109,7 @@ def test_aot_add_default_empty_returns_blank_entry_for_population() -> None:
 
 
 def test_aot_add_returned_view_stays_live_across_subsequent_adds() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     doc["pkg"] = AoT()
     aot = doc["pkg"]
     first = aot.add({"name": "a"})
@@ -1127,7 +1127,7 @@ def test_aot_add_returned_view_stays_live_across_subsequent_adds() -> None:
 
 
 def test_aot_add_blank_separates_consecutive_entries() -> None:
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     doc["pkg"] = AoT()
     aot = doc["pkg"]
     aot.add({"name": "a"})
@@ -1143,7 +1143,7 @@ def test_aot_add_blank_separates_consecutive_entries() -> None:
 
 
 def test_array_append_dict_synthesises_inline_table() -> None:
-    doc = tomlrt.parse("xs = []\n")
+    doc = tomlrt.loads("xs = []\n")
     arr = doc.array("xs")
     arr.append({"a": 1})
     out = tomlrt.dumps(doc)
@@ -1153,7 +1153,7 @@ def test_array_append_dict_synthesises_inline_table() -> None:
 
 
 def test_array_append_list_synthesises_inline_array() -> None:
-    doc = tomlrt.parse("xs = []\n")
+    doc = tomlrt.loads("xs = []\n")
     arr = doc.array("xs")
     arr.append([1, 2, 3])
     parsed = _reparses(tomlrt.dumps(doc))
@@ -1161,7 +1161,7 @@ def test_array_append_list_synthesises_inline_array() -> None:
 
 
 def test_array_extend_mixed_python_containers() -> None:
-    doc = tomlrt.parse("xs = []\n")
+    doc = tomlrt.loads("xs = []\n")
     arr = doc.array("xs")
     arr.extend([{"a": 1}, [1, 2], "three"])
     parsed = _reparses(tomlrt.dumps(doc))
@@ -1169,7 +1169,7 @@ def test_array_extend_mixed_python_containers() -> None:
 
 
 def test_array_insert_dict() -> None:
-    doc = tomlrt.parse("xs = [1, 3]\n")
+    doc = tomlrt.loads("xs = [1, 3]\n")
     arr = doc.array("xs")
     arr.insert(1, {"k": "v"})
     parsed = _reparses(tomlrt.dumps(doc))
@@ -1177,7 +1177,7 @@ def test_array_insert_dict() -> None:
 
 
 def test_array_setitem_replaces_with_dict() -> None:
-    doc = tomlrt.parse("xs = [1, 2, 3]\n")
+    doc = tomlrt.loads("xs = [1, 2, 3]\n")
     arr = doc.array("xs")
     arr[1] = {"k": "v"}
     parsed = _reparses(tomlrt.dumps(doc))
@@ -1190,7 +1190,7 @@ def test_array_setitem_replaces_with_dict() -> None:
 
 
 def test_table_to_dict_returns_plain_dict() -> None:
-    doc = tomlrt.parse(
+    doc = tomlrt.loads(
         """
         title = "demo"
         [owner]
@@ -1204,7 +1204,7 @@ def test_table_to_dict_returns_plain_dict() -> None:
 
 
 def test_table_to_dict_recursively_flattens_aot_and_array() -> None:
-    doc = tomlrt.parse(
+    doc = tomlrt.loads(
         """
         xs = [1, [2, 3], { k = "v" }]
 
@@ -1233,14 +1233,14 @@ def test_table_to_dict_recursively_flattens_aot_and_array() -> None:
 
 
 def test_table_to_dict_isinstance_dict() -> None:
-    doc = tomlrt.parse("[tool]\nname = 'x'\n")
+    doc = tomlrt.loads("[tool]\nname = 'x'\n")
     snap = doc.to_dict()
     assert isinstance(snap, dict)
     assert isinstance(snap["tool"], dict)
 
 
 def test_table_to_dict_independent_of_document_mutations() -> None:
-    doc = tomlrt.parse(
+    doc = tomlrt.loads(
         td("""
         a = 1
         [t]
@@ -1254,7 +1254,7 @@ def test_table_to_dict_independent_of_document_mutations() -> None:
 
 
 def test_array_to_list_returns_plain_list() -> None:
-    doc = tomlrt.parse('xs = [1, "two", { k = "v" }]\n')
+    doc = tomlrt.loads('xs = [1, "two", { k = "v" }]\n')
     snap = doc.array("xs").to_list()
     assert type(snap) is list
     assert type(snap[2]) is dict
@@ -1262,7 +1262,7 @@ def test_array_to_list_returns_plain_list() -> None:
 
 
 def test_aot_to_list_returns_list_of_dicts() -> None:
-    doc = tomlrt.parse(
+    doc = tomlrt.loads(
         """
         [[pkg]]
         name = "a"
@@ -1289,7 +1289,7 @@ def test_to_dict_round_trip_is_data_equivalent_to_tomllib() -> None:
     [[pkg]]
     name = "a"
     """
-    assert tomlrt.parse(src).to_dict() == _reparses(src)
+    assert tomlrt.loads(src).to_dict() == _reparses(src)
 
 
 # ---------------------------------------------------------------------------
@@ -1298,32 +1298,32 @@ def test_to_dict_round_trip_is_data_equivalent_to_tomllib() -> None:
 
 
 def test_table_get_table_returns_table_when_present() -> None:
-    doc = tomlrt.parse("[t]\nx = 1\n")
+    doc = tomlrt.loads("[t]\nx = 1\n")
     t = doc.get_table("t")
     assert t is not None
     assert t["x"] == 1
 
 
 def test_table_get_table_returns_none_when_missing() -> None:
-    doc = tomlrt.parse("a = 1\n")
+    doc = tomlrt.loads("a = 1\n")
     assert doc.get_table("nope") is None
 
 
 def test_table_get_table_returns_default_when_missing() -> None:
-    doc = tomlrt.parse("a = 1\n")
+    doc = tomlrt.loads("a = 1\n")
     sentinel: dict[str, int] = {}
     result = doc.get_table("nope", sentinel)
     assert result is sentinel
 
 
 def test_table_get_table_raises_typeerror_on_wrong_type() -> None:
-    doc = tomlrt.parse("a = 1\n")
+    doc = tomlrt.loads("a = 1\n")
     with pytest.raises(TypeError, match="not a Table"):
         doc.get_table("a")
 
 
 def test_table_get_table_handles_dotted_path() -> None:
-    doc = tomlrt.parse("[tool.poetry]\nname = 'x'\n")
+    doc = tomlrt.loads("[tool.poetry]\nname = 'x'\n")
     sub = doc.get_table("tool.poetry")
     assert sub is not None
     assert sub["name"] == "x"
@@ -1331,7 +1331,7 @@ def test_table_get_table_handles_dotted_path() -> None:
 
 
 def test_table_get_array_returns_array_or_default() -> None:
-    doc = tomlrt.parse("xs = [1, 2, 3]\n")
+    doc = tomlrt.loads("xs = [1, 2, 3]\n")
     arr = doc.get_array("xs")
     assert arr is not None
     assert list(arr) == [1, 2, 3]
@@ -1340,13 +1340,13 @@ def test_table_get_array_returns_array_or_default() -> None:
 
 
 def test_table_get_array_raises_typeerror_on_wrong_type() -> None:
-    doc = tomlrt.parse("a = 1\n")
+    doc = tomlrt.loads("a = 1\n")
     with pytest.raises(TypeError, match="not an Array"):
         doc.get_array("a")
 
 
 def test_table_get_aot_returns_aot_or_default() -> None:
-    doc = tomlrt.parse("[[pkg]]\nname = 'a'\n")
+    doc = tomlrt.loads("[[pkg]]\nname = 'a'\n")
     aot = doc.get_aot("pkg")
     assert aot is not None
     assert aot[0]["name"] == "a"
@@ -1354,13 +1354,13 @@ def test_table_get_aot_returns_aot_or_default() -> None:
 
 
 def test_table_get_aot_raises_typeerror_on_wrong_type() -> None:
-    doc = tomlrt.parse("[t]\nname = 'a'\n")
+    doc = tomlrt.loads("[t]\nname = 'a'\n")
     with pytest.raises(TypeError, match="not an AoT"):
         doc.get_aot("t")
 
 
 def test_array_get_array_in_range_and_default() -> None:
-    doc = tomlrt.parse("xs = [[1, 2], [3, 4]]\n")
+    doc = tomlrt.loads("xs = [[1, 2], [3, 4]]\n")
     arr = doc.array("xs")
     inner = arr.get_array(0)
     assert inner is not None
@@ -1370,7 +1370,7 @@ def test_array_get_array_in_range_and_default() -> None:
 
 
 def test_array_get_table_in_range_and_default() -> None:
-    doc = tomlrt.parse("xs = [{ a = 1 }, { a = 2 }]\n")
+    doc = tomlrt.loads("xs = [{ a = 1 }, { a = 2 }]\n")
     arr = doc.array("xs")
     t = arr.get_table(0)
     assert t is not None
@@ -1379,7 +1379,7 @@ def test_array_get_table_in_range_and_default() -> None:
 
 
 def test_array_get_table_raises_typeerror_on_wrong_type() -> None:
-    doc = tomlrt.parse("xs = [1, 2]\n")
+    doc = tomlrt.loads("xs = [1, 2]\n")
     arr = doc.array("xs")
     with pytest.raises(TypeError, match="not a Table"):
         arr.get_table(0)
@@ -1395,7 +1395,7 @@ def test_array_get_table_raises_typeerror_on_wrong_type() -> None:
 
 
 def test_chained_subscripts_typecheck_and_work() -> None:
-    doc = tomlrt.parse(
+    doc = tomlrt.loads(
         """
         [tool.poetry]
         name = "demo"
@@ -1407,7 +1407,7 @@ def test_chained_subscripts_typecheck_and_work() -> None:
 
 
 def test_table_is_mutablemapping_str_any() -> None:
-    doc = tomlrt.parse(
+    doc = tomlrt.loads(
         td("""
         a = 1
         [t]
@@ -1423,7 +1423,7 @@ def test_table_is_mutablemapping_str_any() -> None:
 
 
 def test_array_is_list_any() -> None:
-    doc = tomlrt.parse('xs = [1, "two", { k = "v" }]\n')
+    doc = tomlrt.loads('xs = [1, "two", { k = "v" }]\n')
     arr = doc.array("xs")
     # An Array is a list (subclass), parameterised as list[Any].
     sink: list[Any] = arr
@@ -1432,7 +1432,7 @@ def test_array_is_list_any() -> None:
 
 
 def test_table_getitem_returns_any_pop_too() -> None:
-    doc = tomlrt.parse("[t]\nname = 'x'\n")
+    doc = tomlrt.loads("[t]\nname = 'x'\n")
     # Static type of the popped value is Any; runtime is a plain dict
     # snapshot (per Table.pop semantics).
     popped = doc.pop("t")
@@ -1447,18 +1447,18 @@ def test_non_string_keys_rejected() -> None:
     an empty ``""`` key and lie about the stored state.
     """
     for bad in (None, 42, 3.14, True, False, (1,), b"bytes"):
-        doc = tomlrt.parse("")
+        doc = tomlrt.loads("")
         with pytest.raises(TypeError):
             doc[bad] = 1  # type: ignore[index]  # ty: ignore[invalid-assignment]
 
     # Empty string key IS valid TOML (``"" = 1``) and must still work.
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     doc[""] = 1
     assert tomlrt.dumps(doc) == '"" = 1\n'
     assert tomlrt.loads(tomlrt.dumps(doc))[""] == 1
 
     # install() should reject non-string segments too.
-    doc = tomlrt.parse("")
+    doc = tomlrt.loads("")
     with pytest.raises((TypeError, tomlrt.TOMLError)):
         doc.install((None,), 1)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
@@ -1480,7 +1480,7 @@ def test_set_direct_key_on_headerless_parent_no_leading_blank() -> None:
         [fruit.banana]
         y = 2
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     doc.table("fruit")["count"] = 5
     out = tomlrt.dumps(doc)
     assert not out.startswith("\n"), repr(out)
@@ -1519,7 +1519,7 @@ def test_set_direct_key_on_headerless_parent_preserves_compact_style() -> None:
         [fruit.banana]
         y = 2
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     doc.table("fruit")["count"] = 5
     out = tomlrt.dumps(doc)
     assert out == td("""
@@ -1551,12 +1551,12 @@ def test_install_table_into_compact_style_doc_stays_compact() -> None:
         [c]
         z = 3
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     src_b = td("""
         [b]
         y = 2
         """)
-    doc["b"] = tomlrt.parse(src_b)["b"]
+    doc["b"] = tomlrt.loads(src_b)["b"]
     out = tomlrt.dumps(doc)
     assert out == td("""
         [a]
@@ -1580,12 +1580,12 @@ def test_install_table_into_blank_line_doc_keeps_blank_line() -> None:
         [c]
         z = 3
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     src_b = td("""
         [b]
         y = 2
         """)
-    doc["b"] = tomlrt.parse(src_b)["b"]
+    doc["b"] = tomlrt.loads(src_b)["b"]
     out = tomlrt.dumps(doc)
     assert out == td("""
         [a]
@@ -1613,7 +1613,7 @@ def test_aot_replace_in_compact_doc_preserves_compact_style() -> None:
         [[xs]]
         c=3
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     doc["xs"][0] = {"k": 9}
     assert tomlrt.dumps(doc) == td("""
         [[xs]]
@@ -1633,7 +1633,7 @@ def test_aot_replace_in_compact_ooo_doc_preserves_compact_style() -> None:
         [[xs]]
         c=3
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     doc["xs"][0] = {"k": 9}
     assert tomlrt.dumps(doc) == td("""
         [other]
@@ -1654,7 +1654,7 @@ def test_aot_replace_in_blank_styled_doc_keeps_blank() -> None:
         [[xs]]
         c=3
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     doc["xs"][0] = {"k": 9}
     assert tomlrt.dumps(doc) == td("""
         [[xs]]
@@ -1678,7 +1678,7 @@ def test_aot_append_adopts_sibling_kv_indent() -> None:
         [[xs]]
             b = 2
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     doc["xs"].append({"c": 3})
     assert tomlrt.dumps(doc) == td("""
         [[xs]]
@@ -1696,7 +1696,7 @@ def test_aot_insert_at_zero_adopts_sibling_kv_indent() -> None:
         [[xs]]
             a = 1
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     doc["xs"].insert(0, {"c": 3})
     assert tomlrt.dumps(doc) == td("""
         [[xs]]
@@ -1713,7 +1713,7 @@ def test_aot_append_with_no_sibling_indent_stays_flush() -> None:
         [[xs]]
         a = 1
         """)
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     doc["xs"].append({"b": 2})
     assert tomlrt.dumps(doc) == td("""
         [[xs]]

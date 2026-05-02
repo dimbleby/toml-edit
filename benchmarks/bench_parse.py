@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
-"""Parse-throughput benchmark for `tomlrt.parse`.
+"""Parse-throughput benchmark for `tomlrt.loads`.
 
-Times `tomlrt.parse` over (a) the vendored `toml-test/valid` corpus
+Times `tomlrt.loads` over (a) the vendored `toml-test/valid` corpus
 treated as one combined input pool and (b) two synthetic stress
 inputs covering deep nesting and a large array-of-tables. Numbers
 are wall-clock per-byte and per-document; both are reported.
@@ -34,7 +34,7 @@ def _load_corpus() -> list[tuple[str, str]]:
             text = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             # toml-test ships a couple of intentionally non-UTF-8
-            # fixtures; we exclude them — `tomlrt.parse` operates on
+            # fixtures; we exclude them — `tomlrt.loads` operates on
             # `str` so they are out of scope for this microbench.
             continue
         files.append((str(path.relative_to(CORPUS_DIR)), text))
@@ -73,7 +73,7 @@ def _time_one(text: str, *, repeats: int) -> tuple[float, float]:
         gc.disable()
         try:
             t0 = time.perf_counter()
-            tomlrt.parse(text)
+            tomlrt.loads(text)
             t1 = time.perf_counter()
         finally:
             gc.enable()
@@ -91,7 +91,7 @@ def _bench_corpus(corpus: list[tuple[str, str]], *, repeats: int) -> None:
         try:
             t0 = time.perf_counter()
             for _, text in corpus:
-                tomlrt.parse(text)
+                tomlrt.loads(text)
             t1 = time.perf_counter()
         finally:
             gc.enable()

@@ -164,7 +164,7 @@ def test_valid(relpath: str) -> None:
     src = toml_path.read_bytes().decode("utf-8")
 
     # 1. Parses without error.
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
 
     # 2. Round-trip is byte-exact.
     assert tomlrt.dumps(doc) == src, f"round-trip differs for {relpath}"
@@ -188,4 +188,4 @@ def test_invalid(relpath: str) -> None:
         # Invalid UTF-8 is itself a rejection of the TOML document.
         return
     with pytest.raises(tomlrt.TOMLParseError):
-        tomlrt.parse(src)
+        tomlrt.loads(src)

@@ -151,7 +151,7 @@ def _document(draw: st.DrawFn) -> str:
 @given(src=_document())
 def test_roundtrip_exact(src: str) -> None:
     """Parsing then dumping must reproduce the original source byte-for-byte."""
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     assert tomlrt.dumps(doc) == src
 
 
@@ -191,7 +191,7 @@ _EDGE_CASES = [
 @given(src=st.sampled_from(_EDGE_CASES))
 @settings(max_examples=len(_EDGE_CASES), database=None)
 def test_edge_cases_roundtrip(src: str) -> None:
-    assert tomlrt.dumps(tomlrt.parse(src)) == src
+    assert tomlrt.dumps(tomlrt.loads(src)) == src
 
 
 # ---------------------------------------------------------------------------
@@ -215,73 +215,73 @@ _COMMENT_TEXT = st.text(
 @given(text=_COMMENT_TEXT)
 @settings(max_examples=200, database=None)
 def test_eol_comment_roundtrip(text: str) -> None:
-    doc = tomlrt.parse("a = 1\n")
+    doc = tomlrt.loads("a = 1\n")
     doc.comments["a"] = text
     out = tomlrt.dumps(doc)
-    assert tomlrt.parse(out).comments["a"] == text
+    assert tomlrt.loads(out).comments["a"] == text
 
 
 @given(lines=st.lists(_COMMENT_TEXT, min_size=1, max_size=4))
 @settings(max_examples=200, database=None)
 def test_leading_comment_roundtrip(lines: list[str]) -> None:
-    doc = tomlrt.parse("a = 1\n")
+    doc = tomlrt.loads("a = 1\n")
     doc.leading_comments["a"] = tuple(lines)
     out = tomlrt.dumps(doc)
-    assert tomlrt.parse(out).leading_comments["a"] == tuple(lines)
+    assert tomlrt.loads(out).leading_comments["a"] == tuple(lines)
 
 
 @given(text=_COMMENT_TEXT)
 @settings(max_examples=200, database=None)
 def test_array_eol_comment_roundtrip(text: str) -> None:
-    doc = tomlrt.parse("a = [1, 2]\n")
+    doc = tomlrt.loads("a = [1, 2]\n")
     doc.array("a").comments[0] = text
     out = tomlrt.dumps(doc)
-    assert tomlrt.parse(out).array("a").comments[0] == text
+    assert tomlrt.loads(out).array("a").comments[0] == text
 
 
 @given(text=_COMMENT_TEXT)
 @settings(max_examples=200, database=None)
 def test_header_comment_roundtrip(text: str) -> None:
-    doc = tomlrt.parse("[s]\nx = 1\n")
+    doc = tomlrt.loads("[s]\nx = 1\n")
     doc.table("s").header_comment = text
     out = tomlrt.dumps(doc)
-    assert tomlrt.parse(out).table("s").header_comment == text
+    assert tomlrt.loads(out).table("s").header_comment == text
 
 
 @given(lines=st.lists(_COMMENT_TEXT, min_size=1, max_size=4))
 @settings(max_examples=200, database=None)
 def test_header_leading_comment_roundtrip(lines: list[str]) -> None:
-    doc = tomlrt.parse("[s]\nx = 1\n")
+    doc = tomlrt.loads("[s]\nx = 1\n")
     doc.table("s").header_leading_comments = tuple(lines)
     out = tomlrt.dumps(doc)
-    assert tomlrt.parse(out).table("s").header_leading_comments == tuple(lines)
+    assert tomlrt.loads(out).table("s").header_leading_comments == tuple(lines)
 
 
 @given(lines=st.lists(_COMMENT_TEXT, min_size=1, max_size=4))
 @settings(max_examples=200, database=None)
 def test_array_leading_comment_roundtrip(lines: list[str]) -> None:
-    doc = tomlrt.parse("a = [1, 2]\n")
+    doc = tomlrt.loads("a = [1, 2]\n")
     doc.array("a").leading_comments[1] = tuple(lines)
     out = tomlrt.dumps(doc)
-    assert tomlrt.parse(out).array("a").leading_comments[1] == tuple(lines)
+    assert tomlrt.loads(out).array("a").leading_comments[1] == tuple(lines)
 
 
 @given(lines=st.lists(_COMMENT_TEXT, min_size=1, max_size=4))
 @settings(max_examples=200, database=None)
 def test_preamble_roundtrip(lines: list[str]) -> None:
-    doc = tomlrt.parse("a = 1\n")
+    doc = tomlrt.loads("a = 1\n")
     doc.preamble = tuple(lines)
     out = tomlrt.dumps(doc)
-    assert tomlrt.parse(out).preamble == tuple(lines)
+    assert tomlrt.loads(out).preamble == tuple(lines)
 
 
 @given(lines=st.lists(_COMMENT_TEXT, min_size=1, max_size=4))
 @settings(max_examples=200, database=None)
 def test_epilogue_roundtrip(lines: list[str]) -> None:
-    doc = tomlrt.parse("a = 1\n")
+    doc = tomlrt.loads("a = 1\n")
     doc.epilogue = tuple(lines)
     out = tomlrt.dumps(doc)
-    assert tomlrt.parse(out).epilogue == tuple(lines)
+    assert tomlrt.loads(out).epilogue == tuple(lines)
 
 
 @given(text=_COMMENT_TEXT.filter(bool))
@@ -289,7 +289,7 @@ def test_epilogue_roundtrip(lines: list[str]) -> None:
 def test_eol_comment_set_then_clear(text: str) -> None:
     """Setting then deleting an EOL comment must restore a comment-free dump."""
     base = "a = 1\n"
-    doc = tomlrt.parse(base)
+    doc = tomlrt.loads(base)
     doc.comments["a"] = text
     del doc.comments["a"]
     assert tomlrt.dumps(doc) == base
@@ -309,7 +309,7 @@ def test_eol_comment_set_then_clear(text: str) -> None:
 )
 @given(src=_document())
 def test_semantic_match_tomllib(src: str) -> None:
-    ours = tomlrt.parse(src).to_dict()
+    ours = tomlrt.loads(src).to_dict()
     theirs = tomllib.loads(src)
     assert _deep_equal(ours, theirs)
 
@@ -317,7 +317,7 @@ def test_semantic_match_tomllib(src: str) -> None:
 @given(src=st.sampled_from(_EDGE_CASES))
 @settings(max_examples=len(_EDGE_CASES), database=None)
 def test_edge_cases_match_tomllib(src: str) -> None:
-    ours = tomlrt.parse(src).to_dict()
+    ours = tomlrt.loads(src).to_dict()
     theirs = tomllib.loads(src)
     assert _deep_equal(ours, theirs)
 
@@ -351,7 +351,7 @@ def _crlf_variant(draw: st.DrawFn) -> str:
 )
 @given(src=_crlf_variant())
 def test_crlf_roundtrip_exact(src: str) -> None:
-    assert tomlrt.dumps(tomlrt.parse(src)) == src
+    assert tomlrt.dumps(tomlrt.loads(src)) == src
 
 
 # ---------------------------------------------------------------------------
@@ -384,7 +384,7 @@ def _py_dict(max_depth: int) -> st.SearchStrategy[dict[str, Any]]:
 def test_synthesise_roundtrip(data: dict[str, Any]) -> None:
     doc = Document(data)
     out = tomlrt.dumps(doc)
-    recovered = tomlrt.parse(out).to_dict()
+    recovered = tomlrt.loads(out).to_dict()
     assert _deep_equal(recovered, data)
 
 
@@ -415,10 +415,10 @@ def _document_with_overrides(draw: st.DrawFn) -> tuple[str, dict[str, Any]]:
 @given(case=_document_with_overrides())
 def test_scalar_mutation_roundtrip(case: tuple[str, dict[str, Any]]) -> None:
     src, overrides = case
-    doc = tomlrt.parse(src)
+    doc = tomlrt.loads(src)
     expected = tomllib.loads(src)
     for k, v in overrides.items():
         doc[k] = v
         expected[k] = v
     assert _deep_equal(doc.to_dict(), expected)
-    assert _deep_equal(tomlrt.parse(tomlrt.dumps(doc)).to_dict(), expected)
+    assert _deep_equal(tomlrt.loads(tomlrt.dumps(doc)).to_dict(), expected)

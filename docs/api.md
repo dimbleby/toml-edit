@@ -9,7 +9,7 @@ semver-stable API:
 
 | Symbol                              | Kind       |
 | ----------------------------------- | ---------- |
-| `loads`, `parse`, `load`            | function   |
+| `loads`, `load`                     | function   |
 | `dumps`, `dump`                     | function   |
 | `Document`, `Table`, `Array`, `AoT` | class      |
 | `TomlInput`                         | type alias |
@@ -22,7 +22,6 @@ code.
 ## Top-level functions
 
 ::: tomlrt.loads
-::: tomlrt.parse
 ::: tomlrt.load
 ::: tomlrt.dumps
 ::: tomlrt.dump

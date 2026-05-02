@@ -23,7 +23,6 @@ text_again = tomlrt.dumps(doc)
 assert text == text_again
 ```
 
-`tomlrt.loads` and `tomlrt.parse` are equivalent.
 `tomlrt.dumps(doc)` and `doc.render()` are equivalent.
 
 ## Reading values
