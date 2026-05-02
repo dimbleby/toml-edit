@@ -48,8 +48,8 @@ assignment.
 ## Dotted paths
 
 `doc["a.b"] = 1` always treats `"a.b"` as a _single literal key_.
-To descend into nested tables, pass a dotted string (split on `.`) or a tuple of
-literal segments to `install` or `ensure_table`:
+To descend into nested tables, pass a dotted string (split on `.`) or any
+sequence of literal segments to `install` or `ensure_table`:
 
 ```python
 doc.install("tool.poetry.version", "0.1.0")  # [tool.poetry] version = "..."
