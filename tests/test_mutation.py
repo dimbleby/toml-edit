@@ -1057,7 +1057,7 @@ def test_install_rejects_tuple_path_with_empty_segment() -> None:
 
 def test_install_rejects_non_string_path() -> None:
     doc = tomlrt.parse("")
-    with pytest.raises(TypeError, match="key path must be str or tuple"):
+    with pytest.raises(TypeError, match="key path must be str or sequence"):
         doc.install(123, 1)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
 
@@ -1065,6 +1065,19 @@ def test_install_rejects_tuple_with_non_string_segment() -> None:
     doc = tomlrt.parse("")
     with pytest.raises(TypeError, match="segment must be str"):
         doc.install(("a", 1), 1)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+
+
+def test_install_accepts_list_path() -> None:
+    doc = tomlrt.parse("")
+    doc.install(["tool", "ruff", "line-length"], 88)
+    assert tomlrt.dumps(doc) == "[tool.ruff]\nline-length = 88\n"
+
+
+def test_ensure_table_accepts_list_path() -> None:
+    doc = tomlrt.parse("")
+    t = doc.ensure_table(["tool", "ruff"])
+    t["line-length"] = 88
+    assert tomlrt.dumps(doc) == "[tool.ruff]\nline-length = 88\n"
 
 
 # ---------------------------------------------------------------------------

@@ -9,6 +9,7 @@ inverse of the view layer's "give me the CST that backs this view".
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from copy import deepcopy
 from typing import TYPE_CHECKING
 
@@ -26,7 +27,7 @@ from tomlrt._synthesise import make_key_part
 from tomlrt._trivia import _prepend_blank_line, _seam_blank_style
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Iterable
 
     from tomlrt._document import AoT, _StdTable
     from tomlrt._nodes import (
@@ -361,41 +362,43 @@ def _insert_section_block(
     sections[insert_at:insert_at] = new_secs
 
 
-def _parse_key_path(path: str | tuple[str, ...]) -> tuple[str, ...]:
+def _parse_key_path(path: str | Sequence[str]) -> tuple[str, ...]:
     """Split a dotted key path string into its bare segments.
 
     A string is split on ``.`` (``"a.b.c"`` → ``("a", "b", "c")``).
-    A tuple is taken verbatim: use this form to express a single
-    segment containing a literal dot (e.g. ``("foo.bar",)`` to name a
-    table whose only key is the quoted name ``"foo.bar"``).
+    Any other sequence of strings is taken verbatim: use this form to
+    express a single segment containing a literal dot (e.g.
+    ``("foo.bar",)`` to name a table whose only key is the quoted name
+    ``"foo.bar"``).
     """
-    if isinstance(path, tuple):
+    if isinstance(path, str):
         if not path:
             msg = "key path must not be empty"
             raise TOMLError(msg)
-        for p in path:
-            if not isinstance(p, str):
-                msg = (  # type: ignore[unreachable]
-                    f"key path {path!r} segment must be str, not {type(p).__name__}"
-                )
-                raise TypeError(msg)
-        if any(p == "" for p in path):
+        str_parts = path.split(".")
+        if any(not p for p in str_parts):
             msg = f"key path {path!r} contains an empty segment"
             raise TOMLError(msg)
-        return path
-    if not isinstance(path, str):
+        return tuple(str_parts)
+    if not isinstance(path, Sequence):
         msg = (  # type: ignore[unreachable]
-            f"key path must be str or tuple of str, not {type(path).__name__}"
+            f"key path must be str or sequence of str, not {type(path).__name__}"
         )
         raise TypeError(msg)
-    if not path:
+    parts = tuple(path)
+    if not parts:
         msg = "key path must not be empty"
         raise TOMLError(msg)
-    parts = path.split(".")
-    if any(not p for p in parts):
-        msg = f"key path {path!r} contains an empty segment"
+    for p in parts:
+        if not isinstance(p, str):
+            msg = (  # type: ignore[unreachable]
+                f"key path {parts!r} segment must be str, not {type(p).__name__}"
+            )
+            raise TypeError(msg)
+    if any(p == "" for p in parts):
+        msg = f"key path {parts!r} contains an empty segment"
         raise TOMLError(msg)
-    return tuple(parts)
+    return parts
 
 
 def _section_insert_index(

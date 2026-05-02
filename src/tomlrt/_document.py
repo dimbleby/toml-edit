@@ -449,14 +449,14 @@ class Table(dict[str, Any]):
 
     def install(
         self,
-        path: str | tuple[str, ...],
+        path: str | Sequence[str],
         value: TomlInput,
     ) -> Any:
         """Install ``value`` at ``path``, descending dotted segments.
 
-        ``path`` accepts a dotted string (split on ``.``) or a tuple
-        of literal segments (use the tuple form to express a segment
-        containing a literal dot, e.g. ``("foo.bar",)``).
+        ``path`` accepts a dotted string (split on ``.``) or any
+        sequence of literal segments (use the sequence form to express
+        a segment containing a literal dot, e.g. ``("foo.bar",)``).
 
         ``value`` follows the same rules as ordinary assignment
         (``t[k] = value``); ``install`` only adds the dotted-path
@@ -875,11 +875,11 @@ class Table(dict[str, Any]):
         )
         raise TOMLError(msg)
 
-    def ensure_table(self, key: str | tuple[str, ...]) -> Table:
+    def ensure_table(self, key: str | Sequence[str]) -> Table:
         """Return the table at ``key``, creating an empty one if absent.
 
-        ``key`` accepts a dotted path as a string, or a tuple of
-        literal segments (use the tuple form to express a segment
+        ``key`` accepts a dotted path as a string, or any sequence of
+        literal segments (use the sequence form to express a segment
         containing a literal dot, e.g. ``("foo.bar",)``). If the
         destination already exists and is table-shaped (an explicit
         section, an implicit super-table, or an inline table), the
