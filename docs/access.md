@@ -31,6 +31,29 @@ They raise `TypeError` only if the key exists but has the _wrong_ shape:
 ruff = doc.get_table("tool", default={}).get("ruff")
 ```
 
+## Dotted paths and sequences of segments
+
+The `Table`-side accessors (`table`, `array`, `aot`, `entry`, and their `get_*`
+variants) accept either a dotted path string or a sequence of literal segments.
+Use the sequence form when a segment must contain a literal `.`:
+
+```python
+doc.table("tool.poetry")            # tool -> poetry
+doc.table(("tool", "weird.key"))    # tool -> "weird.key"
+```
+
+## Untyped path access
+
+Sometimes you just want the value at a path without asserting a shape — e.g.
+when dispatching on the result yourself, or when the leaf is a scalar.
+`entry` and `get_entry` walk the same path the typed accessors do but return
+`Any`:
+
+```python
+value = doc.entry("tool.poetry.name")           # raises if missing
+maybe = doc.get_entry("tool.poetry.licence")    # None if missing
+```
+
 ## Back to plain Python
 
 `Table.to_dict()` and `Array.to_list()` (and `AoT.to_list()`) return deep copies

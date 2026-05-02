@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `Table.entry` / `Table.get_entry` for untyped path access.
+
+### Changed
+
+- The typed accessors (`table`, `array`, `aot`, and their `get_*`
+  variants) now accept a `Sequence[str]` as well as a dotted string.
+
 ## [1.2.0] - 2026-05-02
 
 ### Changed

@@ -1330,6 +1330,48 @@ def test_table_get_table_handles_dotted_path() -> None:
     assert doc.get_table("tool.missing") is None
 
 
+def test_table_typed_accessors_accept_sequence_path() -> None:
+    doc = tomlrt.loads("[tool.poetry]\nname = 'x'\n[tool.'foo.bar']\nv = 1\n")
+    assert doc.table(["tool", "poetry"])["name"] == "x"
+    # Sequence form lets you address a key whose name contains a dot.
+    inner = doc.table(("tool", "foo.bar"))
+    assert inner["v"] == 1
+    assert doc.get_table(["tool", "missing"]) is None
+
+
+def test_table_entry_returns_value_at_path() -> None:
+    doc = tomlrt.loads("[tool.poetry]\nname = 'x'\nxs = [1, 2]\n")
+    assert doc.entry("tool.poetry.name") == "x"
+    assert isinstance(doc.entry(("tool", "poetry")), tomlrt.Table)
+    assert isinstance(doc.entry("tool.poetry.xs"), tomlrt.Array)
+
+
+def test_table_entry_raises_keyerror_when_missing() -> None:
+    doc = tomlrt.loads("a = 1\n")
+    with pytest.raises(KeyError):
+        doc.entry("nope")
+
+
+def test_table_entry_raises_typeerror_on_descend_through_non_table() -> None:
+    doc = tomlrt.loads("a = 1\n")
+    with pytest.raises(TypeError, match="cannot descend into 'a'"):
+        doc.entry("a.b")
+
+
+def test_table_get_entry_returns_value_or_default() -> None:
+    doc = tomlrt.loads("[tool.poetry]\nname = 'x'\n")
+    assert doc.get_entry("tool.poetry.name") == "x"
+    assert doc.get_entry("nope") is None
+    sentinel: object = object()
+    assert doc.get_entry(("tool", "missing"), sentinel) is sentinel
+
+
+def test_table_get_entry_does_not_swallow_typeerror() -> None:
+    doc = tomlrt.loads("a = 1\n")
+    with pytest.raises(TypeError, match="cannot descend into 'a'"):
+        doc.get_entry("a.b")
+
+
 def test_table_get_array_returns_array_or_default() -> None:
     doc = tomlrt.loads("xs = [1, 2, 3]\n")
     arr = doc.get_array("xs")

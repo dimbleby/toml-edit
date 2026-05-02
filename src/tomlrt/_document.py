@@ -648,10 +648,13 @@ class Table(dict[str, Any]):
     # comment/header API without writing ``cast`` or ``isinstance``.
     # ------------------------------------------------------------------
 
-    def table(self, key: str) -> Table:
+    def table(self, key: str | Sequence[str]) -> Table:
         """Return the table at ``key``, typed as [`Table`][tomlrt.Table].
 
-        ``key`` accepts a dotted path (e.g. ``"tool.poetry"``).
+        ``key`` accepts a dotted path string (e.g. ``"tool.poetry"``)
+        or a sequence of literal segments (use the sequence form to
+        express a segment containing a literal dot, e.g.
+        ``("foo.bar",)``).
 
         Raises `KeyError` if any segment is missing, or `TypeError` if
         the destination is not a table.
@@ -659,20 +662,25 @@ class Table(dict[str, Any]):
         return self._typed_lookup(key, Table)
 
     @overload
-    def get_table(self, key: str) -> Table | None: ...
+    def get_table(self, key: str | Sequence[str]) -> Table | None: ...
     @overload
-    def get_table(self, key: str, default: _T) -> Table | _T: ...
-    def get_table(self, key: str, default: object = None) -> object:
+    def get_table(self, key: str | Sequence[str], default: _T) -> Table | _T: ...
+    def get_table(
+        self,
+        key: str | Sequence[str],
+        default: object = None,
+    ) -> object:
         """Like `table`, but returns ``default`` if ``key`` is missing.
 
         Wrong-type entries raise `TypeError`.
         """
         return self._typed_lookup(key, Table, default=default)
 
-    def array(self, key: str) -> Array:
+    def array(self, key: str | Sequence[str]) -> Array:
         """Return the array at ``key``, typed as [`Array`][tomlrt.Array].
 
-        ``key`` accepts a dotted path.
+        ``key`` accepts a dotted path string or a sequence of literal
+        segments.
 
         Raises `KeyError` if any segment is missing, or `TypeError` if
         the destination is not an inline array.
@@ -680,20 +688,25 @@ class Table(dict[str, Any]):
         return self._typed_lookup(key, Array)
 
     @overload
-    def get_array(self, key: str) -> Array | None: ...
+    def get_array(self, key: str | Sequence[str]) -> Array | None: ...
     @overload
-    def get_array(self, key: str, default: _T) -> Array | _T: ...
-    def get_array(self, key: str, default: object = None) -> object:
+    def get_array(self, key: str | Sequence[str], default: _T) -> Array | _T: ...
+    def get_array(
+        self,
+        key: str | Sequence[str],
+        default: object = None,
+    ) -> object:
         """Like `array`, but returns ``default`` if ``key`` is missing.
 
         Wrong-type entries raise `TypeError`.
         """
         return self._typed_lookup(key, Array, default=default)
 
-    def aot(self, key: str) -> AoT:
+    def aot(self, key: str | Sequence[str]) -> AoT:
         """Return the array-of-tables at ``key``, typed as [`AoT`][tomlrt.AoT].
 
-        ``key`` accepts a dotted path.
+        ``key`` accepts a dotted path string or a sequence of literal
+        segments.
 
         Raises `KeyError` if any segment is missing, or `TypeError` if
         the destination is not an array of tables.
@@ -701,29 +714,63 @@ class Table(dict[str, Any]):
         return self._typed_lookup(key, AoT)
 
     @overload
-    def get_aot(self, key: str) -> AoT | None: ...
+    def get_aot(self, key: str | Sequence[str]) -> AoT | None: ...
     @overload
-    def get_aot(self, key: str, default: _T) -> AoT | _T: ...
-    def get_aot(self, key: str, default: object = None) -> object:
+    def get_aot(self, key: str | Sequence[str], default: _T) -> AoT | _T: ...
+    def get_aot(
+        self,
+        key: str | Sequence[str],
+        default: object = None,
+    ) -> object:
         """Like `aot`, but returns ``default`` if ``key`` is missing.
 
         Wrong-type entries raise `TypeError`.
         """
         return self._typed_lookup(key, AoT, default=default)
 
-    @overload
-    def _typed_lookup(self, key: str, expected: type[_T]) -> _T: ...
+    def entry(self, key: str | Sequence[str]) -> Any:
+        """Return the value at ``key``, descending dotted segments.
+
+        ``key`` accepts a dotted path string or a sequence of literal
+        segments.
+
+        Raises `KeyError` if any segment is missing, or `TypeError` if
+        the path tries to descend through a non-table value.
+        """
+        return self._lookup_path(key)
+
+    def get_entry(
+        self,
+        key: str | Sequence[str],
+        default: Any = None,
+    ) -> Any:
+        """Like `entry`, but returns ``default`` if ``key`` is missing.
+
+        Mid-path type errors (descending through a non-table) still
+        raise `TypeError`.
+        """
+        try:
+            return self._lookup_path(key)
+        except KeyError:
+            return default
+
     @overload
     def _typed_lookup(
         self,
-        key: str,
+        key: str | Sequence[str],
+        expected: type[_T],
+    ) -> _T: ...
+    @overload
+    def _typed_lookup(
+        self,
+        key: str | Sequence[str],
         expected: type[_T],
         *,
         default: object,
     ) -> object: ...
     def _typed_lookup(
         self,
-        key: str,
+        key: str | Sequence[str],
         expected: type[_T],
         *,
         default: object = _MISSING,
@@ -749,7 +796,7 @@ class Table(dict[str, Any]):
             raise TypeError(msg)
         return value
 
-    def _lookup_path(self, key: str) -> TomlValue:
+    def _lookup_path(self, key: str | Sequence[str]) -> TomlValue:
         parts = _parse_key_path(key)
         cur: TomlValue = self
         for i, part in enumerate(parts):
