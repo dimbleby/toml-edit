@@ -30,8 +30,8 @@ assert text == text_again
 A `Document` behaves like a `dict`; nested tables are `Table` (also a `dict`
 subclass), inline arrays are `Array` (a `list` subclass), and arrays-of-tables
 are `AoT` (a `list` of `Table`).
-Plain reads with `doc["key"]` work as you'd expect — see [Typed
-access](access.md) when you want typechecker-friendly traversal.
+Plain reads with `doc["key"]` work as you'd expect — see [Reading
+documents](reading.md) when you want typechecker-friendly traversal.
 
 ## Writing values
 
