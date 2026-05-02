@@ -114,10 +114,11 @@ The codebase is small and deliberately layered. Read in this order:
   `Array`, `AoT` wrappers that present a dict/list-shaped API while
   delegating all mutation to the CST. The Comment API and typed
   accessors live here. This is by far the largest file.
-- **`_public.py`** — the top-level `parse` / `loads` / `load` /
-  `dumps` / `dump` functions. `load` and `dump` require **binary**
-  file objects (`IO[bytes]`); text mode would silently translate
-  newlines on Windows and break round-tripping.
+- **`_public.py`** — the top-level `loads` / `load` / `dumps` / `dump`
+  functions, plus thin deprecation shims for the older `parse` and
+  `document` spellings. `load` and `dump` require **binary** file
+  objects (`IO[bytes]`); text mode would silently translate newlines
+  on Windows and break round-tripping.
 - **`_errors.py`** — public exception hierarchy.
 - **`__init__.py`** — re-exports the public API; keep `__all__`
   alphabetised.
@@ -163,9 +164,10 @@ When adding behaviour, add a focused unit test in the relevant file
 User-facing prose docs live under `docs/` and are published at
 <https://dimbleby.github.io/tomlrt/>. The site is built with
 [Zensical](https://zensical.org/) (a static site generator from the
-creators of Material for MkDocs, backward-compatible with the
-existing `mkdocs.yml`) plus the `mkdocstrings` Python handler. The
-dependency group is `docs`:
+creators of Material for MkDocs) plus the `mkdocstrings` Python
+handler. Site config lives in `zensical.toml` (the nav lives there
+too — update it when you add or rename a page). The dependency group
+is `docs`:
 
 ```bash
 uv run --group docs zensical serve     # preview locally
@@ -174,8 +176,8 @@ uv run --group docs zensical build     # what CI runs
 
 The API reference page (`docs/api.md`) is generated from docstrings
 via `mkdocstrings`, so docstring changes flow through automatically.
-The task-oriented pages (`quickstart.md`, `building.md`, `editing.md`,
-`access.md`, `comments.md`, `errors.md`) are hand-written — update
+The task-oriented pages (`quickstart.md`, `building.md`, `reading.md`,
+`editing.md`, `comments.md`, `errors.md`) are hand-written — update
 them when you add, rename, or change behaviour of any public API.
 
 ## Things to avoid
