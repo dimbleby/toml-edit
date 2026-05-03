@@ -9,9 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Adding a dotted key to a section now inherits the section's indent
-  and blank-line policy, and ensures a separating newline when the
-  previous entry lacked one (which previously produced invalid TOML).
+- Adding a dotted key to a section now respects the section's indent
+  and blank-line policy, and inserts a separating newline when needed.
+- Reject float literals with a misplaced underscore between the
+  exponent sign and its digits (e.g. `1e+_1`).
 
 ## [1.3.0] - 2026-05-02
 
