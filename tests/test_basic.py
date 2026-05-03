@@ -255,6 +255,12 @@ def test_datetime_values() -> None:
         # Float with no mantissa, and float with leading-zero mantissa.
         "x = +e5\n",
         "x = 01e1\n",
+        # Misplaced underscore between exponent sign and digits.
+        "x = 1e+_1\n",
+        "x = 1e-_1\n",
+        "x = 1E+_1\n",
+        "x = 1E-_1\n",
+        "x = 1.2e+_3\n",
         # Stray CR (no following LF) inside multi-line strings.
         'x = """ab\rcd"""\n',
         "x = '''ab\rcd'''\n",

@@ -774,12 +774,14 @@ class _Scanner:
         if "__" in body:
             msg = f"consecutive underscores in {token!r}"
             raise self.error(msg, at=at)
-        if body.startswith("_") or body.endswith("_") or "._" in body or "_." in body:
-            msg = f"misplaced underscore in {token!r}"
-            raise self.error(msg, at=at)
-        if "_e" in body or "e_" in body or "_E" in body or "E_" in body:
-            msg = f"misplaced underscore in {token!r}"
-            raise self.error(msg, at=at)
+        for i, c in enumerate(body):
+            if c == "_" and not (
+                0 < i < len(body) - 1
+                and body[i - 1].isdigit()
+                and body[i + 1].isdigit()
+            ):
+                msg = f"misplaced underscore in {token!r}"
+                raise self.error(msg, at=at)
 
         # Validate structure manually; ``float`` accepts forms TOML doesn't.
         norm = body.replace("_", "")
