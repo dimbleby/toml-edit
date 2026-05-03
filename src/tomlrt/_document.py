@@ -88,7 +88,6 @@ from tomlrt._synthesise import (
 from tomlrt._trivia import (
     _clone_trivia,
     _detect_indent,
-    _ensure_trailing_newline,
     _extract_trailing_comment_block,
     _first_gap_is_blank,
     _format_comment,
@@ -98,6 +97,7 @@ from tomlrt._trivia import (
     _replace_trailing_comment_block,
     _scan_leading_comment_run,
     _seam_blank_style,
+    _section_entry_leading,
     _set_eol_comment,
     _strip_comment_marker,
     _trivia_has_comment,
@@ -1158,18 +1158,9 @@ class _SectionDottedHost:
                 ),
                 self._sections[-1],
             )
-        host_sec.entries.append(
-            KeyValueNode(
-                leading=Trivia(),
-                key=_make_dotted_key(path),
-                pre_eq=WhitespaceNode(" "),
-                post_eq=WhitespaceNode(" "),
-                value=value_to_node(value),
-                trailing=None,
-                trailing_comment=None,
-                newline=NewlineNode("\n"),
-            ),
-        )
+        new_kv = make_keyvalue_node(_make_dotted_key(path), value)
+        new_kv.leading = _section_entry_leading(host_sec)
+        host_sec.entries.append(new_kv)
 
     def _del_prefix(self, prefix: tuple[str, ...]) -> bool:
         any_removed = False
@@ -1623,11 +1614,8 @@ class _StdTable(Table):
         if not sections:
             sections = [self._ensure_section()]
         target = sections[-1]
-        indent = _detect_indent(target)
-        new_kv = make_keyvalue_node(key, value, indent=indent)
-        if _first_gap_is_blank(kv.leading for kv in target.entries[1:]):
-            new_kv.leading.pieces.insert(0, NewlineNode("\n"))
-        _ensure_trailing_newline(target)
+        new_kv = make_keyvalue_node(make_simple_key(key), value)
+        new_kv.leading = _section_entry_leading(target)
         # Migrate any parked preamble (only present when this is the
         # first content being added to a previously-empty doc) ahead of
         # the new KV. No-op once the doc has structural content.

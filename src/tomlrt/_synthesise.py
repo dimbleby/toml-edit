@@ -229,16 +229,18 @@ def value_to_node(value: object) -> ValueNode:
 
 
 def make_keyvalue_node(
-    key_name: str,
+    key: Key,
     value: object,
-    *,
-    indent: str = "",
 ) -> KeyValueNode:
-    r"""Build a fresh ``key = value\\n`` line."""
-    leading = Trivia([WhitespaceNode(indent)]) if indent else Trivia()
+    r"""Build a fresh ``key = value\\n`` line.
+
+    The new node's `leading` is empty; callers that need section indent
+    or blank-line policy should set it via `_section_entry_leading`.
+    Use `make_simple_key` or `_make_dotted_key` to build ``key``.
+    """
     return KeyValueNode(
-        leading=leading,
-        key=make_simple_key(key_name),
+        leading=Trivia(),
+        key=key,
         pre_eq=WhitespaceNode(" "),
         post_eq=WhitespaceNode(" "),
         value=value_to_node(value),

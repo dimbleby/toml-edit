@@ -1764,3 +1764,59 @@ def test_aot_append_with_no_sibling_indent_stays_flush() -> None:
         [[xs]]
         b = 2
         """)
+
+
+def test_dotted_add_when_host_lacks_trailing_newline() -> None:
+    """Adding a dotted sibling must not glue onto the previous KV."""
+    src = "[s]\na.b = 1"
+    doc = tomlrt.loads(src)
+    doc["s"]["a"]["c"] = 2
+    out = tomlrt.dumps(doc)
+    assert out == "[s]\na.b = 1\na.c = 2\n"
+    assert _reparses(out)["s"]["a"] == {"b": 1, "c": 2}
+
+
+def test_dotted_add_at_top_level_when_no_trailing_newline() -> None:
+    src = "a.b = 1"
+    doc = tomlrt.loads(src)
+    doc["a"]["c"] = 2
+    out = tomlrt.dumps(doc)
+    assert out == "a.b = 1\na.c = 2\n"
+    assert _reparses(out)["a"] == {"b": 1, "c": 2}
+
+
+def test_dotted_add_inherits_section_indent() -> None:
+    src = td("""
+        [s]
+            a.b = 1
+            a.c = 2
+        """)
+    doc = tomlrt.loads(src)
+    doc["s"]["a"]["d"] = 3
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [s]
+            a.b = 1
+            a.c = 2
+            a.d = 3
+        """)
+
+
+def test_dotted_add_respects_blank_line_policy() -> None:
+    src = td("""
+        [s]
+        a.b = 1
+
+        a.c = 2
+        """)
+    doc = tomlrt.loads(src)
+    doc["s"]["a"]["d"] = 99
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        [s]
+        a.b = 1
+
+        a.c = 2
+
+        a.d = 99
+        """)

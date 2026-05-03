@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Adding a dotted key to a section now inherits the section's indent
+  and blank-line policy, and ensures a separating newline when the
+  previous entry lacked one (which previously produced invalid TOML).
+
 ## [1.3.0] - 2026-05-02
 
 ### Added
