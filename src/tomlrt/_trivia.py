@@ -93,6 +93,22 @@ def _ensure_trailing_newline(section: SectionNode) -> None:
         last.newline = NewlineNode("\n")
 
 
+def _section_entry_leading(section: SectionNode) -> Trivia:
+    """Build the leading trivia for a freshly appended sibling entry.
+
+    Samples the section's existing indent and blank-line policy, and
+    ensures the previous last entry is newline-terminated so the new
+    line lands on its own row. The returned `Trivia` is ready to be
+    placed on a synthesised `KeyValueNode`.
+    """
+    indent = _detect_indent(section)
+    leading = Trivia([WhitespaceNode(indent)]) if indent else Trivia()
+    if _first_gap_is_blank(kv.leading for kv in section.entries[1:]):
+        leading.pieces.insert(0, NewlineNode("\n"))
+    _ensure_trailing_newline(section)
+    return leading
+
+
 def _iter_value_trivia(value: ValueNode) -> Iterator[Trivia]:
     """Yield every trivia slot reachable inside ``value``.
 
