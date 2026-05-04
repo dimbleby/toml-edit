@@ -610,6 +610,16 @@ class Container(dict[str, Any]):
                 if p not in cur:
                     break
                 nxt = dict.__getitem__(cur, p)
+                from tomlrt._array import AoT as _AoT  # noqa: PLC0415
+
+                if isinstance(nxt, _AoT):
+                    from tomlrt._errors import TOMLError  # noqa: PLC0415
+
+                    msg = (
+                        f"cannot install through array-of-tables at {p!r}: "
+                        "no addressable target inside an AoT"
+                    )
+                    raise TOMLError(msg)
                 if not isinstance(nxt, Container) or nxt._inline:  # noqa: SLF001
                     break
                 cur = nxt
@@ -669,6 +679,16 @@ class Container(dict[str, Any]):
             if p not in cur:
                 break
             nxt = dict.__getitem__(cur, p)
+            from tomlrt._array import AoT  # noqa: PLC0415
+
+            if isinstance(nxt, AoT):
+                from tomlrt._errors import TOMLError  # noqa: PLC0415
+
+                msg = (
+                    f"cannot ensure_table through array-of-tables at {p!r}: "
+                    "no addressable target inside an AoT"
+                )
+                raise TOMLError(msg)
             if not isinstance(nxt, Container) or nxt._inline:  # noqa: SLF001
                 from tomlrt._errors import TOMLError  # noqa: PLC0415
 
