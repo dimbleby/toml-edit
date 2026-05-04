@@ -28,6 +28,7 @@ Design notes:
 
 from __future__ import annotations
 
+import contextlib
 import re
 from typing import TYPE_CHECKING
 
@@ -36,6 +37,8 @@ from tomlrt._trivia import EolTrivia, NewlineNode, Trivia
 from tomlrt._values import KeyPart
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from tomlrt._container import Container, Document
     from tomlrt._slots import Slot
     from tomlrt._values import Value
@@ -170,39 +173,195 @@ def append_direct_kv(c: Container, key: str, value: Value) -> None:
     c._body_tail = new_slot  # noqa: SLF001
 
 
-def delete_direct_kv(c: Container, key: str) -> None:
-    """Delete a single direct (non-dotted) KV from ``c``."""
-    if c._owner_aot_entry is not None:  # noqa: SLF001
-        msg = "delete from AoT entry body is not yet supported"
-        raise NotImplementedError(msg)
-    refs = c._index.get(key)  # noqa: SLF001
-    if not refs:
-        raise KeyError(key)
-    if len(refs) > 1:
-        msg = "delete of dotted-shared / multi-ref KV deferred to Phase 3d"
-        raise NotImplementedError(msg)
-    ref = refs[0]
-    slot = ref.slot
-    if not isinstance(slot, KVSlot) or len(slot.key_parts) != 1:
-        msg = "delete of dotted-key KV deferred to Phase 3d"
-        raise NotImplementedError(msg)
-    if slot.host_path != c._path:  # noqa: SLF001
-        msg = "delete of inherited dotted-host KV deferred to Phase 3d"
-        raise NotImplementedError(msg)
+def delete_key(c: Container, key: str) -> None:
+    """Delete ``key`` from ``c`` — scalar, inline, section, AoT, or dotted-subtree.
 
+    Single primitive that handles every flavour. Steps (mirroring the
+    plan v17 "Slot deletion ordering" recipe):
+
+    1. Compute the owned-slot identity set: every physical slot whose
+       refs all live in ``c._index[key]`` plus every descendant
+       container's ``_refs``.
+    2. Compute the containers-to-scrub set: ``c``'s ancestor chain
+       (up to and including the doc root) plus every non-inline
+       container in the subtree rooted at ``c[key]``.
+    3. Scrub: rebuild ``_refs``/``_index`` of each scrubbed container,
+       dropping refs whose slot is in the owned set. Recompute
+       ``_body_tail`` on each container whose old tail was unlinked.
+       Drop any unlinked slot from its owning ``AoTEntry.entry_slots``.
+    4. Debug-only: assert no still-live container retains a ref to any
+       owned slot.
+    5. Unlink each owned slot from the doc linked list.
+    6. Drop the dict entry on ``c``.
+    7. Recursively prune empty implicit super-tables on the ancestor
+       chain (those with no header, no refs, and an empty dict body)
+       so the cache invariants stay clean.
+
+    No live-detach: held views of the deleted subtree retain stale
+    ``_layout_root`` / ``_path``; mutating them through their old
+    reference is Phase 3e (PrivateRoot). With Phase 3c's
+    implicit-headerless guard, structural mutation through such a
+    held view raises ``NotImplementedError`` rather than corrupting
+    the live document, which is the safest interim behaviour.
+    """
+    if key not in c:
+        raise KeyError(key)
+    val = dict.__getitem__(c, key)
     layout_root = c._layout_root  # noqa: SLF001
     if layout_root is None:
         msg = "internal: container has no layout root"
         raise AssertionError(msg)
     doc = layout_root  # PrivateRoot arrives in Phase 3e
 
-    c._refs.remove(ref)  # noqa: SLF001
-    del c._index[key]  # noqa: SLF001
+    # 1. Owned-slot identity set + retained slot objects (for unlink).
+    owned_ids: set[int] = set()
+    owned_slots: list[Slot] = []
+    seen_ref_ids: set[int] = set()
 
-    if c._body_tail is slot:  # noqa: SLF001
-        c._body_tail = _recompute_body_tail(c)  # noqa: SLF001
+    def _add_ref(r: SlotRef) -> None:
+        if id(r) in seen_ref_ids:
+            return
+        seen_ref_ids.add(id(r))
+        if id(r.slot) not in owned_ids:
+            owned_ids.add(id(r.slot))
+            owned_slots.append(r.slot)
 
-    unlink_slot(slot, doc)
+    for r in c._index.get(key, []):  # noqa: SLF001
+        _add_ref(r)
+
+    # 2. Subtree containers + descendant refs.
+    subtree_containers: list[Container] = []
+    _collect_subtree(val, subtree_containers, _add_ref)
+
+    # 3. Scrub ancestor chain + subtree containers.
+    chain: list[Container] = []
+    cur: Container | None = c
+    while cur is not None:
+        chain.append(cur)
+        cur = cur._parent  # noqa: SLF001
+    scrub: list[Container] = [*chain, *subtree_containers]
+
+    for cc in scrub:
+        old_refs = cc._refs  # noqa: SLF001
+        kept: list[SlotRef] = [r for r in old_refs if id(r.slot) not in owned_ids]
+        if len(kept) != len(old_refs):
+            cc._refs = kept  # noqa: SLF001
+            cc._index = {}  # noqa: SLF001
+            for r in kept:
+                if r.local_key is not None:
+                    cc._index.setdefault(r.local_key, []).append(r)  # noqa: SLF001
+            if (
+                cc._body_tail is not None  # noqa: SLF001
+                and id(cc._body_tail) in owned_ids  # noqa: SLF001
+            ):
+                cc._body_tail = _recompute_body_tail(cc)  # noqa: SLF001
+            if (
+                cc._header_ref is not None  # noqa: SLF001
+                and id(cc._header_ref.slot) in owned_ids  # noqa: SLF001
+            ):
+                cc._header_ref = None  # noqa: SLF001
+
+    # 4. Defensive: no live container retains a ref to any owned slot.
+    if __debug__:
+        for cc in chain:
+            for r in cc._refs:  # noqa: SLF001
+                assert id(r.slot) not in owned_ids, (
+                    "internal: live container still references a slot we are about "
+                    "to unlink — owned-set is incomplete"
+                )
+
+    # 5. Unlink owned slots; clean up AoTEntry.entry_slots for live entries.
+    surviving_aot_entries = _surviving_aot_entries(doc)
+    for slot in owned_slots:
+        owner = getattr(slot, "owner_aot_entry", None)
+        if owner is not None and id(owner) in surviving_aot_entries:
+            with contextlib.suppress(ValueError):
+                owner.entry_slots.remove(slot)
+        unlink_slot(slot, doc)
+
+    # 6. Drop the dict entry.
+    dict.__delitem__(c, key)
+
+    # 7. Prune empty implicit super-tables walking up the chain.
+    _prune_empty_implicit_ancestors(c)
+
+
+def _collect_subtree(
+    val: object,
+    containers_out: list[Container],
+    add_ref: Callable[[SlotRef], None],
+) -> None:
+    """Walk ``val``'s container subtree, collecting non-inline containers and refs."""
+    from tomlrt._array import AoT  # noqa: PLC0415
+    from tomlrt._container import Container  # noqa: PLC0415
+
+    if isinstance(val, Container):
+        if val._inline:  # noqa: SLF001
+            return
+        containers_out.append(val)
+        for r in val._refs:  # noqa: SLF001
+            add_ref(r)
+        for child in val.values():
+            _collect_subtree(child, containers_out, add_ref)
+    elif isinstance(val, AoT):
+        for entry in val:
+            _collect_subtree(entry, containers_out, add_ref)
+
+
+def _surviving_aot_entries(doc: Document) -> set[int]:
+    """Set of ``id(AoTEntry)`` for entries still reachable from doc dict tree."""
+    from tomlrt._array import AoT  # noqa: PLC0415
+    from tomlrt._container import Container  # noqa: PLC0415
+
+    surviving: set[int] = set()
+
+    def visit(v: object) -> None:
+        if isinstance(v, Container):
+            owner = v._owner_aot_entry  # noqa: SLF001
+            if owner is not None:
+                surviving.add(id(owner))
+            if not v._inline:  # noqa: SLF001
+                for child in v.values():
+                    visit(child)
+        elif isinstance(v, AoT):
+            for entry in v:
+                visit(entry)
+
+    visit(doc)
+    return surviving
+
+
+def _prune_empty_implicit_ancestors(c: Container) -> None:
+    """Drop implicit-empty containers from their parent's dict storage.
+
+    A container is implicit-empty iff: not the doc root, no
+    ``_header_ref``, empty ``_refs``, empty dict, no ``_owner_aot_entry``.
+    Such a container has no rendering presence and no slot ownership;
+    leaving it in the parent's dict would violate the
+    "every dict key has an _index entry" invariant.
+    """
+    cur: Container | None = c
+    while cur is not None:
+        parent = cur._parent  # noqa: SLF001
+        if parent is None:
+            return
+        if (
+            cur._header_ref is not None  # noqa: SLF001
+            or cur._refs  # noqa: SLF001
+            or len(cur) > 0
+            or cur._owner_aot_entry is not None  # noqa: SLF001
+            or cur._inline  # noqa: SLF001
+        ):
+            return
+        # Find the local key of cur in parent.
+        local_key = cur._path[-1] if cur._path else None  # noqa: SLF001
+        if local_key is None or local_key not in parent:
+            return
+        if dict.__getitem__(parent, local_key) is not cur:
+            return
+        dict.__delitem__(parent, local_key)
+        # parent._index[local_key] should already be gone (no refs remaining).
+        cur = parent
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +462,7 @@ def _quote_basic(s: str) -> str:
 
 __all__ = [
     "append_direct_kv",
-    "delete_direct_kv",
+    "delete_key",
     "insert_after",
     "insert_before_head",
     "unlink_slot",

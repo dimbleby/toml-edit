@@ -182,14 +182,9 @@ class Container(dict[str, Any]):
             return
         if key not in self:
             raise KeyError(key)
-        current = dict.__getitem__(self, key)
-        if not _is_scalar(current):
-            msg = "structural delete arrives in Phase 3d"
-            raise NotImplementedError(msg)
         from tomlrt import _layout_ops  # noqa: PLC0415
 
-        _layout_ops.delete_direct_kv(self, key)
-        dict.__delitem__(self, key)
+        _layout_ops.delete_key(self, key)
 
     # ------------------------------------------------------------------
     # Inline-table dispatch (Phase 3b)
