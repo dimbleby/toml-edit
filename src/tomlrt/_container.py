@@ -21,7 +21,7 @@ else:
 
 from tomlrt._render import render
 from tomlrt._slots import KVSlot
-from tomlrt._trivia import Trivia, WhitespaceNode
+from tomlrt._trivia import CommentNode, Trivia, WhitespaceNode
 from tomlrt._values import (
     ArrayItem,
     ArrayValue,
@@ -801,11 +801,32 @@ class Container(dict[str, Any]):
         if not (isinstance(cur, Container) and cur._inline):  # noqa: SLF001
             msg = f"{key!r} is not an inline table"
             raise TOMLError(msg)
+        if _inline_value_has_inner_comments(cur._value):  # noqa: SLF001
+            msg = (
+                f"cannot promote {key!r}: inline table has inner "
+                f"comments that would be lost"
+            )
+            raise TOMLError(msg)
+        # Capture leading + eol from the existing KV slot so we can
+        # transfer them onto the new section header.
+        from tomlrt._comments import _direct_kv_slot  # noqa: PLC0415
+
+        old_slot = _direct_kv_slot(self, key)
+        saved_leading = old_slot.leading if old_slot is not None else None
+        saved_eol = old_slot.eol if old_slot is not None else None
         snapshot = cur.to_dict()
         del self[key]
         self[key] = Table.section(snapshot)
         result = dict.__getitem__(self, key)
         assert isinstance(result, Table)
+        new_header = result._header_ref.slot if result._header_ref else None  # noqa: SLF001
+        from tomlrt._slots import StructuralHeaderSlot  # noqa: PLC0415
+
+        if isinstance(new_header, StructuralHeaderSlot):
+            if saved_leading is not None:
+                new_header.leading = saved_leading
+            if saved_eol is not None:
+                new_header.eol = saved_eol
         return result
 
     def promote_array(self, key: str) -> AoT:
@@ -836,6 +857,18 @@ class Container(dict[str, Any]):
             if not (isinstance(el, Container) and el._inline):  # noqa: SLF001
                 msg = f"{key!r} contains a non-inline-table element"
                 raise TOMLError(msg)
+        if cur._value is not None:  # noqa: SLF001
+            if _array_value_has_outer_comments(cur._value):  # noqa: SLF001
+                msg = f"cannot promote {key!r}: array has comments that would be lost"
+                raise TOMLError(msg)
+            for entry_view in cur:
+                ev = entry_view._value  # noqa: SLF001
+                if ev is not None and _inline_value_has_inner_comments(ev):
+                    msg = (
+                        f"cannot promote {key!r}: array entry has inner "
+                        f"comments that would be lost"
+                    )
+                    raise TOMLError(msg)
         snapshot = cur.to_list()
         del self[key]
         self[key] = AoT(snapshot)
@@ -962,6 +995,55 @@ class Document(Container):
         from tomlrt._public import loads  # noqa: PLC0415
 
         return loads(self.render())
+
+
+def _trivia_has_comment(t: Trivia) -> bool:
+    return any(isinstance(p, CommentNode) for p in t.pieces)
+
+
+def _inline_value_has_inner_comments(v: object) -> bool:
+    """Return True iff the inline-table value carries inner comments.
+
+    Used to refuse ``promote_inline`` on inline tables whose comments
+    would have nowhere to live in the promoted form.
+    """
+    from tomlrt._values import InlineTableValue  # noqa: PLC0415
+
+    if not isinstance(v, InlineTableValue):
+        return False
+    if _trivia_has_comment(v.final_trivia):
+        return True
+    for e in v.entries:
+        if (
+            _trivia_has_comment(e.leading)
+            or _trivia_has_comment(e.trailing)
+            or _trivia_has_comment(e.post_comma_trivia)
+        ):
+            return True
+    return False
+
+
+def _array_value_has_outer_comments(v: object) -> bool:
+    """Return True iff the array carries item-level or final comments.
+
+    "Outer" here means comments at the array layer itself; nested
+    inline-value comments are tested separately (and produce a
+    different error message).
+    """
+    from tomlrt._values import ArrayValue  # noqa: PLC0415
+
+    if not isinstance(v, ArrayValue):
+        return False
+    if _trivia_has_comment(v.final_trivia):
+        return True
+    for it in v.items:
+        if (
+            _trivia_has_comment(it.leading)
+            or _trivia_has_comment(it.trailing)
+            or _trivia_has_comment(it.post_comma_trivia)
+        ):
+            return True
+    return False
 
 
 def _deep_section_clone(c: Container) -> Container:
