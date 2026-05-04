@@ -755,7 +755,10 @@ class Container(dict[str, Any]):
             if not isinstance(nxt, Container) or nxt._inline:  # noqa: SLF001
                 from tomlrt._errors import TOMLError  # noqa: PLC0415
 
-                msg = f"existing value at {p!r} is not a section table"
+                msg = (
+                    f"existing value at {p!r} is not section-backed "
+                    "(is an inline table or non-table value)"
+                )
                 raise TOMLError(msg)
             cur = nxt
             i += 1

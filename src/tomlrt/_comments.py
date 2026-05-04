@@ -211,23 +211,32 @@ def _line_is_comment(line: list[object]) -> bool:
 
 def _split_attached_block(
     leading: Trivia,
-) -> tuple[list[list[object]], list[list[object]]]:
-    """Split the leading into (above_blank, attached) line groups.
+) -> tuple[list[list[object]], list[list[object]], list[object]]:
+    """Split the leading into (above_blank, attached_comment_lines, slot_indent).
 
     The "attached" group is the contiguous run of comment lines
     immediately preceding the slot — i.e. with no blank line
     between the run and the slot itself.  Everything before the
     last blank-separator-or-start is "above_blank" (preamble +
-    archived blocks).
+    archived blocks).  ``slot_indent`` is any trailing whitespace-
+    only, newline-less "indent" line (the slot's own column
+    offset) — preserved separately so callers can reapply it
+    when rebuilding the leading.
     """
     lines = _split_leading_into_lines(leading)
-    # Find index of attached block start: walk back from end while
-    # the line is a comment line; once we hit a blank or non-comment,
-    # stop.
+    indent: list[object] = []
+    if lines and not any(isinstance(p, NewlineNode) for p in lines[-1]):
+        last = lines[-1]
+        # Only treat as indent if it has no comment.
+        if not any(isinstance(p, CommentNode) for p in last):
+            indent = last
+            lines = lines[:-1]
     i = len(lines)
     while i > 0 and _line_is_comment(lines[i - 1]):
         i -= 1
-    return lines[:i], lines[i:]
+    above = lines[:i]
+    attached = lines[i:]
+    return above, attached, indent
 
 
 def _extract_leading_comments(leading: Trivia) -> tuple[str, ...]:
@@ -237,7 +246,7 @@ def _extract_leading_comments(leading: Trivia) -> tuple[str, ...]:
     the slot — comments separated by a blank line are considered
     preamble or archived blocks and are excluded.
     """
-    _above, attached = _split_attached_block(leading)
+    _above, attached, _indent = _split_attached_block(leading)
     out: list[str] = []
     for line in attached:
         for p in line:
@@ -249,8 +258,8 @@ def _extract_leading_comments(leading: Trivia) -> tuple[str, ...]:
 
 def _slot_has_attached_comments(slot: object) -> bool:
     leading = slot.leading  # type: ignore[attr-defined]
-    _above, attached = _split_attached_block(leading)
-    return bool(attached)
+    _above, attached, _indent = _split_attached_block(leading)
+    return any(_line_is_comment(line) for line in attached)
 
 
 class LeadingCommentView(MutableMapping[str, tuple[str, ...]]):
@@ -304,15 +313,19 @@ class LeadingCommentView(MutableMapping[str, tuple[str, ...]]):
         lr = self._c._layout_root  # noqa: SLF001
         nl = lr._newline if isinstance(lr, Document) else "\n"  # noqa: SLF001
         # Replace only the *attached* comment block; preserve any
-        # preamble / archived blocks above any blank-line separator.
-        above, _attached = _split_attached_block(slot.leading)
+        # preamble / archived blocks above any blank-line separator,
+        # and re-apply the slot's own indent before each new comment
+        # line and (implicitly) before the slot itself.
+        above, _attached, indent = _split_attached_block(slot.leading)
         kept: list[object] = []
         for line in above:
             kept.extend(line)
         new_pieces: list[object] = []
         for c in comments:
+            new_pieces.extend(indent)
             new_pieces.append(CommentNode(_encode_comment(c)))
             new_pieces.append(NewlineNode(nl))
+        new_pieces.extend(indent)
         slot.leading.pieces = [*kept, *new_pieces]  # type: ignore[list-item]
 
     @override
@@ -322,10 +335,11 @@ class LeadingCommentView(MutableMapping[str, tuple[str, ...]]):
             raise KeyError(key)
         if not _slot_has_attached_comments(slot):
             raise KeyError(key)
-        above, _attached = _split_attached_block(slot.leading)
+        above, _attached, indent = _split_attached_block(slot.leading)
         kept: list[object] = []
         for line in above:
             kept.extend(line)
+        kept.extend(indent)
         slot.leading.pieces = kept  # type: ignore[assignment]
 
     @override
@@ -366,9 +380,12 @@ def _header_slot(c: Container) -> object:
 
 
 def _header_comment_get(c: Container) -> str | None:
+    from tomlrt._errors import TOMLError  # noqa: PLC0415
+
     h = _header_slot(c)
     if h is None:
-        return None
+        msg = "container has no header to attach a comment to"
+        raise TOMLError(msg)
     eol = h.eol  # type: ignore[attr-defined]
     if eol.comment is None:
         return None
@@ -415,9 +432,12 @@ def _header_comment_set(c: Container, value: str | None) -> None:
 
 
 def _header_leading_get(c: Container) -> tuple[str, ...]:
+    from tomlrt._errors import TOMLError  # noqa: PLC0415
+
     h = _header_slot(c)
     if h is None:
-        return ()
+        msg = "container has no header to attach leading comments to"
+        raise TOMLError(msg)
     leading = h.leading  # type: ignore[attr-defined]
     return _extract_leading_comments(leading)
 
@@ -445,14 +465,16 @@ def _header_leading_set(c: Container, value: tuple[str, ...]) -> None:
     lr = c._layout_root  # noqa: SLF001
     nl = lr._newline if isinstance(lr, Document) else "\n"  # noqa: SLF001
     leading = h.leading  # type: ignore[attr-defined]
-    above, _attached = _split_attached_block(leading)
+    above, _attached, indent = _split_attached_block(leading)
     kept: list[object] = []
     for line in above:
         kept.extend(line)
     new_pieces: list[object] = []
     for cm in comments:
+        new_pieces.extend(indent)
         new_pieces.append(CommentNode(_encode_comment(cm)))
         new_pieces.append(NewlineNode(nl))
+    new_pieces.extend(indent)
     leading.pieces = [*kept, *new_pieces]
 
 
@@ -482,8 +504,10 @@ def _validate_comment_seq(value: tuple[str, ...], name: str) -> tuple[str, ...]:
     return out
 
 
-def _trivia_attached_split(t: Trivia) -> tuple[list[list[object]], list[list[object]]]:
-    """Split arbitrary trivia into (above_blank, last_block)."""
+def _trivia_attached_split(
+    t: Trivia,
+) -> tuple[list[list[object]], list[list[object]], list[object]]:
+    """Split arbitrary trivia into (above_blank, attached, indent)."""
     return _split_attached_block(t)
 
 
@@ -500,7 +524,7 @@ def _doc_preamble_get(doc: object) -> tuple[str, ...]:
                     break
         return tuple(out)
     leading = head.leading
-    above, _attached = _split_attached_block(leading)
+    above, _attached, _indent = _split_attached_block(leading)
     # Preamble = comment lines in the "above" block (separated by blank).
     out = []
     for line in above:
@@ -527,12 +551,13 @@ def _doc_preamble_set(doc: object, value: tuple[str, ...]) -> None:
         doc._trailing.pieces = new_pieces  # type: ignore[attr-defined]  # noqa: SLF001
         return
     leading = head.leading
-    _above, attached = _split_attached_block(leading)
+    _above, attached, indent = _split_attached_block(leading)
     if not comments:
-        # Drop preamble; keep only the attached block (if any).
+        # Drop preamble; keep only the attached block (and indent).
         kept: list[object] = []
         for line in attached:
             kept.extend(line)
+        kept.extend(indent)
         leading.pieces = kept
         return
     new_pieces = []
@@ -544,6 +569,7 @@ def _doc_preamble_set(doc: object, value: tuple[str, ...]) -> None:
     kept = []
     for line in attached:
         kept.extend(line)
+    kept.extend(indent)
     leading.pieces = [*new_pieces, *kept]
 
 
