@@ -1239,11 +1239,44 @@ class _DottedSubTable(Table):
         self._host._del_prefix((*self._prefix, key))  # noqa: SLF001
 
 
+def _is_direct_table_section(sec: SectionNode, path: tuple[str, ...]) -> bool:
+    """True if ``sec`` directly backs the standard table at ``path``.
+
+    "Direct" = the section's header opens exactly this table: ``[path]``
+    for non-root, the implicit pre-header section (``header is None``)
+    for root. Sub-sections (``[path.x]``) and AoT entries (``[[path]]``)
+    are *not* direct — they belong to other views.
+    """
+    hdr = sec.header
+    if path == ():
+        return hdr is None
+    return hdr is not None and hdr.kind == "table" and hdr.key.path == path
+
+
+def _singleton_direct_section(
+    pool: Iterable[SectionNode], path: tuple[str, ...]
+) -> SectionNode | None:
+    """Return the sole direct standard section for ``path`` in ``pool``, else None.
+
+    Returns ``None`` if zero or more than one section qualifies, so the
+    caller can rely on a non-``None`` result being the unique direct
+    backing section.
+    """
+    found: SectionNode | None = None
+    for sec in pool:
+        if _is_direct_table_section(sec, path):
+            if found is not None:
+                return None
+            found = sec
+    return found
+
+
 class _StdTable(Table):
     """Standard TOML table view: aggregates physical sections by path."""
 
     __slots__ = (
         "_anchor",
+        "_direct_section",
         "_doc_node",
         "_init_extras",
         "_init_pool",
@@ -1279,6 +1312,17 @@ class _StdTable(Table):
         # purges and inserts can never desync the dict view from what
         # ``dumps`` would render.
         self._owner_anchor = owner_anchor if owner_anchor is not None else anchor
+        # ``_direct_section`` caches the result of ``_direct_sections``
+        # in the singleton case (the overwhelmingly common shape: one
+        # ``[path]`` header backs the table). It is *only* a cache for
+        # the standard-table direct-sections scan; it carries none of
+        # the AoT semantics that ``_anchor`` does. AoT entries leave
+        # it ``None`` and short-circuit through ``_anchor`` instead.
+        # Populated cheaply at construction when a narrow ``_pool`` is
+        # available, and lazily memoized by ``_direct_sections``.
+        self._direct_section: SectionNode | None = None
+        if _pool is not None:
+            self._cache_direct_section_from(_pool)
         # Transient hints, used only during the initial ``_populate``
         # call that runs from this constructor. The parent ``_iter_table``
         # already partitioned its section pool by next-head and computed
@@ -1359,21 +1403,35 @@ class _StdTable(Table):
             extras=extras,
         )
 
+    def _cache_direct_section_from(self, pool: Iterable[SectionNode]) -> None:
+        """Populate ``_direct_section`` from a known-narrow ``pool``.
+
+        No-op for AoT entries (``_anchor`` short-circuits the cache);
+        otherwise sets the cache to the unique direct backing section
+        for ``self._path`` in ``pool``, or leaves it ``None`` if zero
+        or multiple sections qualify.
+        """
+        if self._anchor is None:
+            self._direct_section = _singleton_direct_section(pool, self._path)
+
     def _direct_sections(self) -> list[SectionNode]:
         if self._anchor is not None:
             return [self._anchor]
+        cached = self._direct_section
+        if cached is not None:
+            return [cached]
         path = self._path
         scope = self._scope()
         sections = scope if scope is not None else self._doc_node.sections
-        if path == ():
-            return [s for s in sections if s.header is None]
-        return [
-            s
-            for s in sections
-            if s.header is not None
-            and s.header.kind == "table"
-            and s.header.key.path == path
-        ]
+        result = [s for s in sections if _is_direct_table_section(s, path)]
+        # Memoize the singleton case so subsequent calls (the common
+        # shape after install / parse) skip the doc-wide scan. Multi-
+        # section tables (mostly the implicit pre-header section being
+        # absent or split-table layouts) are left uncached -- the cache
+        # contract is "exactly one direct section, and it is this".
+        if len(result) == 1:
+            self._direct_section = result[0]
+        return result
 
     @override
     def _detach(self, doc_node: DocumentNode | None = None) -> None:
@@ -1396,6 +1454,11 @@ class _StdTable(Table):
         # The captured sections form a self-contained little document;
         # there is no longer an enclosing AoT entry to bound our world.
         self._owner_anchor = self._anchor
+        # Cached direct section may have referenced a node that didn't
+        # make it into ``captured`` (deeper sub-section vs the anchor),
+        # and ``_direct_sections`` will repopulate lazily against the
+        # new private doc on next read.
+        self._direct_section = None
         super()._detach(doc_node)
 
     def __copy__(self) -> _StdTable:
@@ -1786,7 +1849,7 @@ class _StdTable(Table):
         new_sec = _build_promoted_section(child_path, inline, kv)
         self._doc_node.remove_entry(sec, kv)
         self._splice_promoted_sections([new_sec])
-        view = _StdTable(self._doc_node, child_path)
+        view = _StdTable(self._doc_node, child_path, _pool=[new_sec])
         dict.__setitem__(self, key, view)
         return view
 
@@ -2024,11 +2087,14 @@ class _StdTable(Table):
         prior_index: int | None = None
         prior_leading: Trivia | None = None
         # Dict-cache short-circuit: if ``parts[0]`` isn't a known key on
-        # this view, no existing section can match ``full_path`` (any
-        # such section would surface as a sub-table or value in the
-        # dict cache). Skip the O(total-sections) prior-match scan.
-        needs_prior_search = len(parts) != 1 or super().__contains__(parts[0])
-        if needs_prior_search:
+        # this view, no existing section can sit at-or-under
+        # ``full_path`` (any such section would surface as a sub-table
+        # or value in the dict cache). Skip the O(total-sections)
+        # prior-match scan, the redundant ``purge_path`` walk, and the
+        # ``_section_insert_index`` scan; intermediates and leaf go to
+        # the end of the document (or end of the AoT entry block).
+        fresh_prefix = not super().__contains__(parts[0])
+        if not fresh_prefix:
             for i, sec in enumerate(self._doc_node.sections):
                 hdr = sec.header
                 if (
@@ -2055,7 +2121,7 @@ class _StdTable(Table):
                 # inter-section separator once the new block is in
                 # place. Normalising now strips it prematurely.
                 self._purge_conflicting(parts[0])
-        else:
+        elif not fresh_prefix:
             self._doc_node.purge_path(full_path)
         sections = self._doc_node.sections
         if prior_index is not None:
@@ -2065,6 +2131,14 @@ class _StdTable(Table):
             return full_path, prior_index, prior_leading
         owner = self._owner_anchor
         if owner is None:
+            if fresh_prefix and len(parts) > 1:
+                # ``parts[0]`` absent + deep path ⇒ no section shares
+                # ``full_path``'s parent prefix (which includes
+                # ``parts[0]``), so ``_section_insert_index`` would
+                # scan the whole document and return ``len(sections)``
+                # anyway. For ``len(parts) == 1`` the parent prefix is
+                # ``self._path``, which may have other children.
+                return full_path, len(sections), None
             return full_path, _section_insert_index(sections, full_path), None
         # AoT-entry sub-table with no prior section at this path:
         # pin the new section to the end of this entry's owned range
@@ -2081,10 +2155,10 @@ class _StdTable(Table):
         value: AoT,
     ) -> None:
         """Deep-clone an attached source ``AoT`` into ``parts``."""
-        full_path = self._splice_attached(parts, value, _clone_aot_sections)
+        full_path, new_secs = self._splice_attached(parts, value, _clone_aot_sections)
         view: AoT = AoT._attached_to(self._doc_node, full_path, [])  # noqa: SLF001
         view._resync()  # noqa: SLF001
-        self._install_at_path(parts, view)
+        self._install_at_path(parts, view, inserted=new_secs)
 
     @override
     def _install_section(
@@ -2130,6 +2204,8 @@ class _StdTable(Table):
                 self._anchor = None
             if self._owner_anchor is sec:
                 self._owner_anchor = None
+            if self._direct_section is sec:
+                self._direct_section = None
             return
 
     def _install_attached_table(
@@ -2142,9 +2218,9 @@ class _StdTable(Table):
         Implicit super-tables in the source remain implicit in the target —
         no empty intermediate ``[a]`` / ``[a.b]`` headers are emitted.
         """
-        full_path = self._splice_attached(parts, value, _clone_table_sections)
+        full_path, new_secs = self._splice_attached(parts, value, _clone_table_sections)
         view = _StdTable(self._doc_node, full_path, owner_anchor=self._owner_anchor)
-        self._install_at_path(parts, view)
+        self._install_at_path(parts, view, inserted=new_secs)
         return view
 
     def _install_detached(
@@ -2163,11 +2239,11 @@ class _StdTable(Table):
         ``self[parts[-1]] is value`` holds.
         """
         src_path = value._path  # noqa: SLF001
-        full_path = self._splice_attached(parts, value, rebase)
+        full_path, new_secs = self._splice_attached(parts, value, rebase)
         _rehome_table_subtree(
             value, self._doc_node, src_path, full_path, self._owner_anchor
         )
-        self._install_at_path(parts, value)
+        self._install_at_path(parts, value, inserted=new_secs)
         return value
 
     def _splice_attached(
@@ -2175,15 +2251,16 @@ class _StdTable(Table):
         parts: tuple[str, ...],
         value: _TableOrAoT,
         cloner: Callable[[_TableOrAoT, tuple[str, ...]], list[SectionNode]],
-    ) -> tuple[str, ...]:
+    ) -> tuple[tuple[str, ...], list[SectionNode]]:
         """Common purge-and-splice for both attached-section installers.
 
         Snapshots the source CST *before* purging the destination slot so
         same-document calls where ``parts`` overlaps ``value._path``
         (e.g. ``doc["a"] = doc["a"]["b"]``,
         ``doc.install("a", doc.aot("a.inner"))``) still see their source.
-        Returns the absolute target path, ready for the caller to wrap
-        in a view.
+        Returns ``(full_path, new_secs)``: the absolute target path and
+        the freshly-spliced section block (which the caller can hand to
+        ``_install_at_path`` as a ready-made narrow pool).
         """
         full_path = (*self._path, *parts)
         new_secs = cloner(value, full_path)
@@ -2196,15 +2273,25 @@ class _StdTable(Table):
                 new_secs,
                 separate_within=False,
             )
-        return full_path
+        return full_path, new_secs
 
-    def _install_at_path(self, parts: tuple[str, ...], obj: _StdTable | AoT) -> None:
+    def _install_at_path(
+        self,
+        parts: tuple[str, ...],
+        obj: _StdTable | AoT,
+        *,
+        inserted: list[SectionNode] | None = None,
+    ) -> None:
         """Install ``obj`` at the leaf of ``parts``.
 
         Materialises any intermediate implicit super-tables in dict
         storage as we go. CST mutations are assumed to have already
         been performed; this method only reconciles the dict-storage
-        view.
+        view. ``inserted``, when supplied by an attached-section
+        installer, is the freshly-spliced block: a missing intermediate
+        head implies no pre-existing sections under it (any would have
+        appeared in dict storage), so ``inserted`` is the complete pool
+        and we skip the O(N) document scan.
         """
         cur: _StdTable = self
         narrow_pool: list[SectionNode] | None = None
@@ -2215,22 +2302,24 @@ class _StdTable(Table):
                 continue
             # ``part`` is missing in dict storage: an implicit super-
             # table just materialised in the CST. Construct its view
-            # directly. A missing head implies no pre-existing sections
-            # under it, so the only sections relevant to this sub-tree
-            # are the freshly-spliced ones -- collected lazily on the
-            # first miss and reused for every deeper intermediate (each
-            # deeper ``_iter_table`` filters this pool by its own path
-            # prefix).
+            # directly with the narrow pool of sections that could sit
+            # under it -- ``inserted`` if the caller handed it to us,
+            # otherwise filter the document once on first miss and
+            # reuse for every deeper intermediate (each deeper
+            # ``_iter_table`` re-filters by its own path prefix).
             sub_path = (*cur._path, part)  # noqa: SLF001
             if narrow_pool is None:
-                sp_len = len(sub_path)
-                narrow_pool = [
-                    sec
-                    for sec in self._doc_node.sections
-                    if sec.header is not None
-                    and len(sec.header.key.path) >= sp_len
-                    and sec.header.key.path[:sp_len] == sub_path
-                ]
+                if inserted is not None:
+                    narrow_pool = inserted
+                else:
+                    sp_len = len(sub_path)
+                    narrow_pool = [
+                        sec
+                        for sec in self._doc_node.sections
+                        if sec.header is not None
+                        and len(sec.header.key.path) >= sp_len
+                        and sec.header.key.path[:sp_len] == sub_path
+                    ]
             sub = _StdTable(
                 self._doc_node,
                 sub_path,
@@ -2240,6 +2329,14 @@ class _StdTable(Table):
             super(Table, cur).__setitem__(part, sub)
             cur = sub
         super(Table, cur).__setitem__(parts[-1], obj)
+        # Cheap leaf-cache populate: when we have the freshly-spliced
+        # block, ``obj``'s direct section (if any) must be the unique
+        # exact-path match within it -- everything else under
+        # ``obj._path`` was either purged or is a deeper sub-section.
+        # No-op for AoT views and for the implicit-super-table shape
+        # (no exact-path match in ``inserted``).
+        if inserted is not None and isinstance(obj, _StdTable):
+            obj._cache_direct_section_from(inserted)  # noqa: SLF001
 
 
 def _rehome_table_subtree(
@@ -2265,6 +2362,13 @@ def _rehome_table_subtree(
         view._path = (*full_path, *rel)  # noqa: SLF001
         view._owner_anchor = owner_anchor  # noqa: SLF001
         view._attached = True  # noqa: SLF001
+        # Cache may reference a section that has been rebased in place
+        # (still live, but its header path changed) or one that didn't
+        # move. Clearing is the simple correct choice; ``_install_at_path``
+        # repopulates the freshly-installed top of the subtree from
+        # ``inserted`` immediately after this call, and deeper views
+        # warm via memoization on first read.
+        view._direct_section = None  # noqa: SLF001
         for child in dict.values(view):
             if isinstance(child, (_StdTable, AoT)):
                 _rehome_table_subtree(child, new_doc, src_path, full_path, owner_anchor)
@@ -3519,16 +3623,8 @@ def _iter_table(
     direct_secs: list[SectionNode]
     if anchor is not None:
         direct_secs = [anchor]
-    elif path == ():
-        direct_secs = [s for s in pool if s.header is None]
     else:
-        direct_secs = [
-            s
-            for s in pool
-            if s.header is not None
-            and s.header.kind == "table"
-            and s.header.key.path == path
-        ]
+        direct_secs = [s for s in pool if _is_direct_table_section(s, path)]
     direct_ids = {id(s) for s in direct_secs}
 
     name_order: list[str] = []
