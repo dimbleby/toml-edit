@@ -359,6 +359,7 @@ def delete_key(c: Container, key: str) -> None:
 
         orphan = _Document()
         orphan._newline = doc._newline  # noqa: SLF001
+        orphan._is_private = True  # noqa: SLF001
         for slot in owned_slots:
             _splice_at_end(slot, orphan)
         for sc in subtree_containers:

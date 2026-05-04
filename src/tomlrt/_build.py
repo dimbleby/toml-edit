@@ -371,6 +371,7 @@ def build_from_parse(result: ParseResult) -> Document:
     doc._tail = result.slots[-1] if result.slots else None  # noqa: SLF001
     doc._trailing = result.trailing  # noqa: SLF001
     doc._newline = result.newline  # noqa: SLF001
+    doc._is_private = False  # noqa: SLF001
     doc._layout_root = doc  # noqa: SLF001
     build_initial_containers(doc, result.slots)
     return doc

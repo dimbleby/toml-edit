@@ -307,17 +307,25 @@ class Container(dict[str, Any]):
         if isinstance(value, AoT):
             from tomlrt import _layout_ops  # noqa: PLC0415
 
-            # If `value` is already attached somewhere, the contract
-            # is to clone — the user's existing reference must keep
-            # working at its original location.
-            if value._layout_root is not None:  # noqa: SLF001
+            # If `value` is already attached to a different LIVE doc,
+            # the contract is to clone — the user's existing reference
+            # must keep working at its original location. Detached
+            # values (orphan / private root) are rehomed in place,
+            # preserving Python identity.
+            src_root = value._layout_root  # noqa: SLF001
+            if src_root is not None and not src_root._is_private:  # noqa: SLF001
                 snapshot = value.to_list()
                 value = AoT(snapshot)
             # Snapshot existing entry tables (preserving identity);
             # rehome the AoT object as empty; then reattach each
             # entry table in place so user references survive.
             existing_entries: list[Table] = list(value)
+            for et in existing_entries:
+                _reset_table_for_rehome(et)
             list.clear(value)
+            value._layout_root = None  # noqa: SLF001
+            value._parent = None  # noqa: SLF001
+            value._path = ()  # noqa: SLF001
             attached = _layout_ops.attach_empty_aot(self, key, value)
             dict.__setitem__(self, key, attached)
             for entry_table in existing_entries:
@@ -327,9 +335,13 @@ class Container(dict[str, Any]):
             # Section-flavoured Table — synthesise [path] header.
             from tomlrt import _layout_ops  # noqa: PLC0415
 
-            # Already-attached Table: clone via to_dict() snapshot.
-            if value._layout_root is not None:  # noqa: SLF001
+            # Already-attached Table (live doc): clone via snapshot.
+            # Detached/private: rehome in place.
+            src_root = value._layout_root  # noqa: SLF001
+            if src_root is not None and not src_root._is_private:  # noqa: SLF001
                 value = Table.section(value.to_dict())
+            elif src_root is not None and src_root._is_private:  # noqa: SLF001
+                _reset_table_for_rehome(value)
             _layout_ops.attach_section(self, key, value)
             return
         # Unknown type → TypeError via _synth_value.
@@ -601,7 +613,7 @@ class Document(Container):
     inherited from `Container`.
     """
 
-    __slots__ = ("_head", "_newline", "_tail", "_trailing")
+    __slots__ = ("_head", "_is_private", "_newline", "_tail", "_trailing")
 
     def __init__(self, data: Mapping[str, Any] | None = None) -> None:
         super().__init__()
@@ -609,6 +621,7 @@ class Document(Container):
         self._tail: Slot | None = None
         self._trailing: Trivia = Trivia()
         self._newline: str = "\n"
+        self._is_private: bool = False
         self._layout_root = self
         if data is not None:
             import warnings  # noqa: PLC0415
@@ -673,6 +686,27 @@ class Document(Container):
         attached = _layout_ops.attach_section_at(cur, parts[i:], new_section)
         assert isinstance(attached, Table)
         return attached
+
+
+def _reset_table_for_rehome(t: Container) -> None:
+    """Clear a Table's slot infrastructure so it can be reattached.
+
+    Preserves dict storage (so post-detach mutations survive) but
+    drops `_layout_root` / `_path` / `_parent` / `_owner_aot_entry`
+    / `_refs` / `_index` / `_header_ref` / `_body_tail` so the
+    standard attach path treats `t` as if freshly constructed.
+
+    Used when re-installing a held view that was detached into a
+    private orphan ``Document``.
+    """
+    t._layout_root = None  # noqa: SLF001
+    t._path = ()  # noqa: SLF001
+    t._parent = None  # noqa: SLF001
+    t._owner_aot_entry = None  # noqa: SLF001
+    t._refs = []  # noqa: SLF001
+    t._index = {}  # noqa: SLF001
+    t._header_ref = None  # noqa: SLF001
+    t._body_tail = None  # noqa: SLF001
 
 
 def _split_path(path: str | Sequence[str]) -> list[str]:
