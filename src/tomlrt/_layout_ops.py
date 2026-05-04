@@ -1138,8 +1138,15 @@ def _aot_separator(aot: AoT, doc: Document) -> Trivia:
     return Trivia([NewlineNode(text=nl)])
 
 
-def add_aot_entry(aot: object, body: object) -> object:
-    """Append a ``[[path]]`` entry to ``aot`` and return its `Table` view."""
+def add_aot_entry(aot: object, body: object, *, rehome: object | None = None) -> object:
+    """Append a ``[[path]]`` entry to ``aot`` and return its `Table` view.
+
+    If ``rehome`` is supplied (must be an unattached ``Table``), it is
+    used as the entry view so the caller can preserve identity for a
+    user reference. ``body`` is then ignored — ``rehome``'s own dict
+    storage is used as the source body and is cleared/repopulated
+    in place.
+    """
     from tomlrt._array import AoT  # noqa: PLC0415
     from tomlrt._container import (  # noqa: PLC0415
         Table,
@@ -1170,8 +1177,16 @@ def add_aot_entry(aot: object, body: object) -> object:
     )
     entry.entry_slots.append(header)
 
-    # Build entry-root container.
-    entry_table = Table()
+    # Build entry-root container (or rehome an existing one).
+    if rehome is not None:
+        assert isinstance(rehome, Table)
+        assert rehome._layout_root is None  # noqa: SLF001
+        entry_table = rehome
+        body_items = list(rehome.items())
+        dict.clear(entry_table)
+    else:
+        entry_table = Table()
+        body_items = list(_items_for_synth(body)) if body is not None else []
     entry_table._layout_root = doc  # noqa: SLF001
     entry_table._path = path  # noqa: SLF001
     entry_table._parent = parent  # noqa: SLF001
@@ -1198,23 +1213,22 @@ def add_aot_entry(aot: object, body: object) -> object:
     list.append(aot, entry_table)
 
     # Populate body.
-    if body is not None:
-        for k, v in _items_for_synth(body):
-            if not isinstance(k, str):
-                msg = f"AoT entry key must be str, got {type(k).__name__}"
-                raise TypeError(msg)
-            if not (_is_scalar(v) or _is_synth_inline(v)):
-                entry_table[k] = v
-                continue
-            cst, dec = _synth_value(
-                v,
-                layout_root=doc,
-                parent=entry_table,
-                path=(*path, k),
-                owner=entry,
-            )
-            _append_kv_in_aot_entry(entry_table, k, cst)
-            dict.__setitem__(entry_table, k, dec)
+    for k, v in body_items:
+        if not isinstance(k, str):
+            msg = f"AoT entry key must be str, got {type(k).__name__}"
+            raise TypeError(msg)
+        if not (_is_scalar(v) or _is_synth_inline(v)):
+            entry_table[k] = v
+            continue
+        cst, dec = _synth_value(
+            v,
+            layout_root=doc,
+            parent=entry_table,
+            path=(*path, k),
+            owner=entry,
+        )
+        _append_kv_in_aot_entry(entry_table, k, cst)
+        dict.__setitem__(entry_table, k, dec)
     return entry_table
 
 
@@ -1543,6 +1557,7 @@ def attach_section(parent: Container, key: str, source: object | None = None) ->
     parent_ref = SlotRef(slot=header, container=parent, local_key=key)
     parent._refs.append(parent_ref)  # noqa: SLF001
     parent._index.setdefault(key, []).append(parent_ref)  # noqa: SLF001
+    dict.__setitem__(parent, key, section)
 
     for k, v in pending:
         if not (_is_scalar(v) or _is_synth_inline(v)):

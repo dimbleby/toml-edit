@@ -307,21 +307,30 @@ class Container(dict[str, Any]):
         if isinstance(value, AoT):
             from tomlrt import _layout_ops  # noqa: PLC0415
 
-            # Snapshot any pre-existing entries' bodies; rehome the
-            # AoT object as empty; then re-add each body.
-            pending = [dict(t) for t in value]
+            # If `value` is already attached somewhere, the contract
+            # is to clone — the user's existing reference must keep
+            # working at its original location.
+            if value._layout_root is not None:  # noqa: SLF001
+                snapshot = value.to_list()
+                value = AoT(snapshot)
+            # Snapshot existing entry tables (preserving identity);
+            # rehome the AoT object as empty; then reattach each
+            # entry table in place so user references survive.
+            existing_entries: list[Table] = list(value)
             list.clear(value)
             attached = _layout_ops.attach_empty_aot(self, key, value)
             dict.__setitem__(self, key, attached)
-            for body in pending:
-                _layout_ops.add_aot_entry(value, body)
+            for entry_table in existing_entries:
+                _layout_ops.add_aot_entry(value, None, rehome=entry_table)
             return
         if isinstance(value, Container) and not value._inline:  # noqa: SLF001
             # Section-flavoured Table — synthesise [path] header.
             from tomlrt import _layout_ops  # noqa: PLC0415
 
-            attached = _layout_ops.attach_section(self, key, value)
-            dict.__setitem__(self, key, attached)
+            # Already-attached Table: clone via to_dict() snapshot.
+            if value._layout_root is not None:  # noqa: SLF001
+                value = Table.section(value.to_dict())
+            _layout_ops.attach_section(self, key, value)
             return
         # Unknown type → TypeError via _synth_value.
         _synth_value(
