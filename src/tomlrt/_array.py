@@ -252,8 +252,10 @@ class Array(list[Any]):
                 # interior content), use the array style's inferred
                 # indent (e.g. `    `) so an appended item lands at
                 # the conventional column.
-                if not indent and len(pieces) == 1 and isinstance(
-                    pieces[0], NewlineNode
+                if (
+                    not indent
+                    and len(pieces) == 1
+                    and isinstance(pieces[0], NewlineNode)
                 ):
                     indent = _first_indent_after_newline(style.inter_separator)
                 if indent and pieces and isinstance(pieces[-1], NewlineNode):
@@ -609,24 +611,23 @@ def _detect_style(value: ArrayValue | None, *, multiline_flag: bool) -> _ArraySt
             inter_sep = Trivia([NewlineNode(text=nl_text), WhitespaceNode(text="    ")])
         else:
             inter_sep = Trivia([WhitespaceNode(text=" ")])
-    elif is_multiline and len(items) == 1:
+    elif is_multiline and len(items) == 1 and not _has_ws_after_last_newline(inter_sep):
         # Single-item multiline arrays: post_comma_trivia of the
         # only item may carry a trailing comment block but lack a
         # trailing indent (the next byte is `]`). Stitch on the
         # indent from items[0].leading after the LAST newline so an
         # appended item lands at the right column without disturbing
         # any interior comment.
-        if not _has_ws_after_last_newline(inter_sep):
-            indent = _first_indent_after_newline(items[0].leading)
-            if indent:
-                pieces_list = list(inter_sep.pieces)
-                last_nl = -1
-                for j, p in enumerate(pieces_list):
-                    if isinstance(p, NewlineNode):
-                        last_nl = j
-                if last_nl >= 0:
-                    pieces_list.insert(last_nl + 1, WhitespaceNode(text=indent))
-                    inter_sep = Trivia(pieces_list)
+        indent = _first_indent_after_newline(items[0].leading)
+        if indent:
+            pieces_list = list(inter_sep.pieces)
+            last_nl = -1
+            for j, p in enumerate(pieces_list):
+                if isinstance(p, NewlineNode):
+                    last_nl = j
+            if last_nl >= 0:
+                pieces_list.insert(last_nl + 1, WhitespaceNode(text=indent))
+                inter_sep = Trivia(pieces_list)
     # Trailing-comma policy: the last item's has_comma if any.
     if items:
         trailing_comma = items[-1].has_comma
@@ -696,9 +697,7 @@ def _has_ws_after_last_newline(trivia: Any) -> bool:
             last_nl = i
     if last_nl < 0:
         return False
-    return last_nl + 1 < len(pieces) and isinstance(
-        pieces[last_nl + 1], WhitespaceNode
-    )
+    return last_nl + 1 < len(pieces) and isinstance(pieces[last_nl + 1], WhitespaceNode)
 
 
 def _has_ws_after_newline(trivia: Any) -> bool:
@@ -830,10 +829,34 @@ def _flip_to_internal(
     (if that slot is empty) before being cleared from the item — so
     that the original ``[ ..., x ]`` style survives an item being
     demoted from terminal to internal.
+
+    If the item already has a comma + non-empty ``post_comma_trivia``
+    (e.g. an EOL comment block), preserve it verbatim — it belongs to
+    the item — and only ensure it ends with a structural newline +
+    indent so the next item lands at the right column. Otherwise fall
+    back to the style's full inter-separator template.
     """
+    from tomlrt._trivia import NewlineNode, Trivia, WhitespaceNode  # noqa: PLC0415
+
     if value is not None and item.trailing.pieces and not value.final_trivia.pieces:
         value.final_trivia = item.trailing
     item.trailing = _trivia_empty()
+    if item.has_comma and item.post_comma_trivia.pieces:
+        if not _has_ws_after_last_newline(item.post_comma_trivia):
+            indent = _first_indent_after_newline(style.inter_separator)
+            pieces = list(item.post_comma_trivia.pieces)
+            last_nl = -1
+            for j, p in enumerate(pieces):
+                if isinstance(p, NewlineNode):
+                    last_nl = j
+            if last_nl >= 0 and indent:
+                pieces.insert(last_nl + 1, WhitespaceNode(text=indent))
+                item.post_comma_trivia = Trivia(pieces)
+            elif last_nl < 0 and indent:
+                pieces.append(NewlineNode(text="\n"))
+                pieces.append(WhitespaceNode(text=indent))
+                item.post_comma_trivia = Trivia(pieces)
+        return
     item.has_comma = True
     item.post_comma_trivia = _clone_trivia(style.inter_separator)
 
@@ -1131,8 +1154,12 @@ class AoT(list["Table"]):
             return self
         if count == 1 or self._layout_root is None:
             return self
-        # Snapshot original entries then add count-1 CST clones.
+        # Preflight: probe every entry's clone-eligibility BEFORE we
+        # start mutating the document, so a failure on entry N does
+        # not leave entries 0..N-1 already cloned.
         originals = list(self)
+        for e in originals:
+            _layout_ops.check_clone_aot_entry(self, e)
         for _ in range(count - 1):
             for e in originals:
                 _layout_ops.clone_aot_entry(self, e)
