@@ -422,8 +422,8 @@ class Table(dict[str, Any]):
         # Detached self still routes through install: a detached Table
         # owns a private CST (orphan DocumentNode or InlineTableNode)
         # and writes must land there so re-attach sees them.
-        if super().__contains__(key):
-            old = super().__getitem__(key)
+        old = super().get(key)
+        if old is not None:
             if old is value:
                 return
             if isinstance(old, (Table, AoT, Array)):
@@ -462,10 +462,10 @@ class Table(dict[str, Any]):
         cur: Any = self
         walked = True
         for i, part in enumerate(parts[:-1]):
-            if part not in cur:
+            nxt = cur.get(part)
+            if nxt is None:
                 walked = False
                 break
-            nxt = cur[part]
             if isinstance(nxt, AoT):
                 shown = ".".join(parts[: i + 1])
                 msg = (
@@ -479,8 +479,8 @@ class Table(dict[str, Any]):
                 break
             cur = nxt
         # Mirror __setitem__'s detach-existing behaviour at the resolved leaf.
-        if walked and isinstance(cur, Table) and dict.__contains__(cur, parts[-1]):
-            existing = dict.__getitem__(cur, parts[-1])
+        if walked and isinstance(cur, Table):
+            existing = dict.get(cur, parts[-1])
             if isinstance(existing, (Table, AoT, Array)) and existing is not value:
                 existing._detach()  # noqa: SLF001
         self._install_flavoured(parts, value)
@@ -530,14 +530,13 @@ class Table(dict[str, Any]):
 
     @override
     def __delitem__(self, key: str) -> None:
-        if not super().__contains__(key):
+        old = super().get(key)
+        if old is None:
             raise KeyError(key)
-        old = super().__getitem__(key)
         if isinstance(old, (Table, AoT, Array)):
             old._detach()  # noqa: SLF001
         self._delete_value(key)
-        if super().__contains__(key):
-            super().__delitem__(key)
+        super().pop(key, None)
 
     @override
     def clear(self) -> None:
@@ -566,8 +565,9 @@ class Table(dict[str, Any]):
 
     @override
     def setdefault(self, key: str, default: Any = None) -> Any:
-        if super().__contains__(key):
-            return super().__getitem__(key)
+        existing = super().get(key)
+        if existing is not None:
+            return existing
         self[key] = default
         return super().__getitem__(key)
 
@@ -921,18 +921,17 @@ class Table(dict[str, Any]):
         parts = _parse_key_path(key)
         cur: Table = self
         for i, part in enumerate(parts):
-            if part in cur:
-                child = cur[part]
-                if not isinstance(child, Table):
-                    full = ".".join(parts[: i + 1])
-                    msg = (
-                        f"cannot ensure table at {full!r}: existing value is "
-                        f"a {type(child).__name__}"
-                    )
-                    raise TOMLError(msg)
-                cur = child
-            else:
-                return cur._install_section(parts[i:], {})  # noqa: SLF001
+            child = cur.get(part)
+            if child is None:
+                return cur._install_section(parts[i:], {})
+            if not isinstance(child, Table):
+                full = ".".join(parts[: i + 1])
+                msg = (
+                    f"cannot ensure table at {full!r}: existing value is "
+                    f"a {type(child).__name__}"
+                )
+                raise TOMLError(msg)
+            cur = child
         return cur
 
 
@@ -2086,15 +2085,27 @@ class _StdTable(Table):
         scope_ids = None if scope is None else {id(s) for s in scope}
         prior_index: int | None = None
         prior_leading: Trivia | None = None
-        # Dict-cache short-circuit: if ``parts[0]`` isn't a known key on
-        # this view, no existing section can sit at-or-under
-        # ``full_path`` (any such section would surface as a sub-table
-        # or value in the dict cache). Skip the O(total-sections)
-        # prior-match scan, the redundant ``purge_path`` walk, and the
-        # ``_section_insert_index`` scan; intermediates and leaf go to
-        # the end of the document (or end of the AoT entry block).
-        fresh_prefix = not super().__contains__(parts[0])
-        if not fresh_prefix:
+        # Walk dict storage along ``parts``. ``fresh_suffix`` means a
+        # segment is *absent*, so no section or KV sits at-or-under
+        # ``full_path`` and the prior-match scan and ``purge_path``
+        # walk are no-ops. A non-table value along the way still
+        # requires purge, so does not qualify. ``fresh_depth`` is the
+        # index at which descent stopped (== ``len(parts)`` when the
+        # full path is already a chain of standard tables).
+        fresh_suffix = False
+        fresh_depth = len(parts)
+        cur: Table = self
+        for i, part in enumerate(parts):
+            nxt = dict.get(cur, part)
+            if nxt is None:
+                fresh_suffix = True
+                fresh_depth = i
+                break
+            if not isinstance(nxt, _StdTable):
+                fresh_depth = i
+                break
+            cur = nxt
+        if not fresh_suffix:
             for i, sec in enumerate(self._doc_node.sections):
                 hdr = sec.header
                 if (
@@ -2121,7 +2132,7 @@ class _StdTable(Table):
                 # inter-section separator once the new block is in
                 # place. Normalising now strips it prematurely.
                 self._purge_conflicting(parts[0])
-        elif not fresh_prefix:
+        elif not fresh_suffix:
             self._doc_node.purge_path(full_path)
         sections = self._doc_node.sections
         if prior_index is not None:
@@ -2131,13 +2142,9 @@ class _StdTable(Table):
             return full_path, prior_index, prior_leading
         owner = self._owner_anchor
         if owner is None:
-            if fresh_prefix and len(parts) > 1:
-                # ``parts[0]`` absent + deep path ⇒ no section shares
-                # ``full_path``'s parent prefix (which includes
-                # ``parts[0]``), so ``_section_insert_index`` would
-                # scan the whole document and return ``len(sections)``
-                # anyway. For ``len(parts) == 1`` the parent prefix is
-                # ``self._path``, which may have other children.
+            if fresh_depth < len(parts) - 1:
+                # No section can share ``full_path[:-1]`` as a prefix:
+                # splice at the end without scanning.
                 return full_path, len(sections), None
             return full_path, _section_insert_index(sections, full_path), None
         # AoT-entry sub-table with no prior section at this path:
@@ -2187,13 +2194,13 @@ class _StdTable(Table):
         """
         if self._path == ():
             return
-        for sec in self._doc_node.sections:
+        # ``_direct_sections`` already filters to direct sections at
+        # ``self._path``, so the loop just inspects them.
+        for sec in self._direct_sections():
             hdr = sec.header
+            assert hdr is not None  # non-root direct sections always carry a header
             if (
-                hdr is None
-                or hdr.kind != "table"
-                or not sec.synthesised_placeholder
-                or hdr.key.path != self._path
+                not sec.synthesised_placeholder
                 or sec.entries
                 or hdr.trailing_comment is not None
                 or _trivia_has_comment(hdr.leading)
