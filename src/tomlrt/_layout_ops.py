@@ -64,6 +64,18 @@ def insert_after(anchor: Slot, new_slot: Slot, doc: Document) -> None:
         doc._tail = new_slot  # noqa: SLF001
 
 
+def insert_before(anchor: Slot, new_slot: Slot, doc: Document) -> None:
+    """Splice ``new_slot`` immediately before ``anchor`` in ``doc``."""
+    p = anchor._prev  # noqa: SLF001
+    new_slot._prev = p  # noqa: SLF001
+    new_slot._next = anchor  # noqa: SLF001
+    anchor._prev = new_slot  # noqa: SLF001
+    if p is not None:
+        p._next = new_slot  # noqa: SLF001
+    else:
+        doc._head = new_slot  # noqa: SLF001
+
+
 def insert_before_head(new_slot: Slot, doc: Document) -> None:
     """Splice ``new_slot`` at the start of ``doc``'s linked list."""
     head = doc._head  # noqa: SLF001
@@ -121,16 +133,15 @@ def append_direct_kv(c: Container, key: str, value: Value) -> None:
         # dotted KV under the nearest header-bearing ancestor instead.
         if c._body_tail is None:  # noqa: SLF001
             # Implicit ``c`` whose only contributors are descendant
-            # *headers* (e.g. ``[a.b]\ny = 1`` then mutating
-            # ``doc.table('a')['x']``). Inserting here needs either a
-            # synthetic ``[a]`` header before ``[a.b]`` or a dotted KV
-            # placed before the descendant header — both touch
-            # structural ordering policy and are deferred to Phase 4.
-            msg = (
-                "insert into a structural-only implicit container (no body "
-                "contributors, only descendant headers) is deferred to Phase 4"
-            )
-            raise NotImplementedError(msg)
+            # headers (e.g. ``[a.b]\ny = 1`` then mutating
+            # ``doc.table('a')['x']``). Insert as a dotted KV under
+            # the nearest header-bearing ancestor, positioned
+            # immediately *before* ``c``'s first descendant slot
+            # in doc-stream order (so the new top-level / scope-
+            # local key lands inside that ancestor's region rather
+            # than after the descendant header).
+            _insert_dotted_kv_before_descendants(c, key, value)
+            return
         _append_dotted_kv_under_implicit(c, key, value)
         return
     if c._owner_aot_entry is not None and c._header_ref is not None:  # noqa: SLF001
@@ -563,6 +574,105 @@ def _append_dotted_kv_under_implicit(c: Container, key: str, value: Value) -> No
             owner.entry_slots.insert(anchor_idx + 1, new_slot)
 
 
+def _insert_dotted_kv_before_descendants(c: Container, key: str, value: Value) -> None:
+    """Insert a dotted KV into a structural-only implicit container.
+
+    Targets implicit-headerless ``c`` with only descendant-header
+    contributors (no body anchor). Locates ``c``'s first
+    contributor in doc-stream order (the topmost descendant header
+    binding ref), and splices a new dotted KV ``host_path.key``
+    immediately *before* that header, where ``host_path`` is the
+    nearest header-bearing ancestor (or the doc root for top-level
+    implicits).
+
+    Pre-conditions (checked by caller):
+
+    * ``c._path`` is non-empty
+    * ``c._header_ref is None``
+    * ``c._body_tail is None``
+    * ``c._refs`` is non-empty (there is at least one descendant
+      binding ref to use as the "before" anchor)
+    """
+    layout_root = c._layout_root  # noqa: SLF001
+    assert layout_root is not None
+    doc = layout_root
+
+    if not c._refs:  # noqa: SLF001
+        msg = (
+            "internal: implicit container has no descendant refs to anchor "
+            "structural insert"
+        )
+        raise AssertionError(msg)
+    anchor_slot = c._refs[0].slot  # noqa: SLF001
+
+    # Find host: nearest ancestor with a header, or the doc root.
+    host: Container = c
+    while host._parent is not None and host._header_ref is None:  # noqa: SLF001
+        host = host._parent  # noqa: SLF001
+
+    chain: list[Container] = []
+    cur: Container | None = c
+    while cur is not host:
+        assert cur is not None
+        chain.append(cur)
+        cur = cur._parent  # noqa: SLF001
+    chain.append(host)
+    chain.reverse()
+
+    local_keys = [*c._path[len(host._path) :], key]  # noqa: SLF001
+    assert len(local_keys) == len(chain)
+
+    owner = c._owner_aot_entry  # noqa: SLF001
+    for anc in chain:
+        assert anc._owner_aot_entry is owner  # noqa: SLF001
+
+    keypath = (*c._path[len(host._path) :], key)  # noqa: SLF001
+    parts = [_make_keypart(k) for k in keypath]
+    seps = ["."] * (len(parts) - 1)
+    new_slot = KVSlot(
+        leading=Trivia(),
+        host_path=host._path,  # noqa: SLF001
+        key_parts=parts,
+        key_seps=seps,
+        pre_eq=" ",
+        post_eq=" ",
+        value=value,
+        eol=EolTrivia(
+            trailing_ws=None,
+            comment=None,
+            newline=NewlineNode(text=doc._newline),  # noqa: SLF001
+        ),
+        owner_aot_entry=owner,
+    )
+
+    insert_before(anchor_slot, new_slot, doc)
+
+    # File refs on every chain ancestor at the position just before
+    # the anchor's ref.
+    for i, anc in enumerate(chain):
+        new_ref = SlotRef(slot=new_slot, container=anc, local_key=local_keys[i])
+        anchor_idx = _find_ref_index_by_slot(anc, anchor_slot)
+        anc._refs.insert(anchor_idx, new_ref)  # noqa: SLF001
+        anc._index[local_keys[i]] = [  # noqa: SLF001
+            r
+            for r in anc._refs  # noqa: SLF001
+            if r.local_key == local_keys[i]
+        ]
+        # Update _body_tail on the immediate target container only:
+        # the new slot is now the deepest container's only body
+        # contributor.
+        if anc is c:
+            anc._body_tail = new_slot  # noqa: SLF001
+
+    if owner is not None:
+        try:
+            anchor_idx = owner.entry_slots.index(anchor_slot)
+        except ValueError:
+            owner.entry_slots.append(new_slot)
+        else:
+            owner.entry_slots.insert(anchor_idx, new_slot)
+
+
 def _append_kv_in_aot_entry(c: Container, key: str, value: Value) -> None:
     """Append a direct KV in an AoT-entry root container's body.
 
@@ -842,11 +952,8 @@ def add_aot_entry(aot: object, body: object) -> object:
                 msg = f"AoT entry key must be str, got {type(k).__name__}"
                 raise TypeError(msg)
             if not (_is_scalar(v) or _is_synth_inline(v)):
-                msg = (
-                    f"AoT entry body value of type {type(v).__name__} "
-                    "is not yet supported (Phase 4-proper structural)"
-                )
-                raise NotImplementedError(msg)
+                entry_table[k] = v
+                continue
             cst, dec = _synth_value(
                 v,
                 layout_root=doc,
@@ -952,11 +1059,8 @@ def attach_section_at(
 
     for k, v in pending:
         if not (_is_scalar(v) or _is_synth_inline(v)):
-            msg = (
-                f"section body value of type {type(v).__name__} "
-                "is not yet supported (Phase 4-proper structural)"
-            )
-            raise NotImplementedError(msg)
+            section[k] = v
+            continue
         cst, dec = _synth_value(
             v,
             layout_root=doc,
@@ -1020,11 +1124,10 @@ def attach_section(parent: Container, key: str, source: object | None = None) ->
 
     for k, v in pending:
         if not (_is_scalar(v) or _is_synth_inline(v)):
-            msg = (
-                f"section body value of type {type(v).__name__} "
-                "is not yet supported (Phase 4-proper structural)"
-            )
-            raise NotImplementedError(msg)
+            # Nested structural — recurse via the live __setitem__
+            # path now that `section` is fully attached.
+            section[k] = v
+            continue
         cst, dec = _synth_value(
             v,
             layout_root=doc,

@@ -11,6 +11,7 @@ point. The mutation-time scaffolding (`_index`, `_refs`,
 from __future__ import annotations
 
 import sys
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 if sys.version_info >= (3, 12):
@@ -35,7 +36,7 @@ from tomlrt._values import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Sequence
 
     from typing_extensions import Self
 
@@ -225,6 +226,57 @@ class Container(dict[str, Any]):
                 or isinstance(current, Array)
             ) and (_is_scalar(value) or _is_synth_inline(value)):
                 self._inline_typed_replace(key, value)
+                return
+            # Same-flavour structural replace: mutate existing in
+            # place. Preserves position, header trivia, leading
+            # comments. Identity of the *destination* container is
+            # preserved; the assigned `value` is *not* used as the
+            # live view (matches the dict-snapshot contract for the
+            # same-flavour case). Restricted to header-bearing
+            # current containers — purely implicit ones go through
+            # the delete+insert fallback so the new explicit header
+            # lands where the implicit subtree used to be.
+            if (
+                isinstance(current, Container)
+                and not current._inline  # noqa: SLF001
+                and current._header_ref is not None  # noqa: SLF001
+                and isinstance(value, Mapping)
+                and not isinstance(value, AoT)
+            ):
+                # Section → any Mapping (typed Table.section, plain dict, ...).
+                current.clear()
+                for k, v in value.items():
+                    current[k] = v
+                return
+            if isinstance(current, AoT) and isinstance(value, (AoT, list)):
+                current.clear()
+                for entry in value:
+                    if not isinstance(entry, Mapping):
+                        msg = "AoT entries must be mappings"
+                        raise TypeError(msg)
+                    current.append(dict(entry))
+                return
+            # Mixed-flavour structural overwrite: delete the existing
+            # binding (which tears down its slots and dict entry) and
+            # re-enter __setitem__ at the new-key path. Position
+            # fidelity is sacrificed (the new binding lands at the
+            # tail of `self`'s body region rather than where the old
+            # binding used to live) — acceptable for Phase 4
+            # first-cut; revisit if golden tests demand it.
+            #
+            # Preflight: only accept value shapes the new-key path
+            # actually supports today, so a deletion doesn't go
+            # through followed by an unsupported-insert raise that
+            # leaves the doc partially mutated.
+            if (
+                _is_scalar(value)
+                or _is_synth_inline(value)
+                or isinstance(value, AoT)
+                or (isinstance(value, Container) and not value._inline)  # noqa: SLF001
+                or isinstance(value, Mapping)
+            ):
+                del self[key]
+                self[key] = value
                 return
             msg = (
                 "non-scalar replacement (typed Container/AoT source, or "
