@@ -75,6 +75,7 @@ class Array(list[Any]):
             )
             for it in val.items:
                 it.leading = Trivia()
+                it.post_comma_trivia = Trivia()
             val.items[0].leading = Trivia(
                 [NewlineNode(text="\n"), WhitespaceNode(text="    ")]
             )
@@ -85,6 +86,12 @@ class Array(list[Any]):
         from tomlrt._container import _to_python  # noqa: PLC0415
 
         return [_to_python(x) for x in self]
+
+    def __copy__(self) -> Array:
+        return Array(self.to_list(), multiline=self._multiline)
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> Array:
+        return Array(self.to_list(), multiline=self._multiline)
 
     def array(self, index: int) -> Array:
         """Return ``self[index]`` typed as a nested `Array`."""
@@ -765,7 +772,6 @@ def _indent_from_final_trivia(ft: Any) -> str:
     return last_ws_after_nl or ""
 
 
-
 def _internal_leading(_style: _ArrayStyle) -> Any:
     from tomlrt._trivia import Trivia  # noqa: PLC0415
 
@@ -910,6 +916,12 @@ class AoT(list["Table"]):
     def to_list(self) -> list[dict[str, Any]]:
         """Materialise a list of plain-Python ``dict``s (recursive)."""
         return [t.to_dict() for t in self]
+
+    def __copy__(self) -> AoT:
+        return AoT(self.to_list())
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> AoT:
+        return AoT(self.to_list())
 
     def add(self, body: object | None = None) -> Table:
         """Append a fresh ``[[path]]`` entry and return its `Table` view.

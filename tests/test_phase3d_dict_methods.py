@@ -182,16 +182,18 @@ def test_setdefault_missing_inserts() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_copy_deferred() -> None:
+def test_copy_supported() -> None:
     doc = loads("a = 1\n")
-    with pytest.raises(NotImplementedError):
-        copy.copy(doc)
+    snap = copy.copy(doc)
+    assert snap is not doc
+    assert dict(snap) == dict(doc)
 
 
-def test_deepcopy_deferred() -> None:
+def test_deepcopy_supported() -> None:
     doc = loads("a = 1\n")
-    with pytest.raises(NotImplementedError):
-        copy.deepcopy(doc)
+    snap = copy.deepcopy(doc)
+    assert snap is not doc
+    assert dict(snap) == dict(doc)
 
 
 # ---------------------------------------------------------------------------

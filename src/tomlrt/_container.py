@@ -204,6 +204,14 @@ class Container(dict[str, Any]):
     def __setitem__(self, key: str, value: Any) -> None:
         if key in self and self[key] is value:
             return
+        # Reject types we explicitly do not coerce (clear error rather
+        # than a confusing NIE later in the dispatch).
+        if isinstance(value, tuple):
+            msg = f"cannot assign tuple to TOML key {key!r}; use a list"
+            raise TypeError(msg)
+        if isinstance(value, (bytes, bytearray)):
+            msg = f"cannot assign bytes to TOML key {key!r}; use a string"
+            raise TypeError(msg)
         # Unattached factory mode: dict-only storage, transplant on attach.
         if self._layout_root is None:
             dict.__setitem__(self, key, value)
@@ -278,11 +286,11 @@ class Container(dict[str, Any]):
                 del self[key]
                 self[key] = value
                 return
+            # Unsupported value type — TypeError, not NIE.
             msg = (
-                "non-scalar replacement (typed Container/AoT source, or "
-                "section / AoT current) is Phase 4"
+                f"unsupported value type {type(value).__name__!r} for TOML key {key!r}"
             )
-            raise NotImplementedError(msg)
+            raise TypeError(msg)
         # New direct-KV insert (Phase 3c / 3d / 4-partial).
         if _is_scalar(value):
             from tomlrt import _layout_ops  # noqa: PLC0415
@@ -475,12 +483,15 @@ class Container(dict[str, Any]):
         return self
 
     def __copy__(self) -> Container:
-        msg = "copy.copy on a tomlrt container is deferred to Phase 3e"
-        raise NotImplementedError(msg)
+        # A copy is a detached (private) container with the same logical
+        # content. Snapshot via to_dict() and rebuild via Table.section.
+        return Table.section(self.to_dict())
 
     def __deepcopy__(self, memo: dict[int, Any]) -> Container:
-        msg = "copy.deepcopy on a tomlrt container is deferred to Phase 3e"
-        raise NotImplementedError(msg)
+        # Deepcopy is a deep, detached clone where nested mappings
+        # remain typed sections so they can be navigated via
+        # `.table()` etc.
+        return _deep_section_clone(self)
 
     # ------------------------------------------------------------------
     # Inline-table dispatch (Phase 3b)
@@ -637,6 +648,19 @@ class Document(Container):
     def render(self) -> str:
         return render(self)
 
+    @override
+    def __copy__(self) -> Document:
+        # Round-trip via dumps/loads: preserves bytes exactly.
+        from tomlrt._public import loads  # noqa: PLC0415
+
+        return loads(self.render())
+
+    @override
+    def __deepcopy__(self, memo: dict[int, Any]) -> Document:
+        from tomlrt._public import loads  # noqa: PLC0415
+
+        return loads(self.render())
+
     def install(self, path: str | Sequence[str], value: Any) -> Any:
         """Set ``value`` at the (possibly dotted) ``path``.
 
@@ -686,6 +710,25 @@ class Document(Container):
         attached = _layout_ops.attach_section_at(cur, parts[i:], new_section)
         assert isinstance(attached, Table)
         return attached
+
+
+def _deep_section_clone(c: Container) -> Container:
+    """Build a detached deep clone of ``c`` as a section-flavoured Table.
+
+    Nested ``Container`` and ``AoT`` values are recursively cloned as
+    section / AoT typed views (preserving the user's ability to use
+    ``.table()`` / ``.aot()`` on the copy). Inline values and scalars
+    are passed through ``to_dict()``-equivalent normalisation.
+    """
+    out = Table.section()
+    for k, v in c.items():
+        if isinstance(v, Container) and not v._inline:  # noqa: SLF001
+            dict.__setitem__(out, k, _deep_section_clone(v))
+        elif isinstance(v, AoT):
+            dict.__setitem__(out, k, AoT([_deep_section_clone(e) for e in v]))
+        else:
+            dict.__setitem__(out, k, _to_python(v))
+    return out
 
 
 def _reset_table_for_rehome(t: Container) -> None:
@@ -1122,12 +1165,17 @@ def _synth_inline_array(
             owner=owner,
         )
         is_last = i == len(items) - 1
+        # Place the inter-item space in post_comma_trivia (matching
+        # the parser's `,(space)2` shape) so _detect_style sees it
+        # and subsequent appends use the right separator.
         item = ArrayItem(
-            leading=Trivia([WhitespaceNode(text=" ")]) if i > 0 else Trivia(),
+            leading=Trivia(),
             value=sub_cst,
             trailing=Trivia(),
             has_comma=not is_last,
-            post_comma_trivia=Trivia(),
+            post_comma_trivia=(
+                Trivia([WhitespaceNode(text=" ")]) if not is_last else Trivia()
+            ),
         )
         val.items.append(item)
         list.append(arr, sub_dec)
