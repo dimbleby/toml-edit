@@ -1077,6 +1077,16 @@ class _InlineTable(Table):
         # (``Table.__delitem__``) at the cache level.
         self._del_prefix((key,))
 
+    @override
+    def clear(self) -> None:
+        if not dict.__len__(self):
+            return
+        for v in dict.values(self):
+            if isinstance(v, (Table, AoT, Array)):
+                v._detach()  # noqa: SLF001
+        self._node.entries.clear()
+        dict.clear(self)
+
 
 def _path_has_prefix(path: tuple[str, ...], prefix: tuple[str, ...]) -> bool:
     return len(path) >= len(prefix) and path[: len(prefix)] == prefix
@@ -1236,6 +1246,16 @@ class _DottedSubTable(Table):
         if key not in self:
             raise KeyError(key)
         self._host._del_prefix((*self._prefix, key))  # noqa: SLF001
+
+    @override
+    def clear(self) -> None:
+        if not dict.__len__(self):
+            return
+        for v in dict.values(self):
+            if isinstance(v, (Table, AoT, Array)):
+                v._detach()  # noqa: SLF001
+        self._host._del_prefix(self._prefix)  # noqa: SLF001
+        dict.clear(self)
 
 
 def _is_direct_table_section(sec: SectionNode, path: tuple[str, ...]) -> bool:
@@ -1706,6 +1726,57 @@ class _StdTable(Table):
             return  # pragma: no cover - defensive: kv must be reachable
         self._purge_conflicting(key)
         self._doc_node.normalise_top_blank()
+
+    @override
+    def clear(self) -> None:
+        if not dict.__len__(self):
+            return
+        by_head = self._purge_subtree_into_buckets()
+        for k, v in dict.items(self):
+            if isinstance(v, (_StdTable, AoT)):
+                v._detach(DocumentNode(sections=by_head.get(k, [])))  # noqa: SLF001
+            elif isinstance(v, Array):
+                v._detach()  # noqa: SLF001
+        self._doc_node.normalise_top_blank()
+        dict.clear(self)
+
+    def _purge_subtree_into_buckets(self) -> dict[str, list[SectionNode]]:
+        """Bulk subtree purge for ``clear()``: one walk of ``doc_sections``.
+
+        Drops every strict-descendant section from the live doc, returning
+        them grouped by their first-after-``self._path`` segment so each
+        child wrapper can detach against just its own bucket. Clears
+        self-direct section entries and ancestor dotted descendants in
+        place. Constrained to ``self._scope()`` so an AoT entry can't
+        reach across into a sibling entry's same-path subtree.
+        """
+        target = self._path
+        plen = len(target)
+        scope = self._scope()
+        scope_ids = None if scope is None else {id(s) for s in scope}
+        by_head: dict[str, list[SectionNode]] = {}
+        kept: list[SectionNode] = []
+        for sec in self._doc_node.sections:
+            in_scope = scope_ids is None or id(sec) in scope_ids
+            hdr = sec.header
+            hpath: tuple[str, ...] = () if hdr is None else hdr.key.path
+            hlen = len(hpath)
+            if in_scope and hdr is not None and hlen > plen and hpath[:plen] == target:
+                by_head.setdefault(hpath[plen], []).append(sec)
+                continue
+            kept.append(sec)
+            if not in_scope:
+                continue
+            if hlen <= plen and target[:hlen] == hpath:
+                rel = target[hlen:]
+                rlen = len(rel)
+                sec.entries[:] = [
+                    kv
+                    for kv in sec.entries
+                    if not (len(kv.key.path) > rlen and kv.key.path[:rlen] == rel)
+                ]
+        self._doc_node.sections[:] = kept
+        return by_head
 
     def _ensure_section(self) -> SectionNode:
         """Materialise a section that holds direct entries for ``self._path``."""
