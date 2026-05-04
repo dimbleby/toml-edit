@@ -17,11 +17,19 @@ Plus a minimal scalar-replace acceptance.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 
 from _toml_str import td
 from tomlrt import dumps, loads
 from tomlrt._invariants import check
+from tomlrt._slots import KVSlot, StructuralHeaderSlot
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from tomlrt._slots import Slot
 
 INVARIANT_DOCS = {
     "top_level_dotted": td(
@@ -104,6 +112,24 @@ INVARIANT_DOCS = {
         x = 2
         """
     ),
+    "nested_aot": td(
+        """
+        [[fruit]]
+        name = "apple"
+
+        [[fruit.variety]]
+        name = "red"
+
+        [[fruit.variety]]
+        name = "green"
+
+        [[fruit]]
+        name = "banana"
+
+        [[fruit.variety]]
+        name = "plain"
+        """
+    ),
 }
 
 
@@ -175,3 +201,146 @@ def test_setitem_self_assign_is_noop() -> None:
 
     assert dumps(doc) == src
     check(doc)
+
+
+# ---------------------------------------------------------------------------
+# White-box anchor / cache shape assertions (per duck blocker #3).
+#
+# These pin the *shape* of the caches the slot-builder produces, so the
+# Ref-propagation rule and body-region rule are not just internally
+# consistent (caught by check()) but also match the plan exactly.
+# ---------------------------------------------------------------------------
+
+
+def _iter_slots(doc: object) -> Iterator[Slot]:
+    """Walk the doc-stream linked list (test helper)."""
+    s: Slot | None = doc._head  # type: ignore[attr-defined]  # noqa: SLF001
+    while s is not None:
+        yield s
+        s = s._next  # noqa: SLF001
+
+
+def _kv(doc: object, key: tuple[str, ...]) -> KVSlot:
+    """Find a KVSlot by its decoded key tuple."""
+    return next(s for s in _iter_slots(doc) if isinstance(s, KVSlot) and s.key == key)
+
+
+def test_section_only_doc_has_no_top_level_body_tail() -> None:
+    """`[a]\\nx=1` — `doc._body_tail` stays None; `a._body_tail` is `x`."""
+    doc = loads(td("[a]\nx = 1\n"))
+    a = doc.table("a")
+    assert doc._body_tail is None  # noqa: SLF001
+    assert a._body_tail is not None  # noqa: SLF001
+    assert a._body_tail is doc._tail  # noqa: SLF001
+    # doc._refs holds only `[a]`'s binding ref under "a"; it must NOT
+    # have absorbed the inner `x = 1` KV (the over-propagation bug).
+    assert len(doc._refs) == 1  # noqa: SLF001
+    assert doc._refs[0].local_key == "a"  # noqa: SLF001
+    assert "a" in doc._index  # noqa: SLF001
+    assert "x" not in doc._index  # noqa: SLF001
+
+
+def test_section_with_dotted_under_header_doesnt_touch_doc() -> None:
+    """`[a]\\nb.c = 1` — `doc._refs` has only the [a] binding ref."""
+    doc = loads(td("[a]\nb.c = 1\n"))
+    assert len(doc._refs) == 1  # noqa: SLF001
+    assert doc._refs[0].local_key == "a"  # noqa: SLF001
+    assert doc._body_tail is None  # noqa: SLF001
+    a = doc.table("a")
+    # The dotted KV's host_path == ("a",) IS `a`'s path, so it
+    # qualifies as a body-region slot for `a`.
+    assert "b" in a._index  # noqa: SLF001
+    assert a._body_tail is _kv(doc, ("b", "c"))  # noqa: SLF001
+
+
+def test_parent_after_child_body_tail_is_x_not_y() -> None:
+    """Pinned in plan: `[a.b]\\ny=2\\n[a]\\nx=1` — `a._body_tail` is `x`."""
+    src = td(
+        """
+        [a.b]
+        y = 2
+
+        [a]
+        x = 1
+        """
+    )
+    doc = loads(src)
+    a = doc.table("a")
+    b = a.table("b")
+    # a's header appears physically AFTER [a.b]'s; a's body region is
+    # whatever follows its own header — `x = 1`, not `y = 2`.
+    assert a._body_tail is _kv(doc, ("x",))  # noqa: SLF001
+    assert b._body_tail is _kv(doc, ("y",))  # noqa: SLF001
+
+
+def test_implicit_supertable_has_no_own_header_ref() -> None:
+    """`[a.b.c]\\nx=1` — `a` and `a.b` are implicit; `a.b.c` is explicit."""
+    doc = loads(td("[a.b.c]\nx = 1\n"))
+    a = doc.table("a")
+    b = a.table("b")
+    c = b.table("c")
+    assert a._header_ref is None  # noqa: SLF001
+    assert b._header_ref is None  # noqa: SLF001
+    assert c._header_ref is not None  # noqa: SLF001
+    assert isinstance(c._header_ref.slot, StructuralHeaderSlot)  # noqa: SLF001
+    assert c._header_ref.slot.path == ("a", "b", "c")  # noqa: SLF001
+    assert a._body_tail is None  # noqa: SLF001
+    assert b._body_tail is None  # noqa: SLF001
+    assert c._body_tail is _kv(doc, ("x",))  # noqa: SLF001
+
+
+def test_top_level_dotted_propagates_through_doc() -> None:
+    """Top-level `a.b.c = 1` — refs at doc, a, a.b under each next step."""
+    doc = loads(td("a.b.c = 1\n"))
+    a = doc.table("a")
+    b = a.table("b")
+    kv = _kv(doc, ("a", "b", "c"))
+    assert len(doc._refs) == 1  # noqa: SLF001
+    assert doc._refs[0].local_key == "a"  # noqa: SLF001
+    # The doc IS the host; doc._body_tail advances to this top-level KV.
+    assert doc._body_tail is kv  # noqa: SLF001
+    assert len(a._refs) == 1  # noqa: SLF001
+    assert a._refs[0].local_key == "b"  # noqa: SLF001
+    assert len(b._refs) == 1  # noqa: SLF001
+    assert b._refs[0].local_key == "c"  # noqa: SLF001
+
+
+def test_nested_aot_binding_refs_attach_to_active_outer_entry() -> None:
+    """`[[fruit.variety]]` under `[[fruit]]` files its `("fruit",)` binding ref
+    on the **active** ``fruit`` entry, not on ``doc``.
+    """
+    src = td(
+        """
+        [[fruit]]
+        name = "apple"
+
+        [[fruit.variety]]
+        name = "red"
+
+        [[fruit]]
+        name = "banana"
+
+        [[fruit.variety]]
+        name = "plain"
+        """
+    )
+    doc = loads(src)
+    fruit_aot = doc.aot("fruit")
+    apple, banana = fruit_aot[0], fruit_aot[1]
+    # The first variety AoT is held by the apple entry; the second by
+    # the banana entry. A bug that filed [[fruit.variety]] binding refs
+    # only on doc (skipping the active fruit entry) would leave the
+    # entry-level "variety" binding missing.
+    assert "variety" in apple._index  # noqa: SLF001
+    assert "variety" in banana._index  # noqa: SLF001
+    # Each [[fruit.variety]] entry also files a "fruit" binding ref at
+    # doc per the prefix-container rule, on top of the [[fruit]] ones.
+    # Total under doc["fruit"]: 2 [[fruit]] + 2 [[fruit.variety]] = 4.
+    doc_refs_for_fruit = [r for r in doc._refs if r.local_key == "fruit"]  # noqa: SLF001
+    assert len(doc_refs_for_fruit) == 4
+    # The apple entry's own variety AoT should bind a `red` first
+    # entry; banana's should bind a `plain` first entry. A bug that
+    # routed [[fruit.variety]] to the wrong entry (or to doc only)
+    # would scramble these assignments.
+    assert apple.aot("variety")[0]["name"] == "red"
+    assert banana.aot("variety")[0]["name"] == "plain"

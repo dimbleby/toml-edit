@@ -207,13 +207,21 @@ def _make_table(
 
 
 def _apply_kv(doc: Document, slot: KVSlot) -> None:
-    """Bind a `key = value` slot into its host container."""
+    """Bind a `key = value` slot into its host container.
+
+    Per the Ref-propagation rule (plan v17): refs propagate **only**
+    along the slot's logical path starting at the host container `H`,
+    NOT from the document root. So a KV with `host_path = ("a",)` and
+    `key = ("x",)` generates exactly one ref, in `a._index["x"]`; it
+    does NOT contribute a ref to `doc._index["a"]`.
+    """
     decoded = slot.key
-    # Logical container chain that this KV's binding refs land in:
-    # host -> host.k0 -> host.k0.k1 -> ... -> host.k[:-1]
     host_chain = _resolve_chain(doc, slot.host_path)
-    leaf_chain: list[Container] = list(host_chain)
-    cur = host_chain[-1]
+    host = host_chain[-1]
+    # Logical container chain along the dotted-KV intermediate steps:
+    # host -> host.k0 -> host.k0.k1 -> ... -> host.k[:-1].
+    leaf_chain: list[Container] = [host]
+    cur = host
     for step in decoded[:-1]:
         sub = cur.get(step)
         if sub is None:
@@ -233,19 +241,11 @@ def _apply_kv(doc: Document, slot: KVSlot) -> None:
         f"duplicate key {name!r} reached builder under {target._path}; "  # noqa: SLF001
         "validator drift"
     )
-    # Binding refs at every container along the logical path: container
-    # leaf_chain[i] gets a ref filed under the i-th step (which is
-    # decoded[i] for i in 0..len(decoded)-1; for the host_chain prefix
-    # that already had refs from header handling, this is still the
-    # right next-step). The chain length is len(host_path) + len(decoded).
-    full_steps = (*slot.host_path, *decoded)
-    assert len(full_steps) == len(leaf_chain)  # leaf_chain[0] is doc
+    # `decoded` has the per-step local_keys in lock-step with leaf_chain.
+    assert len(decoded) == len(leaf_chain)
     for i, ancestor in enumerate(leaf_chain):
-        ref = _record_ref(ancestor, slot, full_steps[i])
+        _record_ref(ancestor, slot, decoded[i])
         _maybe_advance_body_tail(ancestor, slot)
-        # Silence unused-variable warning; the ref is filed via
-        # _record_ref's side-effect.
-        del ref
     assert slot.value is not None
     dict.__setitem__(
         target,
