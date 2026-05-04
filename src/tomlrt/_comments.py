@@ -47,6 +47,24 @@ if TYPE_CHECKING:
     )
 
 
+def _validate_comment_text(text: str) -> None:
+    """Reject a comment value that would not round-trip via the parser."""
+    from tomlrt._errors import TOMLError  # noqa: PLC0415
+
+    if "\n" in text or "\r" in text:
+        msg = "comment must be single-line"
+        raise TOMLError(msg)
+    for ch in text:
+        cp = ord(ch)
+        # TOML comments allow TAB plus any printable Unicode; reject
+        # other ASCII control chars and DEL.
+        if cp == 0x09:
+            continue
+        if cp < 0x20 or cp == 0x7F:
+            msg = f"comment may not contain control character U+{cp:04X}"
+            raise TOMLError(msg)
+
+
 def _decode_comment(raw: str) -> str:
     """Strip the leading ``#`` and one optional space from a raw comment."""
     if raw.startswith("#"):
@@ -93,6 +111,10 @@ class EolCommentView(MutableMapping[str, str]):
         return _direct_kv_slot(self._c, key)
 
     @override
+    def __repr__(self) -> str:
+        return repr(dict(self))
+
+    @override
     def __contains__(self, key: object) -> bool:
         if not isinstance(key, str):
             return False
@@ -116,11 +138,7 @@ class EolCommentView(MutableMapping[str, str]):
         if not isinstance(v, str):
             msg = f"comment must be str, got {type(v).__name__}"
             raise TypeError(msg)
-        if "\n" in value or "\r" in value:
-            from tomlrt._errors import TOMLError  # noqa: PLC0415
-
-            msg = "EOL comment must be single-line"
-            raise TOMLError(msg)
+        _validate_comment_text(value)
         # Ensure trailing whitespace separator before the new comment.
         if slot.eol.trailing_ws is None:
             slot.eol.trailing_ws = WhitespaceNode(" ")
@@ -181,15 +199,58 @@ def _split_leading_into_lines(leading: Trivia) -> list[list[object]]:
     return lines
 
 
+def _line_is_blank(line: list[object]) -> bool:
+    return not any(isinstance(p, CommentNode) for p in line) and any(
+        isinstance(p, NewlineNode) for p in line
+    )
+
+
+def _line_is_comment(line: list[object]) -> bool:
+    return any(isinstance(p, CommentNode) for p in line)
+
+
+def _split_attached_block(
+    leading: Trivia,
+) -> tuple[list[list[object]], list[list[object]]]:
+    """Split the leading into (above_blank, attached) line groups.
+
+    The "attached" group is the contiguous run of comment lines
+    immediately preceding the slot — i.e. with no blank line
+    between the run and the slot itself.  Everything before the
+    last blank-separator-or-start is "above_blank" (preamble +
+    archived blocks).
+    """
+    lines = _split_leading_into_lines(leading)
+    # Find index of attached block start: walk back from end while
+    # the line is a comment line; once we hit a blank or non-comment,
+    # stop.
+    i = len(lines)
+    while i > 0 and _line_is_comment(lines[i - 1]):
+        i -= 1
+    return lines[:i], lines[i:]
+
+
 def _extract_leading_comments(leading: Trivia) -> tuple[str, ...]:
-    """Return the run of comment-bearing lines from ``leading``."""
+    """Return only the *attached* run of comment-bearing lines.
+
+    The "attached" run is the contiguous block immediately above
+    the slot — comments separated by a blank line are considered
+    preamble or archived blocks and are excluded.
+    """
+    _above, attached = _split_attached_block(leading)
     out: list[str] = []
-    for line in _split_leading_into_lines(leading):
+    for line in attached:
         for p in line:
             if isinstance(p, CommentNode):
                 out.append(_decode_comment(p.text))
                 break
     return tuple(out)
+
+
+def _slot_has_attached_comments(slot: object) -> bool:
+    leading = slot.leading  # type: ignore[attr-defined]
+    _above, attached = _split_attached_block(leading)
+    return bool(attached)
 
 
 class LeadingCommentView(MutableMapping[str, tuple[str, ...]]):
@@ -202,20 +263,22 @@ class LeadingCommentView(MutableMapping[str, tuple[str, ...]]):
         return _direct_kv_slot(self._c, key)
 
     @override
+    def __repr__(self) -> str:
+        return repr(dict(self))
+
+    @override
     def __contains__(self, key: object) -> bool:
         if not isinstance(key, str):
             return False
         slot = self._slot(key)
         if slot is None:
             return False
-        return any(isinstance(p, CommentNode) for p in slot.leading.pieces)
+        return _slot_has_attached_comments(slot)
 
     @override
     def __getitem__(self, key: str) -> tuple[str, ...]:
         slot = self._slot(key)
-        if slot is None or not any(
-            isinstance(p, CommentNode) for p in slot.leading.pieces
-        ):
+        if slot is None or not _slot_has_attached_comments(slot):
             raise KeyError(key)
         return _extract_leading_comments(slot.leading)
 
@@ -235,34 +298,21 @@ class LeadingCommentView(MutableMapping[str, tuple[str, ...]]):
             if not isinstance(cv, str):
                 msg = "leading comments must be strings"
                 raise TypeError(msg)
-            if "\n" in c or "\r" in c:
-                from tomlrt._errors import TOMLError  # noqa: PLC0415
-
-                msg = "leading comment lines must be single-line"
-                raise TOMLError(msg)
+            _validate_comment_text(c)
         from tomlrt._container import Document  # noqa: PLC0415
 
         lr = self._c._layout_root  # noqa: SLF001
         nl = lr._newline if isinstance(lr, Document) else "\n"  # noqa: SLF001
-        # Replace the current leading comment block while preserving
-        # any structural blank lines that preceded it.  Strategy:
-        # walk existing pieces; drop any line that contained a comment
-        # (the entire line, including its newline); keep any line that
-        # was purely whitespace/blank.  Then prepend the new comment
-        # lines as their own line each.
+        # Replace only the *attached* comment block; preserve any
+        # preamble / archived blocks above any blank-line separator.
+        above, _attached = _split_attached_block(slot.leading)
         kept: list[object] = []
-        for line in _split_leading_into_lines(slot.leading):
-            if any(isinstance(p, CommentNode) for p in line):
-                continue
+        for line in above:
             kept.extend(line)
         new_pieces: list[object] = []
         for c in comments:
             new_pieces.append(CommentNode(_encode_comment(c)))
             new_pieces.append(NewlineNode(nl))
-        # Place new comments before the kept (structural) trivia, so
-        # that any pre-existing blank-line separator remains *above*
-        # the new comments — matching the typical "blank line then
-        # comment block then key" layout.
         slot.leading.pieces = [*kept, *new_pieces]  # type: ignore[list-item]
 
     @override
@@ -270,12 +320,11 @@ class LeadingCommentView(MutableMapping[str, tuple[str, ...]]):
         slot = self._slot(key)
         if slot is None:
             raise KeyError(key)
-        if not any(isinstance(p, CommentNode) for p in slot.leading.pieces):
+        if not _slot_has_attached_comments(slot):
             raise KeyError(key)
+        above, _attached = _split_attached_block(slot.leading)
         kept: list[object] = []
-        for line in _split_leading_into_lines(slot.leading):
-            if any(isinstance(p, CommentNode) for p in line):
-                continue
+        for line in above:
             kept.extend(line)
         slot.leading.pieces = kept  # type: ignore[assignment]
 
@@ -289,13 +338,246 @@ class LeadingCommentView(MutableMapping[str, tuple[str, ...]]):
             slot = self._slot(k)
             if slot is None:
                 continue
-            if any(isinstance(p, CommentNode) for p in slot.leading.pieces):
+            if _slot_has_attached_comments(slot):
                 seen.add(k)
                 yield k
 
     @override
     def __len__(self) -> int:
         return sum(1 for _ in self)
+
+
+def _header_slot(c: Container) -> object:
+    """Return the StructuralHeaderSlot for a section container, or raise.
+
+    Raises TOMLError on inline tables (no header to attach a comment to).
+    Returns None if this container has no own header (document root /
+    purely-implicit container).
+    """
+    from tomlrt._errors import TOMLError  # noqa: PLC0415
+
+    if c._inline:  # noqa: SLF001
+        msg = "header comment API is not available on inline tables"
+        raise TOMLError(msg)
+    hr = c._header_ref  # noqa: SLF001
+    if hr is None:
+        return None
+    return hr.slot
+
+
+def _header_comment_get(c: Container) -> str | None:
+    h = _header_slot(c)
+    if h is None:
+        return None
+    eol = h.eol  # type: ignore[attr-defined]
+    if eol.comment is None:
+        return None
+    return _decode_comment(eol.comment.text)
+
+
+def _header_comment_set(c: Container, value: str | None) -> None:
+    from tomlrt._errors import TOMLError  # noqa: PLC0415
+
+    h = _header_slot(c)
+    if h is None:
+        msg = "container has no header to attach a comment to"
+        raise TOMLError(msg)
+    eol = h.eol  # type: ignore[attr-defined]
+    if value is None:
+        if eol.comment is not None:
+            eol.comment = None
+            if (
+                eol.trailing_ws is not None
+                and eol.trailing_ws.text.strip(
+                    " \t",
+                )
+                == ""
+            ):
+                # Drop the gap whitespace that preceded the comment.
+                eol.trailing_ws = None
+        return
+    v: object = value
+    if not isinstance(v, str):
+        msg = f"header_comment must be str or None, got {type(v).__name__}"
+        raise TypeError(msg)
+    _validate_comment_text(value)
+    if eol.trailing_ws is None:
+        eol.trailing_ws = WhitespaceNode(" ")
+    elif eol.trailing_ws.text == "":
+        eol.trailing_ws.text = " "
+    eol.comment = CommentNode(_encode_comment(value))
+    if eol.newline is None:
+        from tomlrt._container import Document  # noqa: PLC0415
+
+        lr = c._layout_root  # noqa: SLF001
+        nl = lr._newline if isinstance(lr, Document) else "\n"  # noqa: SLF001
+        eol.newline = NewlineNode(nl)
+
+
+def _header_leading_get(c: Container) -> tuple[str, ...]:
+    h = _header_slot(c)
+    if h is None:
+        return ()
+    leading = h.leading  # type: ignore[attr-defined]
+    return _extract_leading_comments(leading)
+
+
+def _header_leading_set(c: Container, value: tuple[str, ...]) -> None:
+    from tomlrt._errors import TOMLError  # noqa: PLC0415
+
+    h = _header_slot(c)
+    if h is None:
+        msg = "container has no header to attach leading comments to"
+        raise TOMLError(msg)
+    v: object = value
+    if isinstance(v, str):
+        msg = "header_leading_comments must be a sequence of strings"
+        raise TypeError(msg)
+    comments = tuple(value)
+    for cm in comments:
+        cv: object = cm
+        if not isinstance(cv, str):
+            msg = "header_leading_comments must be strings"
+            raise TypeError(msg)
+        _validate_comment_text(cm)
+    from tomlrt._container import Document  # noqa: PLC0415
+
+    lr = c._layout_root  # noqa: SLF001
+    nl = lr._newline if isinstance(lr, Document) else "\n"  # noqa: SLF001
+    leading = h.leading  # type: ignore[attr-defined]
+    above, _attached = _split_attached_block(leading)
+    kept: list[object] = []
+    for line in above:
+        kept.extend(line)
+    new_pieces: list[object] = []
+    for cm in comments:
+        new_pieces.append(CommentNode(_encode_comment(cm)))
+        new_pieces.append(NewlineNode(nl))
+    leading.pieces = [*kept, *new_pieces]
+
+
+def _validate_comment_seq(value: tuple[str, ...], name: str) -> tuple[str, ...]:
+    from tomlrt._errors import TOMLError  # noqa: PLC0415
+
+    v: object = value
+    if isinstance(v, str):
+        msg = f"{name} must be a sequence of strings"
+        raise TypeError(msg)
+    out = tuple(value)
+    for c in out:
+        cv: object = c
+        if not isinstance(cv, str):
+            msg = f"{name} entries must be strings"
+            raise TypeError(msg)
+        if "\n" in c or "\r" in c:
+            msg = "preamble lines must not contain a line terminator"
+            raise TOMLError(msg)
+        for ch in c:
+            cp = ord(ch)
+            if cp == 0x09:
+                continue
+            if cp < 0x20 or cp == 0x7F:
+                msg = f"{name} may not contain control character U+{cp:04X}"
+                raise TOMLError(msg)
+    return out
+
+
+def _trivia_attached_split(t: Trivia) -> tuple[list[list[object]], list[list[object]]]:
+    """Split arbitrary trivia into (above_blank, last_block)."""
+    return _split_attached_block(t)
+
+
+def _doc_preamble_get(doc: object) -> tuple[str, ...]:
+    head = doc._head  # type: ignore[attr-defined]  # noqa: SLF001
+    if head is None:
+        # Empty doc: read from _trailing.
+        trailing = doc._trailing  # type: ignore[attr-defined]  # noqa: SLF001
+        out: list[str] = []
+        for line in _split_leading_into_lines(trailing):
+            for p in line:
+                if isinstance(p, CommentNode):
+                    out.append(_decode_comment(p.text))
+                    break
+        return tuple(out)
+    leading = head.leading
+    above, _attached = _split_attached_block(leading)
+    # Preamble = comment lines in the "above" block (separated by blank).
+    out = []
+    for line in above:
+        for p in line:
+            if isinstance(p, CommentNode):
+                out.append(_decode_comment(p.text))
+                break
+    return tuple(out)
+
+
+def _doc_preamble_set(doc: object, value: tuple[str, ...]) -> None:
+    comments = _validate_comment_seq(value, "preamble")
+    nl = doc._newline  # type: ignore[attr-defined]  # noqa: SLF001
+    head = doc._head  # type: ignore[attr-defined]  # noqa: SLF001
+    if head is None:
+        # Empty doc: write into _trailing.
+        if not comments:
+            doc._trailing.pieces = []  # type: ignore[attr-defined]  # noqa: SLF001
+            return
+        new_pieces: list[object] = []
+        for c in comments:
+            new_pieces.append(CommentNode(_encode_comment(c)))
+            new_pieces.append(NewlineNode(nl))
+        doc._trailing.pieces = new_pieces  # type: ignore[attr-defined]  # noqa: SLF001
+        return
+    leading = head.leading
+    _above, attached = _split_attached_block(leading)
+    if not comments:
+        # Drop preamble; keep only the attached block (if any).
+        kept: list[object] = []
+        for line in attached:
+            kept.extend(line)
+        leading.pieces = kept
+        return
+    new_pieces = []
+    for c in comments:
+        new_pieces.append(CommentNode(_encode_comment(c)))
+        new_pieces.append(NewlineNode(nl))
+    # Add a blank-line separator between preamble and attached/key.
+    new_pieces.append(NewlineNode(nl))
+    kept = []
+    for line in attached:
+        kept.extend(line)
+    leading.pieces = [*new_pieces, *kept]
+
+
+def _doc_epilogue_get(doc: object) -> tuple[str, ...]:
+    head = doc._head  # type: ignore[attr-defined]  # noqa: SLF001
+    trailing = doc._trailing  # type: ignore[attr-defined]  # noqa: SLF001
+    if head is None:
+        # Empty doc: there is no epilogue separate from preamble; both
+        # routes read _trailing, but tests expect epilogue == () on an
+        # empty doc.
+        return ()
+    out: list[str] = []
+    for line in _split_leading_into_lines(trailing):
+        for p in line:
+            if isinstance(p, CommentNode):
+                out.append(_decode_comment(p.text))
+                break
+    return tuple(out)
+
+
+def _doc_epilogue_set(doc: object, value: tuple[str, ...]) -> None:
+    from tomlrt._errors import TOMLError  # noqa: PLC0415
+
+    comments = _validate_comment_seq(value, "epilogue")
+    head = doc._head  # type: ignore[attr-defined]  # noqa: SLF001
+    if head is None and comments:
+        msg = "cannot set epilogue: document has no structural content"
+        raise TOMLError(msg)
+    nl = doc._newline  # type: ignore[attr-defined]  # noqa: SLF001
+    new_pieces: list[object] = []
+    for c in comments:
+        new_pieces.append(CommentNode(_encode_comment(c)))
+        new_pieces.append(NewlineNode(nl))
+    doc._trailing.pieces = new_pieces  # type: ignore[attr-defined]  # noqa: SLF001
 
 
 __all__ = ["EolCommentView", "LeadingCommentView"]

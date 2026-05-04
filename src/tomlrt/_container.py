@@ -93,7 +93,7 @@ class Container(dict[str, Any]):
         if self._inline:
             from tomlrt._errors import TOMLError  # noqa: PLC0415
 
-            msg = "comments view not available on inline tables"
+            msg = "comment API is not available on inline tables"
             raise TOMLError(msg)
         return EolCommentView(self)
 
@@ -105,9 +105,47 @@ class Container(dict[str, Any]):
         if self._inline:
             from tomlrt._errors import TOMLError  # noqa: PLC0415
 
-            msg = "leading_comments view not available on inline tables"
+            msg = "comment API is not available on inline tables"
             raise TOMLError(msg)
         return LeadingCommentView(self)
+
+    @property
+    def header_comment(self) -> str | None:
+        """The EOL comment on this container's section header, or None."""
+        from tomlrt._comments import _header_comment_get  # noqa: PLC0415
+
+        return _header_comment_get(self)
+
+    @header_comment.setter
+    def header_comment(self, value: str | None) -> None:
+        from tomlrt._comments import _header_comment_set  # noqa: PLC0415
+
+        _header_comment_set(self, value)
+
+    @header_comment.deleter
+    def header_comment(self) -> None:
+        from tomlrt._comments import _header_comment_set  # noqa: PLC0415
+
+        _header_comment_set(self, None)
+
+    @property
+    def header_leading_comments(self) -> tuple[str, ...]:
+        """The leading comment block immediately above this container's header."""
+        from tomlrt._comments import _header_leading_get  # noqa: PLC0415
+
+        return _header_leading_get(self)
+
+    @header_leading_comments.setter
+    def header_leading_comments(self, value: tuple[str, ...]) -> None:
+        from tomlrt._comments import _header_leading_set  # noqa: PLC0415
+
+        _header_leading_set(self, value)
+
+    @header_leading_comments.deleter
+    def header_leading_comments(self) -> None:
+        from tomlrt._comments import _header_leading_set  # noqa: PLC0415
+
+        _header_leading_set(self, ())
 
     @property
     def _subtree_tail(self) -> Slot | None:
@@ -613,7 +651,7 @@ class Container(dict[str, Any]):
         if self._inline and len(parts) > 1:
             from tomlrt._errors import TOMLError  # noqa: PLC0415
 
-            msg = "cannot install dotted path inside an inline-style table"
+            msg = "cannot install dotted path: container is not section-backed"
             raise TOMLError(msg)
         # If the value is a section-flavoured Table or an AoT, route
         # straight to the multi-component attach path so intermediate
@@ -872,6 +910,42 @@ class Document(Container):
 
     def render(self) -> str:
         return render(self)
+
+    @property
+    def preamble(self) -> tuple[str, ...]:
+        from tomlrt._comments import _doc_preamble_get  # noqa: PLC0415
+
+        return _doc_preamble_get(self)
+
+    @preamble.setter
+    def preamble(self, value: tuple[str, ...]) -> None:
+        from tomlrt._comments import _doc_preamble_set  # noqa: PLC0415
+
+        _doc_preamble_set(self, value)
+
+    @preamble.deleter
+    def preamble(self) -> None:
+        from tomlrt._comments import _doc_preamble_set  # noqa: PLC0415
+
+        _doc_preamble_set(self, ())
+
+    @property
+    def epilogue(self) -> tuple[str, ...]:
+        from tomlrt._comments import _doc_epilogue_get  # noqa: PLC0415
+
+        return _doc_epilogue_get(self)
+
+    @epilogue.setter
+    def epilogue(self, value: tuple[str, ...]) -> None:
+        from tomlrt._comments import _doc_epilogue_set  # noqa: PLC0415
+
+        _doc_epilogue_set(self, value)
+
+    @epilogue.deleter
+    def epilogue(self) -> None:
+        from tomlrt._comments import _doc_epilogue_set  # noqa: PLC0415
+
+        _doc_epilogue_set(self, ())
 
     @override
     def __copy__(self) -> Document:
