@@ -211,10 +211,10 @@ def test_insert_into_comment_only_doc_deferred() -> None:
         doc["a"] = 1
 
 
-def test_aot_entry_body_insert_deferred() -> None:
+def test_aot_entry_body_insert_now_works() -> None:
     doc = loads("[[arr]]\nx = 1\n")
-    with pytest.raises(NotImplementedError):
-        doc.aot("arr")[0]["y"] = 2
+    doc.aot("arr")[0]["y"] = 2
+    assert dumps(doc) == "[[arr]]\nx = 1\ny = 2\n"
 
 
 def test_quoted_key_for_non_bare_name() -> None:

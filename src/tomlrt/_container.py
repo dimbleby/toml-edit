@@ -203,6 +203,10 @@ class Container(dict[str, Any]):
     def __setitem__(self, key: str, value: Any) -> None:
         if key in self and self[key] is value:
             return
+        # Unattached factory mode: dict-only storage, transplant on attach.
+        if self._layout_root is None:
+            dict.__setitem__(self, key, value)
+            return
         if self._inline:
             self._inline_setitem(key, value)
             return
@@ -247,9 +251,27 @@ class Container(dict[str, Any]):
             _layout_ops.append_direct_kv(self, key, cst)
             dict.__setitem__(self, key, decoded)
             return
-        # Fall-through: typed section Container / AoT or unknown type.
-        # Delegate to _synth_value so the user gets the right error
-        # (NotImplementedError for live-attach, TypeError for unknown).
+        # Fall-through: typed section Container / AoT live-attach.
+        if isinstance(value, AoT):
+            from tomlrt import _layout_ops  # noqa: PLC0415
+
+            # Snapshot any pre-existing entries' bodies; rehome the
+            # AoT object as empty; then re-add each body.
+            pending = [dict(t) for t in value]
+            list.clear(value)
+            attached = _layout_ops.attach_empty_aot(self, key, value)
+            dict.__setitem__(self, key, attached)
+            for body in pending:
+                _layout_ops.add_aot_entry(value, body)
+            return
+        if isinstance(value, Container) and not value._inline:  # noqa: SLF001
+            # Section-flavoured Table — synthesise [path] header.
+            from tomlrt import _layout_ops  # noqa: PLC0415
+
+            attached = _layout_ops.attach_section(self, key, value)
+            dict.__setitem__(self, key, attached)
+            return
+        # Unknown type → TypeError via _synth_value.
         _synth_value(
             value,
             layout_root=self._layout_root,
@@ -257,8 +279,6 @@ class Container(dict[str, Any]):
             path=(*self._path, key),
             owner=self._owner_aot_entry,
         )
-        # _synth_value always raises in this branch; the line below is
-        # only reached if it returns (defensive).
         msg = "internal: unexpected fall-through in __setitem__"
         raise AssertionError(msg)
 
@@ -471,6 +491,34 @@ class Table(Container):
     """A section table, implicit table, or inline table view."""
 
     __slots__ = ()
+
+    @classmethod
+    def section(cls, body: Mapping[str, Any] | None = None) -> Table:
+        """Build an unattached section-flavoured `Table` view.
+
+        Assigning the result into a document (``doc["k"] = t``)
+        synthesises a ``[k]`` section header and migrates ``body``
+        into the live document.
+        """
+        t = cls()
+        if body is not None:
+            for k, v in body.items():
+                dict.__setitem__(t, k, v)
+        return t
+
+    @classmethod
+    def inline(cls, body: Mapping[str, Any] | None = None) -> Table:
+        """Build an unattached inline-flavoured `Table` view.
+
+        Assigning the result into a document or another container
+        creates an inline table (``k = {...}``).
+        """
+        t = cls()
+        t._inline = True
+        if body is not None:
+            for k, v in body.items():
+                dict.__setitem__(t, k, v)
+        return t
 
 
 class Document(Container):

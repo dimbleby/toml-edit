@@ -85,5 +85,18 @@ class AoT(list["Table"]):
         """Materialise a list of plain-Python ``dict``s (recursive)."""
         return [t.to_dict() for t in self]
 
+    def add(self, body: object | None = None) -> Table:
+        """Append a fresh ``[[path]]`` entry and return its `Table` view.
+
+        ``body`` may be a Mapping (initial body content) or ``None``
+        (empty entry). The AoT must be attached to a document.
+        """
+        from tomlrt import _layout_ops  # noqa: PLC0415
+        from tomlrt._container import Table  # noqa: PLC0415
+
+        result = _layout_ops.add_aot_entry(self, body)
+        assert isinstance(result, Table)
+        return result
+
 
 __all__ = ["AoT", "Array"]

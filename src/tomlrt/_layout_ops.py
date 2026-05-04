@@ -30,9 +30,9 @@ from __future__ import annotations
 
 import contextlib
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from tomlrt._slots import KVSlot, SlotRef, StructuralHeaderSlot
+from tomlrt._slots import AoTEntry, KVSlot, SlotRef, StructuralHeaderSlot
 from tomlrt._trivia import CommentNode, EolTrivia, NewlineNode, Trivia
 from tomlrt._values import KeyPart
 
@@ -133,8 +133,15 @@ def append_direct_kv(c: Container, key: str, value: Value) -> None:
             raise NotImplementedError(msg)
         _append_dotted_kv_under_implicit(c, key, value)
         return
+    if c._owner_aot_entry is not None and c._header_ref is not None:  # noqa: SLF001
+        # AoT-entry root container: header-bearing, header is `[[arr]]`.
+        # Body inserts work like normal header-bearing container, but
+        # we also need to maintain the entry's `entry_slots` list in
+        # doc-stream order.
+        _append_kv_in_aot_entry(c, key, value)
+        return
     if c._owner_aot_entry is not None:  # noqa: SLF001
-        msg = "insert into AoT entry body is not yet supported"
+        msg = "insert into AoT entry sub-table body is not yet supported"
         raise NotImplementedError(msg)
     layout_root = c._layout_root  # noqa: SLF001
     if layout_root is None:
@@ -556,6 +563,47 @@ def _append_dotted_kv_under_implicit(c: Container, key: str, value: Value) -> No
             owner.entry_slots.insert(anchor_idx + 1, new_slot)
 
 
+def _append_kv_in_aot_entry(c: Container, key: str, value: Value) -> None:
+    """Append a direct KV in an AoT-entry root container's body.
+
+    Mirrors the header-bearing path in `append_direct_kv` but also
+    keeps the entry's `entry_slots` list in doc-stream order.
+    """
+    layout_root = c._layout_root  # noqa: SLF001
+    if layout_root is None:
+        msg = "internal: container has no layout root"
+        raise AssertionError(msg)
+    doc = layout_root
+    owner = c._owner_aot_entry  # noqa: SLF001
+    assert owner is not None
+    body_tail = c._body_tail  # noqa: SLF001
+    header_ref = c._header_ref  # noqa: SLF001
+    assert header_ref is not None
+
+    new_slot = _build_kv_slot(c, key, value, doc)
+    anchor: Slot = body_tail if body_tail is not None else header_ref.slot
+    _ensure_terminator(anchor, doc)
+    insert_after(anchor, new_slot, doc)
+
+    new_ref = SlotRef(slot=new_slot, container=c, local_key=key)
+    if body_tail is not None:
+        anchor_idx = _find_ref_index_by_slot(c, body_tail)
+        c._refs.insert(anchor_idx + 1, new_ref)  # noqa: SLF001
+    else:
+        c._refs.append(new_ref)  # noqa: SLF001
+    c._index.setdefault(key, []).append(new_ref)  # noqa: SLF001
+    c._body_tail = new_slot  # noqa: SLF001
+
+    # Maintain entry_slots in doc-stream order. Insert after the anchor
+    # if it is in the list, else append.
+    try:
+        idx = owner.entry_slots.index(anchor)
+    except ValueError:
+        owner.entry_slots.append(new_slot)
+    else:
+        owner.entry_slots.insert(idx + 1, new_slot)
+
+
 def _ensure_terminator(slot: Slot, doc: Document) -> None:
     """Give ``slot`` a trailing newline if it lacks one (no-final-newline doc)."""
     if isinstance(slot, (KVSlot, StructuralHeaderSlot)) and slot.eol.newline is None:
@@ -635,8 +683,259 @@ def _quote_basic(s: str) -> str:
     return "".join(out)
 
 
+# ---------------------------------------------------------------------------
+# Structural attach (Phase 4 — section / AoT synthesis)
+# ---------------------------------------------------------------------------
+
+
+def _build_header_keyparts(path: tuple[str, ...]) -> list[KeyPart]:
+    out: list[KeyPart] = []
+    for p in path:
+        if _RE_BARE_KEY.match(p):
+            out.append(KeyPart(raw=p, value=p, kind="bare"))
+        else:
+            out.append(KeyPart(raw=_quote_basic(p), value=p, kind="basic"))
+    return out
+
+
+def _new_section_header(
+    path: tuple[str, ...],
+    *,
+    leading: Trivia,
+    doc: Document,
+    kind: str = "table",
+    entry: AoTEntry | None = None,
+    owner_aot_entry: AoTEntry | None = None,
+) -> StructuralHeaderSlot:
+    return StructuralHeaderSlot(
+        leading=leading,
+        kind=kind,  # type: ignore[arg-type]
+        path=path,
+        key_parts=_build_header_keyparts(path),
+        key_seps=["."] * (len(path) - 1),
+        eol=EolTrivia(
+            trailing_ws=None,
+            comment=None,
+            newline=NewlineNode(text=doc._newline),  # noqa: SLF001
+        ),
+        entry=entry,
+        owner_aot_entry=owner_aot_entry,
+        synthetic=True,
+    )
+
+
+def _doc_tail_anchor(doc: Document) -> Slot | None:
+    """Return the slot to insert *after* when appending at end-of-doc."""
+    return doc._tail  # noqa: SLF001
+
+
+def _splice_at_end(slot: Slot, doc: Document) -> None:
+    """Insert ``slot`` at the end of the doc-stream."""
+    anchor = _doc_tail_anchor(doc)
+    if anchor is None:
+        # Empty doc.
+        insert_before_head(slot, doc)
+    else:
+        _ensure_terminator(anchor, doc)
+        insert_after(anchor, slot, doc)
+
+
+def _build_section_leading(doc: Document) -> Trivia:
+    """Trivia for a fresh section header.
+
+    Empty doc → no leading; non-empty → one blank line of separation.
+    """
+    if doc._head is None:  # noqa: SLF001
+        return Trivia()
+    return Trivia([NewlineNode(text=doc._newline)])  # noqa: SLF001
+
+
+def attach_empty_aot(parent: Container, key: str, source_aot: object) -> object:
+    """Bind an empty AoT under ``parent[key]``.
+
+    No physical slots are created; subsequent ``aot.add(...)`` calls
+    will materialise the first ``[[path]]`` header. The ``source_aot``
+    is rehomed in place (identity preserved).
+    """
+    from tomlrt._array import AoT  # noqa: PLC0415
+    from tomlrt._container import Container as ContainerType  # noqa: PLC0415
+
+    assert isinstance(source_aot, AoT)
+    assert isinstance(parent, ContainerType)
+    if len(source_aot) > 0:
+        msg = "non-empty AoT live-attach has its own routing"
+        raise AssertionError(msg)
+    # Rehome the orphan AoT into this parent's logical scope.
+    source_aot._layout_root = parent._layout_root  # noqa: SLF001
+    source_aot._path = (*parent._path, key)  # noqa: SLF001
+    source_aot._parent = parent  # noqa: SLF001
+    return source_aot
+
+
+def add_aot_entry(aot: object, body: object) -> object:
+    """Append a ``[[path]]`` entry to ``aot`` and return its `Table` view."""
+    from tomlrt._array import AoT  # noqa: PLC0415
+    from tomlrt._container import (  # noqa: PLC0415
+        Table,
+        _is_scalar,
+        _is_synth_inline,
+        _synth_value,
+    )
+
+    assert isinstance(aot, AoT)
+    parent = aot._parent  # noqa: SLF001
+    layout_root = aot._layout_root  # noqa: SLF001
+    path = aot._path  # noqa: SLF001
+    if layout_root is None or parent is None or not path:
+        msg = "AoT.add requires the AoT to be attached to a document"
+        raise RuntimeError(msg)
+    doc = layout_root
+
+    ordinal = len(aot)
+    entry = AoTEntry(path=path, ordinal=ordinal)
+    leading = (
+        _build_section_leading(doc)
+        if ordinal == 0
+        else Trivia([NewlineNode(text=doc._newline)])  # noqa: SLF001
+    )
+    header = _new_section_header(
+        path,
+        leading=leading,
+        doc=doc,
+        kind="aot-entry",
+        entry=entry,
+        owner_aot_entry=entry,
+    )
+    entry.entry_slots.append(header)
+
+    # Build entry-root container.
+    entry_table = Table()
+    entry_table._layout_root = doc  # noqa: SLF001
+    entry_table._path = path  # noqa: SLF001
+    entry_table._parent = parent  # noqa: SLF001
+    entry_table._owner_aot_entry = entry  # noqa: SLF001
+    entry_ref = SlotRef(slot=header, container=entry_table, local_key=None)
+    entry_table._refs.append(entry_ref)  # noqa: SLF001
+    entry_table._header_ref = entry_ref  # noqa: SLF001
+
+    # Splice header at end-of-doc.
+    _splice_at_end(header, doc)
+
+    # File parent-chain refs for this entry's header.
+    parent_ref = SlotRef(slot=header, container=parent, local_key=path[-1])
+    parent._refs.append(parent_ref)  # noqa: SLF001
+    parent._index.setdefault(path[-1], []).append(parent_ref)  # noqa: SLF001
+
+    # Append the new entry to the AoT view list.
+    list.append(aot, entry_table)
+
+    # Populate body.
+    if body is not None:
+        for k, v in _items_for_synth(body):
+            if not isinstance(k, str):
+                msg = f"AoT entry key must be str, got {type(k).__name__}"
+                raise TypeError(msg)
+            if not (_is_scalar(v) or _is_synth_inline(v)):
+                msg = (
+                    f"AoT entry body value of type {type(v).__name__} "
+                    "is not yet supported (Phase 4-proper structural)"
+                )
+                raise NotImplementedError(msg)
+            cst, dec = _synth_value(
+                v,
+                layout_root=doc,
+                parent=entry_table,
+                path=(*path, k),
+                owner=entry,
+            )
+            _append_kv_in_aot_entry(entry_table, k, cst)
+            dict.__setitem__(entry_table, k, dec)
+    return entry_table
+
+
+def attach_section(parent: Container, key: str, source: object | None = None) -> object:
+    """Synthesise ``[parent_path.key]`` at end-of-doc and attach.
+
+    ``source`` may be ``None`` (empty section) or a Mapping (initial body).
+    Returns the live `Table` view.
+    """
+    from tomlrt._container import (  # noqa: PLC0415
+        Container as ContainerType,
+    )
+    from tomlrt._container import (  # noqa: PLC0415
+        Table,
+        _is_scalar,
+        _is_synth_inline,
+        _synth_value,
+    )
+
+    assert isinstance(parent, ContainerType)
+    layout_root = parent._layout_root  # noqa: SLF001
+    if layout_root is None:
+        msg = "internal: parent has no layout root"
+        raise AssertionError(msg)
+    doc = layout_root
+    new_path = (*parent._path, key)  # noqa: SLF001
+
+    leading = _build_section_leading(doc)
+    header = _new_section_header(new_path, leading=leading, doc=doc, kind="table")
+
+    # Rehome the source if it is an unattached Table; otherwise build new.
+    if isinstance(source, Table) and source._layout_root is None:  # noqa: SLF001
+        section = source
+        pending: list[tuple[Any, Any]] = list(source.items())
+        dict.clear(section)
+    else:
+        section = Table()
+        pending = list(_items_for_synth(source)) if source is not None else []
+
+    section._layout_root = doc  # noqa: SLF001
+    section._path = new_path  # noqa: SLF001
+    section._parent = parent  # noqa: SLF001
+    header_ref = SlotRef(slot=header, container=section, local_key=None)
+    section._refs.append(header_ref)  # noqa: SLF001
+    section._header_ref = header_ref  # noqa: SLF001
+
+    _splice_at_end(header, doc)
+
+    parent_ref = SlotRef(slot=header, container=parent, local_key=key)
+    parent._refs.append(parent_ref)  # noqa: SLF001
+    parent._index.setdefault(key, []).append(parent_ref)  # noqa: SLF001
+
+    for k, v in pending:
+        if not (_is_scalar(v) or _is_synth_inline(v)):
+            msg = (
+                f"section body value of type {type(v).__name__} "
+                "is not yet supported (Phase 4-proper structural)"
+            )
+            raise NotImplementedError(msg)
+        cst, dec = _synth_value(
+            v,
+            layout_root=doc,
+            parent=section,
+            path=(*new_path, k),
+            owner=None,
+        )
+        append_direct_kv(section, k, cst)
+        dict.__setitem__(section, k, dec)
+    return section
+
+
+def _items_for_synth(source: object) -> list[tuple[Any, Any]]:
+    """Iterate items of a Mapping/dict/Container source as (key, value)."""
+    from collections.abc import Mapping  # noqa: PLC0415
+
+    if isinstance(source, Mapping):
+        return list(source.items())
+    msg = f"cannot iterate items from {type(source).__name__}"
+    raise TypeError(msg)
+
+
 __all__ = [
+    "add_aot_entry",
     "append_direct_kv",
+    "attach_empty_aot",
+    "attach_section",
     "delete_key",
     "insert_after",
     "insert_before_head",
