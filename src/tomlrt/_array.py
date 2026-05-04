@@ -344,12 +344,14 @@ class Array(list[Any]):
         if i == 0 and items:
             # Inheriting position 0's leading: the new item adopts
             # the prior items[0].leading (which carries any post-`[`
-            # comment block + indent). The displaced item keeps the
-            # trailing-indent portion of that leading so its column
-            # position is preserved.
+            # comment block + indent). The new item's post_comma_trivia
+            # (set by _flip_to_internal below) carries the inter-item
+            # separator including its indent, so the displaced item
+            # must NOT keep its own leading indent — that would double
+            # the column position.
             adopted_leading = items[0].leading
             displaced = items[0]
-            displaced.leading = _trailing_indent_of(adopted_leading)
+            displaced.leading = _trivia_empty()
             new_item = _new_item(
                 cst, leading_first=True, style=style, leading=adopted_leading
             )
@@ -762,33 +764,6 @@ def _indent_from_final_trivia(ft: Any) -> str:
         return last_comment_indent
     return last_ws_after_nl or ""
 
-
-def _trailing_indent_of(leading: Any) -> Any:
-    """Return Trivia containing the whitespace pieces after the last newline.
-
-    Used by Array.insert(0, ...) so the displaced (formerly first)
-    item keeps its column-position indent after a fresh first item
-    is inserted ahead of it.
-    """
-    from tomlrt._trivia import NewlineNode, Trivia, WhitespaceNode  # noqa: PLC0415
-
-    pieces = leading.pieces
-    last_nl = -1
-    for j, p in enumerate(pieces):
-        if isinstance(p, NewlineNode):
-            last_nl = j
-    if last_nl < 0:
-        # No newline → this leading is single-line bracket padding,
-        # not an item indent. The displaced item should not inherit
-        # bracket padding as its leading.
-        return Trivia()
-    indent_pieces = []
-    for p in pieces[last_nl + 1 :]:
-        if isinstance(p, WhitespaceNode):
-            indent_pieces.append(p)
-        else:
-            break
-    return Trivia(list(indent_pieces))
 
 
 def _internal_leading(_style: _ArrayStyle) -> Any:

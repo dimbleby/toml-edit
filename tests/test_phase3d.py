@@ -230,21 +230,19 @@ def test_delete_then_reinsert_at_top_level_after_section_delete() -> None:
 
 
 def test_held_view_after_delete_does_not_corrupt_doc() -> None:
-    # Phase 3e will give held views a private root + live mutation.
-    # In 3d-1 we just need to guarantee the doc itself stays
-    # consistent and the held view's structural mutation either
-    # raises NIE or no-ops — never a partial corruption.
+    # Phase 3e gives held views a private orphan root + live mutation.
+    # Mutating the orphan must not affect the live document.
     doc = loads("[a]\nx = 1\n[b]\ny = 2\n")
     held = doc.table("a")
     del doc["a"]
     check(doc)
     assert "a" not in doc
     assert dumps(doc) == "[b]\ny = 2\n"
-    # Mutating the orphan should not affect the live document.
-    with pytest.raises(NotImplementedError):
-        held["new"] = 99
+    # Held-view mutation lands in the orphan, not the live doc.
+    held["new"] = 99
     check(doc)
     assert dumps(doc) == "[b]\ny = 2\n"
+    assert held["new"] == 99
 
 
 def test_delete_aot_entry_internal_kv_keeps_other_entries() -> None:
@@ -329,14 +327,15 @@ def test_delete_deep_non_aot_implicit_prune() -> None:
 
 
 def test_held_deleted_section_view_has_clean_orphan_state() -> None:
-    # Defence-in-depth: held view's caches are internally
-    # consistent after delete (relevant for Phase 3e detach).
+    # Defence-in-depth: held view is internally consistent after
+    # delete (Phase 3e detaches it into a private orphan root, so
+    # the held view's refs/header/_body_tail still resolve — but
+    # against the orphan, not the live doc).
     doc = loads("[a]\nx = 1\n[b]\ny = 2\n")
     held = doc.table("a")
     del doc["a"]
-    assert held._refs == []  # noqa: SLF001
-    assert held._header_ref is None  # noqa: SLF001
-    # Specifically NOT a stale unlinked header slot (regression on
-    # the "_recompute_body_tail before _header_ref clear" ordering
-    # bug the duck flagged).
-    assert held._body_tail is None  # noqa: SLF001
+    # Held view's layout root is a private orphan, not `doc`.
+    assert held._layout_root is not doc  # noqa: SLF001
+    assert held._layout_root._is_private  # noqa: SLF001
+    # Slot infra is intact (refs point at orphan slots).
+    assert held["x"] == 1
