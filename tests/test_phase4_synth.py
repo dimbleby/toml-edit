@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 import tomlrt
 from tomlrt._invariants import check
 
@@ -96,11 +94,15 @@ def test_string_value_in_synth_uses_basic_string() -> None:
     assert tomlrt.loads(out)["t"]["k"] == 'v"with"quotes'
 
 
-def test_typed_container_assign_still_defers_to_phase4_proper() -> None:
+def test_typed_container_assign_now_clones_from_other_doc() -> None:
     src = tomlrt.loads("[a]\nx = 1\n")
     dst = tomlrt.loads("")
-    with pytest.raises(NotImplementedError):
-        dst["a"] = src["a"]
+    dst["a"] = src["a"]
+    assert tomlrt.dumps(dst) == "[a]\nx = 1\n"
+    # Independent: mutating one does not affect the other.
+    assert src["a"] is not dst["a"]
+    src["a"]["x"] = 99
+    assert dst["a"]["x"] == 1
 
 
 def test_invariant_passes_for_array_of_dicts_at_top_level() -> None:

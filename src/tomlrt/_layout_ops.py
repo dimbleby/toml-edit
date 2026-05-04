@@ -853,6 +853,116 @@ def add_aot_entry(aot: object, body: object) -> object:
     return entry_table
 
 
+def attach_section_at(
+    parent: Container,
+    sub_path: tuple[str, ...] | list[str],
+    source: object | None = None,
+) -> Any:
+    """Synthesise ``[parent_path.sub_path]`` (multi-component) at end-of-doc.
+
+    Intermediate components in ``sub_path[:-1]`` become implicit tables;
+    the deepest component gets the explicit header. ``source`` may be
+    a `Table` (rehomed) or a Mapping (snapshotted) or ``None``.
+    """
+    from tomlrt._container import (  # noqa: PLC0415
+        Container as ContainerType,
+    )
+    from tomlrt._container import (  # noqa: PLC0415
+        Table,
+        _is_scalar,
+        _is_synth_inline,
+        _synth_value,
+    )
+
+    assert isinstance(parent, ContainerType)
+    sub = tuple(sub_path)
+    if not sub:
+        msg = "sub_path must not be empty"
+        raise ValueError(msg)
+    if len(sub) == 1:
+        return attach_section(parent, sub[0], source)
+
+    layout_root = parent._layout_root  # noqa: SLF001
+    if layout_root is None:
+        msg = "internal: parent has no layout root"
+        raise AssertionError(msg)
+    doc = layout_root
+    full_path = (*parent._path, *sub)  # noqa: SLF001
+
+    leading = _build_section_leading(doc)
+    header = _new_section_header(full_path, leading=leading, doc=doc, kind="table")
+
+    # Build implicit chain: each intermediate is a Table view living
+    # in dict storage but with no own header ref.
+    chain: list[Container] = [parent]
+    for j, comp in enumerate(sub[:-1]):
+        cur = chain[-1]
+        if comp in cur:
+            nxt = dict.__getitem__(cur, comp)
+            if not isinstance(nxt, ContainerType):
+                msg = f"intermediate {comp!r} is not a table"
+                raise TypeError(msg)
+            chain.append(nxt)
+            continue
+        implicit = Table()
+        implicit._layout_root = doc  # noqa: SLF001
+        implicit._path = (*parent._path, *sub[: j + 1])  # noqa: SLF001
+        implicit._parent = cur  # noqa: SLF001
+        dict.__setitem__(cur, comp, implicit)
+        chain.append(implicit)
+
+    if isinstance(source, Table) and source._layout_root is None:  # noqa: SLF001
+        section = source
+        pending: list[tuple[Any, Any]] = list(source.items())
+        dict.clear(section)
+    else:
+        section = Table()
+        pending = list(_items_for_synth(source)) if source is not None else []
+
+    section._layout_root = doc  # noqa: SLF001
+    section._path = full_path  # noqa: SLF001
+    section._parent = chain[-1]  # noqa: SLF001
+    header_ref = SlotRef(slot=header, container=section, local_key=None)
+    section._refs.append(header_ref)  # noqa: SLF001
+    section._header_ref = header_ref  # noqa: SLF001
+
+    _splice_at_end(header, doc)
+
+    # File the binding ref under the deepest implicit parent.
+    deepest_parent = chain[-1]
+    parent_ref = SlotRef(slot=header, container=deepest_parent, local_key=sub[-1])
+    deepest_parent._refs.append(parent_ref)  # noqa: SLF001
+    deepest_parent._index.setdefault(sub[-1], []).append(parent_ref)  # noqa: SLF001
+    dict.__setitem__(deepest_parent, sub[-1], section)
+
+    # Also propagate ancestor-prefix bindings so the implicit ancestors
+    # have an _index entry with this header as a contributor.
+    for j in range(len(sub) - 1):
+        anc = chain[j]
+        comp = sub[j]
+        anc_ref = SlotRef(slot=header, container=anc, local_key=comp)
+        anc._refs.append(anc_ref)  # noqa: SLF001
+        anc._index.setdefault(comp, []).append(anc_ref)  # noqa: SLF001
+
+    for k, v in pending:
+        if not (_is_scalar(v) or _is_synth_inline(v)):
+            msg = (
+                f"section body value of type {type(v).__name__} "
+                "is not yet supported (Phase 4-proper structural)"
+            )
+            raise NotImplementedError(msg)
+        cst, dec = _synth_value(
+            v,
+            layout_root=doc,
+            parent=section,
+            path=(*full_path, k),
+            owner=None,
+        )
+        append_direct_kv(section, k, cst)
+        dict.__setitem__(section, k, dec)
+    return section
+
+
 def attach_section(parent: Container, key: str, source: object | None = None) -> object:
     """Synthesise ``[parent_path.key]`` at end-of-doc and attach.
 
@@ -936,6 +1046,7 @@ __all__ = [
     "append_direct_kv",
     "attach_empty_aot",
     "attach_section",
+    "attach_section_at",
     "delete_key",
     "insert_after",
     "insert_before_head",

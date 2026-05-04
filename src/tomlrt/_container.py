@@ -545,6 +545,56 @@ class Document(Container):
     def render(self) -> str:
         return render(self)
 
+    def install(self, path: str | Sequence[str], value: Any) -> Any:
+        """Set ``value`` at the (possibly dotted) ``path``.
+
+        Intermediate sections are created as needed via `ensure_table`.
+        Returns the live view stored at the leaf.
+        """
+        parts = _validate_path(path)
+        host = self if len(parts) == 1 else self.ensure_table(parts[:-1])
+        host[parts[-1]] = value
+        return host[parts[-1]]
+
+    def ensure_table(self, path: str | Sequence[str]) -> Table:
+        """Return the section at ``path``, creating it if missing.
+
+        If any prefix already exists as a section, descent continues
+        from there. Intermediate components missing entirely are left
+        implicit; only the deepest component gets an explicit
+        ``[a.b.c]`` header. An existing non-table at any component
+        raises ``TypeError``.
+        """
+        parts = _validate_path(path)
+        # Walk as far down as existing structure goes.
+        cur: Container = self
+        i = 0
+        while i < len(parts):
+            p = parts[i]
+            if p not in cur:
+                break
+            nxt = dict.__getitem__(cur, p)
+            if not isinstance(nxt, Container) or nxt._inline:  # noqa: SLF001
+                msg = f"cannot descend into {p!r}: not a section table"
+                raise TypeError(msg)
+            cur = nxt
+            i += 1
+        if i == len(parts):
+            assert isinstance(cur, Table)
+            return cur
+        # Synthesise a single section spanning the remaining components.
+        from tomlrt import _layout_ops  # noqa: PLC0415
+
+        new_section = Table.section()
+        # Compose the deepest section path relative to `cur`.
+        # We need a multi-component child key under `cur`. Easiest: use
+        # attach_section but adjusted. For now we only support single
+        # missing tail (test case has all-missing). Build by rebinding
+        # the section's path manually.
+        attached = _layout_ops.attach_section_at(cur, parts[i:], new_section)
+        assert isinstance(attached, Table)
+        return attached
+
 
 def _split_path(path: str | Sequence[str]) -> list[str]:
     """Split a path argument into a list of component names.
@@ -556,6 +606,42 @@ def _split_path(path: str | Sequence[str]) -> list[str]:
     if isinstance(path, str):
         return path.split(".") if path else []
     return list(path)
+
+
+def _validate_path(path: object) -> list[str]:
+    """Validate a key-path argument and return its components.
+
+    Raises ``TypeError`` for the wrong outer type, and ``TOMLError``
+    for empty paths or paths with empty segments.
+    """
+    from tomlrt._errors import TOMLError  # noqa: PLC0415
+
+    if isinstance(path, str):
+        if path == "":
+            msg = "key path must not be empty"
+            raise TOMLError(msg)
+        parts = path.split(".")
+        for p in parts:
+            if p == "":
+                msg = f"key path {path!r} contains an empty segment"
+                raise TOMLError(msg)
+        return parts
+    if isinstance(path, (list, tuple)):
+        if len(path) == 0:
+            msg = "key path must not be empty"
+            raise TOMLError(msg)
+        out: list[str] = []
+        for seg in path:
+            if not isinstance(seg, str):
+                msg = f"key path segment must be str, got {type(seg).__name__}"
+                raise TypeError(msg)
+            if seg == "":
+                msg = "key path contains an empty segment"
+                raise TOMLError(msg)
+            out.append(seg)
+        return out
+    msg = f"key path must be str or sequence of str, got {type(path).__name__}"
+    raise TypeError(msg)
 
 
 def _to_python(v: Any) -> Any:
