@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 class Array(list[Any]):
     """An inline array (`[ ... ]`)."""
 
-    __slots__ = ("_multiline", "_value")
+    __slots__ = ("_attached", "_multiline", "_value")
 
     def __init__(
         self,
@@ -45,6 +45,11 @@ class Array(list[Any]):
 
         self._value: ArrayValue | None = ArrayValue()
         self._multiline: bool = multiline
+        # Factory mode: True once the user-facing constructor finishes.
+        # Decoder paths construct an Array() then immediately overwrite
+        # `_value` and clear `_attached` to indicate "this view is owned
+        # by the doc, not a free orphan".
+        self._attached: bool = False
         if items is None:
             return
         from tomlrt._container import _synth_inline_array  # noqa: PLC0415
@@ -129,6 +134,71 @@ class Array(list[Any]):
 
     def _style(self) -> _ArrayStyle:
         return _detect_style(self._value, multiline_flag=self._multiline)
+
+    @property
+    def multiline(self) -> bool:
+        """True iff this array is rendered in multi-line form."""
+        if self._value is None:
+            return self._multiline
+        return self._style().is_multiline
+
+    def set_multiline(self, *, multiline: bool) -> None:
+        """Switch this array between flush single-line and multi-line form.
+
+        Raises ``TOMLError`` when collapsing a multi-line array that
+        carries comments (per-item leading or post_comma trivia
+        containing a comment), since those would have nowhere to live
+        on a single line.
+        """
+        from tomlrt._errors import TOMLError  # noqa: PLC0415
+        from tomlrt._trivia import (  # noqa: PLC0415
+            CommentNode,
+            NewlineNode,
+            Trivia,
+            WhitespaceNode,
+        )
+
+        if self._value is None:
+            self._multiline = multiline
+            return
+        items = self._value.items
+        if not multiline:
+            for it in items:
+                for piece in (*it.leading.pieces, *it.post_comma_trivia.pieces):
+                    if isinstance(piece, CommentNode):
+                        msg = "cannot collapse multi-line array with comments"
+                        raise TOMLError(msg)
+            for it in items:
+                it.leading = Trivia()
+                it.post_comma_trivia = Trivia()
+            self._value.final_trivia = Trivia()
+            self._multiline = False
+            flush_style = _ArrayStyle(
+                is_multiline=False,
+                inter_separator=Trivia([WhitespaceNode(text=" ")]),
+                trailing_comma=False,
+                trailing_post=Trivia(),
+            )
+            _renormalise_commas(items, flush_style)
+            return
+        # multiline=True
+        self._multiline = True
+        if not items:
+            self._value.final_trivia = Trivia([NewlineNode(text="\n")])
+            return
+        style = _ArrayStyle(
+            is_multiline=True,
+            inter_separator=Trivia(
+                [NewlineNode(text="\n"), WhitespaceNode(text="    ")]
+            ),
+            trailing_comma=True,
+            trailing_post=Trivia([NewlineNode(text="\n")]),
+        )
+        for it in items:
+            it.leading = Trivia()
+        items[0].leading = Trivia([NewlineNode(text="\n"), WhitespaceNode(text="    ")])
+        self._value.final_trivia = Trivia()
+        _renormalise_commas(items, style)
 
     def _synth_cst(self, value: Any) -> Any:
         from tomlrt._container import _synth_value  # noqa: PLC0415

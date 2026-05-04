@@ -96,12 +96,33 @@ def unlink_slot(slot: Slot, doc: Document) -> None:
         p._next = n  # noqa: SLF001
     else:
         doc._head = n  # noqa: SLF001
+        # Strip leading blank-line trivia from the new doc head — what
+        # was a separator from the removed first slot must not show up
+        # as a stray blank at the top of the file.
+        if n is not None:
+            _strip_leading_blank_lines(n)
     if n is not None:
         n._prev = p  # noqa: SLF001
     else:
         doc._tail = p  # noqa: SLF001
     slot._prev = None  # noqa: SLF001
     slot._next = None  # noqa: SLF001
+
+
+def _strip_leading_blank_lines(slot: Slot) -> None:
+    """Drop leading newline-only pieces from ``slot.leading``.
+
+    Comment pieces are preserved (we don't want to silently drop user
+    comments). Stops at the first non-newline piece.
+    """
+    from tomlrt._trivia import NewlineNode  # noqa: PLC0415
+
+    pieces = slot.leading.pieces
+    i = 0
+    while i < len(pieces) and isinstance(pieces[i], NewlineNode):
+        i += 1
+    if i:
+        del pieces[:i]
 
 
 # ---------------------------------------------------------------------------
@@ -1272,9 +1293,6 @@ def replace_aot_entry(aot: object, index: int, body: object) -> None:
         raise IndexError(msg)
     if index < 0:
         index += n
-    # For now: pre-validate body (must be Mapping or None), then
-    # remove + re-insert. True in-place splicing at the old position
-    # is a follow-up; tests that pin doc-position fidelity will tell us.
     if body is not None and not isinstance(body, dict):
         from collections.abc import Mapping  # noqa: PLC0415
 
@@ -1283,8 +1301,15 @@ def replace_aot_entry(aot: object, index: int, body: object) -> None:
                 f"AoT entry replacement body must be Mapping, got {type(body).__name__}"
             )
             raise TypeError(msg)
+    # Remove + add (appends at end), then renormalise so the new entry
+    # lands at `index` rather than the tail.
     remove_aot_entry(aot, index)
-    add_aot_entry(aot, body)
+    new_entry = add_aot_entry(aot, body)
+    cur: list[Any] = list(aot)
+    if cur[-1] is new_entry and len(cur) > 1 and index < len(cur) - 1:
+        cur.pop()
+        cur.insert(index, new_entry)
+        renormalise_aot_order(aot, cur)
 
 
 def renormalise_aot_order(aot: object, new_logical_order: list[Any]) -> None:

@@ -902,7 +902,7 @@ def _synth_value(
             v, layout_root=layout_root, parent=parent, path=path, owner=owner
         )
     # Unattached Array — live attach.
-    if isinstance(v, Array) and v._value is not None and v._layout_root() is None:  # noqa: SLF001
+    if isinstance(v, Array) and not v._attached:  # noqa: SLF001
         return _live_attach_array(v, layout_root=layout_root, owner=owner)
     # Mappings (incl. inline Container) → inline table.
     if isinstance(v, Mapping) or (isinstance(v, Container) and v._inline):  # noqa: SLF001
@@ -970,25 +970,17 @@ def _live_attach_inline_table(
 def _live_attach_array(
     a: Array,
     *,
-    layout_root: Document | None,
-    owner: AoTEntry | None,
+    layout_root: Document | None,  # noqa: ARG001
+    owner: AoTEntry | None,  # noqa: ARG001
 ) -> tuple[ArrayValue, Array]:
     """Rehome an unattached `Array` into ``layout_root``.
 
-    If the Array already has a ``_value`` (built by the ``Array(items)``
-    constructor), keep it as-is and just rehome. Otherwise synthesise
-    fresh items from the current contents.
+    The Array always has a backing ``ArrayValue`` (the constructor
+    initialises one); just mark it attached and hand back the value.
     """
-    if a._value is not None:  # noqa: SLF001
-        # Already has a backing CST (e.g. built via Array(items=...)).
-        return a._value, a  # noqa: SLF001
-    # Cold path: build from current decoded contents.
-    val, _arr = _synth_inline_array(list(a), layout_root=layout_root, owner=owner)
-    a._value = val  # noqa: SLF001
-    list.clear(a)
-    for v in _arr:
-        list.append(a, v)
-    return val, a
+    a._attached = True  # noqa: SLF001
+    assert a._value is not None  # noqa: SLF001
+    return a._value, a  # noqa: SLF001
 
 
 def _synth_inline_table(
