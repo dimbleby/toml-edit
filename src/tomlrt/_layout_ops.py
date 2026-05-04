@@ -1283,7 +1283,17 @@ def remove_aot_entry(aot: object, index: int) -> object:
 
 
 def replace_aot_entry(aot: object, index: int, body: object) -> None:
-    """Replace ``aot[index]`` in place with a fresh entry from ``body``."""
+    """Replace ``aot[index]`` in place.
+
+    Keeps the entry's header slot and live `Table` view; just clears
+    the body and re-populates from ``body``.
+
+    O(m) in the size of ``body``, independent of AoT length and
+    document size. Header position and `_refs` ordering are preserved
+    by construction (no slot splicing involved).
+    """
+    from collections.abc import Mapping  # noqa: PLC0415
+
     from tomlrt._array import AoT  # noqa: PLC0415
 
     assert isinstance(aot, AoT)
@@ -1293,23 +1303,14 @@ def replace_aot_entry(aot: object, index: int, body: object) -> None:
         raise IndexError(msg)
     if index < 0:
         index += n
-    if body is not None and not isinstance(body, dict):
-        from collections.abc import Mapping  # noqa: PLC0415
-
-        if not isinstance(body, Mapping):
-            msg = (
-                f"AoT entry replacement body must be Mapping, got {type(body).__name__}"
-            )
-            raise TypeError(msg)
-    # Remove + add (appends at end), then renormalise so the new entry
-    # lands at `index` rather than the tail.
-    remove_aot_entry(aot, index)
-    new_entry = add_aot_entry(aot, body)
-    cur: list[Any] = list(aot)
-    if cur[-1] is new_entry and len(cur) > 1 and index < len(cur) - 1:
-        cur.pop()
-        cur.insert(index, new_entry)
-        renormalise_aot_order(aot, cur)
+    if body is not None and not isinstance(body, Mapping):
+        msg = f"AoT entry replacement body must be Mapping, got {type(body).__name__}"
+        raise TypeError(msg)
+    entry_table = aot[index]
+    entry_table.clear()
+    if body is not None:
+        for k, v in body.items():
+            entry_table[k] = v
 
 
 def renormalise_aot_order(aot: object, new_logical_order: list[Any]) -> None:
