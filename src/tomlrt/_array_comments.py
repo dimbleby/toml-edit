@@ -30,6 +30,7 @@ item and writes back into a single canonical place:
 
 from __future__ import annotations
 
+import contextlib
 import sys
 from collections.abc import MutableMapping
 from typing import TYPE_CHECKING, Any, cast
@@ -434,3 +435,154 @@ class ArrayLeadingView(MutableMapping[int, tuple[str, ...]]):
     def __repr__(self) -> str:
         # Test contract spells the values as Python lists, e.g. "{0: ['first']}".
         return repr({k: list(v) for k, v in self.items()})
+
+
+# ---------------------------------------------------------------------------
+# Reorder helpers — snapshot/clear/apply per-item comments raw, so structural
+# reordering ops (`reverse`, `sort`, `insert`, `pop`) can move comments
+# along with the items they belong to without losing exact byte spelling.
+# ---------------------------------------------------------------------------
+
+
+def _raw_comment_lines(pieces: list[TriviaPiece]) -> tuple[str, ...]:
+    """Raw `#...` text for each CommentNode in *pieces* (preserves spelling)."""
+    return tuple(p.text for p in pieces if isinstance(p, CommentNode))
+
+
+def _raw_eol_text(item: ArrayItem) -> str | None:
+    """Raw `# ...` text of *item*'s EOL comment, or None."""
+    if item.has_comma:
+        for p in item.post_comma_trivia.pieces:
+            if isinstance(p, NewlineNode):
+                break
+            if isinstance(p, CommentNode):
+                return p.text
+    for p in item.trailing.pieces:
+        if isinstance(p, NewlineNode):
+            break
+        if isinstance(p, CommentNode):
+            return p.text
+    if item.has_comma:
+        for p in item.trailing.pieces:
+            if isinstance(p, NewlineNode):
+                break
+            if isinstance(p, CommentNode):
+                return p.text
+    else:
+        for p in item.post_comma_trivia.pieces:
+            if isinstance(p, NewlineNode):
+                break
+            if isinstance(p, CommentNode):
+                return p.text
+    return None
+
+
+def snapshot_comments(
+    arr: Array,
+) -> tuple[list[tuple[str, ...]], list[str | None]]:
+    """Return per-item (raw-leading-lines, raw-eol-text) snapshots."""
+    if arr._value is None:  # noqa: SLF001
+        return [], []
+    items = arr._value.items  # noqa: SLF001
+    leadings = [
+        _raw_comment_lines(_leading_pieces(items, i)) for i in range(len(items))
+    ]
+    eols = [_raw_eol_text(items[i]) for i in range(len(items))]
+    return leadings, eols
+
+
+def clear_all_comments(arr: Array) -> None:
+    """Strip per-item comments from all items via the canonical deleters."""
+    if arr._value is None:  # noqa: SLF001
+        return
+    items = arr._value.items  # noqa: SLF001
+    n = len(items)
+    leading = ArrayLeadingView(arr)
+    eol = ArrayEolView(arr)
+    for i in range(n):
+        leading._delete(i, allow_missing=True)  # noqa: SLF001
+        with contextlib.suppress(KeyError):
+            del eol[i]
+
+
+def _write_eol_raw(arr: Array, idx: int, raw_text: str) -> None:
+    items = _items_or_raise(arr)
+    item = items[idx]
+    nl = _newline_text(arr)
+    target = _eol_target(item)
+    existing_eol, rest = _split_eol_section(list(target.pieces))
+    if not existing_eol and rest and isinstance(rest[0], NewlineNode):
+        rest = rest[1:]
+    new_eol: list[TriviaPiece] = [
+        WhitespaceNode(" "),
+        CommentNode(raw_text),
+        NewlineNode(nl),
+    ]
+    target.pieces = [*new_eol, *rest]
+
+
+def _write_leading_raw(arr: Array, idx: int, raw_lines: tuple[str, ...]) -> None:
+    items = _items_or_raise(arr)
+    nl = _newline_text(arr)
+    ind = _slot_indent(arr)
+    if idx == 0:
+        item0 = items[0]
+        kept_initial: list[TriviaPiece] = []
+        seen_nl = False
+        for p in item0.leading.pieces:
+            if isinstance(p, NewlineNode):
+                kept_initial.append(p)
+                seen_nl = True
+                break
+        if not seen_nl:
+            kept_initial = [NewlineNode(nl)]
+        new_pieces: list[TriviaPiece] = list(kept_initial)
+        for raw in raw_lines:
+            new_pieces.append(WhitespaceNode(ind))
+            new_pieces.append(CommentNode(raw))
+            new_pieces.append(NewlineNode(nl))
+        new_pieces.append(WhitespaceNode(ind))
+        item0.leading.pieces = new_pieces
+        return
+    prev = items[idx - 1]
+    item = items[idx]
+    eol_sec, _rest = _split_eol_section(list(prev.post_comma_trivia.pieces))
+    new_after_eol: list[TriviaPiece] = []
+    if not eol_sec:
+        new_after_eol.append(NewlineNode(nl))
+    for raw in raw_lines:
+        new_after_eol.append(WhitespaceNode(ind))
+        new_after_eol.append(CommentNode(raw))
+        new_after_eol.append(NewlineNode(nl))
+    new_after_eol.append(WhitespaceNode(ind))
+    prev.post_comma_trivia.pieces = [*eol_sec, *new_after_eol]
+    item.leading.pieces = []
+
+
+def apply_comments(
+    arr: Array,
+    leadings: list[tuple[str, ...]],
+    eols: list[str | None],
+) -> None:
+    """Re-apply per-item comments after a structural reorder.
+
+    Writes EOL comments first (so leading writes can split a known
+    canonical EOL section out of the prev item's post_comma_trivia),
+    then leading blocks. Skips empty entries.
+    """
+    if arr._value is None:  # noqa: SLF001
+        return
+    items = arr._value.items  # noqa: SLF001
+    n = len(items)
+    any_comment = any(eols[i] is not None for i in range(n)) or any(
+        leadings[i] for i in range(n)
+    )
+    if any_comment:
+        _ensure_multiline(arr)
+    for i in range(n):
+        e = eols[i]
+        if e is not None:
+            _write_eol_raw(arr, i, e)
+    for i in range(n):
+        if leadings[i]:
+            _write_leading_raw(arr, i, leadings[i])

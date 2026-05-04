@@ -350,26 +350,42 @@ class Array(list[Any]):
         if self._value is None:
             msg = "Array.pop on detached Array"
             raise NotImplementedError(msg)
-        decoded = list.pop(self, index)
+        from tomlrt._array_comments import (  # noqa: PLC0415
+            apply_comments,
+            clear_all_comments,
+            snapshot_comments,
+        )
+
+        n = len(self)
         i = int(index)
         if i < 0:
-            i += len(self._value.items)
+            i += n
+        if i < 0 or i >= n:
+            msg = "pop index out of range"
+            raise IndexError(msg)
+        leadings, eols = snapshot_comments(self)
+        decoded = list.pop(self, i)
         items = self._value.items
-        # Snapshot style before mutation so the trailing-comma policy
-        # reflects the original last item, not the newly-exposed one.
         style = self._style()
-        # If popping the terminal item and it carried bracket-padding
-        # in its `trailing`, migrate that into final_trivia so the new
-        # tail still renders as `... ]`.
+        from tomlrt._trivia import CommentNode  # noqa: PLC0415
+
+        trailing_has_comment = any(
+            isinstance(p, CommentNode) for p in items[i].trailing.pieces
+        )
         if (
             i == len(items) - 1
             and items[i].trailing.pieces
             and not self._value.final_trivia.pieces
+            and not trailing_has_comment
         ):
             self._value.final_trivia = items[i].trailing
         items.pop(i)
+        leadings.pop(i)
+        eols.pop(i)
         if items:
             _flip_to_terminal(items[-1], style)
+            clear_all_comments(self)
+            apply_comments(self, leadings, eols)
         return decoded
 
     @override
@@ -386,6 +402,12 @@ class Array(list[Any]):
         if self._value is None:
             msg = "Array.insert on detached Array"
             raise NotImplementedError(msg)
+        from tomlrt._array_comments import (  # noqa: PLC0415
+            apply_comments,
+            clear_all_comments,
+            snapshot_comments,
+        )
+
         cst, decoded = self._synth_cst(value)
         i = int(index)
         n = len(self)
@@ -394,6 +416,7 @@ class Array(list[Any]):
         i = min(i, n)
         items = self._value.items
         style = self._style()
+        leadings, eols = snapshot_comments(self)
         if i == 0 and items:
             # Inheriting position 0's leading: the new item adopts
             # the prior items[0].leading (which carries any post-`[`
@@ -426,28 +449,51 @@ class Array(list[Any]):
             # Internal — ensure trailing comma + standard separator.
             _flip_to_internal(new_item, style)
         list.insert(self, i, decoded)
+        # Logical leadings/eols follow each value to its new index.
+        leadings.insert(i, ())
+        eols.insert(i, None)
+        if any(eols) or any(leadings):
+            clear_all_comments(self)
+            apply_comments(self, leadings, eols)
 
     @override
     def reverse(self) -> None:
         if self._value is None:
             list.reverse(self)
             return
+        from tomlrt._array_comments import (  # noqa: PLC0415
+            apply_comments,
+            clear_all_comments,
+            snapshot_comments,
+        )
+
         items = self._value.items
         # Snapshot bracket padding + style before reorder; the leading
         # of items[0] and the trailing of items[-1] are bracket-padding
         # that belong to *the array*, not to those particular items.
         style = self._style()
         bracket_leading = _clone_trivia(items[0].leading) if items else _trivia_empty()
+        leadings, eols = snapshot_comments(self)
         items.reverse()
         list.reverse(self)
+        leadings.reverse()
+        eols.reverse()
         _normalise_for_renormalise(items, bracket_leading)
         _renormalise_commas(items, style, self._value)
+        clear_all_comments(self)
+        apply_comments(self, leadings, eols)
 
     @override
     def sort(self, *, key: Any = None, reverse: bool = False) -> None:
         if self._value is None:
             list.sort(self, key=key, reverse=reverse)
             return
+        from tomlrt._array_comments import (  # noqa: PLC0415
+            apply_comments,
+            clear_all_comments,
+            snapshot_comments,
+        )
+
         n = len(self)
         if key is None:
             order = sorted(range(n), key=lambda i: self[i], reverse=reverse)
@@ -457,14 +503,19 @@ class Array(list[Any]):
         # See `reverse` — capture style + bracket padding before reorder.
         style = self._style()
         bracket_leading = _clone_trivia(items[0].leading) if items else _trivia_empty()
+        leadings, eols = snapshot_comments(self)
         new_items = [items[j] for j in order]
         new_decoded = [self[j] for j in order]
+        new_leadings = [leadings[j] for j in order]
+        new_eols = [eols[j] for j in order]
         items[:] = new_items
         list.clear(self)
         for v in new_decoded:
             list.append(self, v)
         _normalise_for_renormalise(items, bracket_leading)
         _renormalise_commas(items, style, self._value)
+        clear_all_comments(self)
+        apply_comments(self, new_leadings, new_eols)
 
     @override
     def __setitem__(
@@ -863,11 +914,23 @@ def _flip_to_internal(
     indent so the next item lands at the right column. Otherwise fall
     back to the style's full inter-separator template.
     """
-    from tomlrt._trivia import NewlineNode, Trivia, WhitespaceNode  # noqa: PLC0415
+    from tomlrt._trivia import (  # noqa: PLC0415
+        CommentNode,
+        NewlineNode,
+        Trivia,
+        WhitespaceNode,
+    )
 
-    if value is not None and item.trailing.pieces and not value.final_trivia.pieces:
+    has_comment = any(isinstance(p, CommentNode) for p in item.trailing.pieces)
+    if (
+        value is not None
+        and item.trailing.pieces
+        and not value.final_trivia.pieces
+        and not has_comment
+    ):
         value.final_trivia = item.trailing
-    item.trailing = _trivia_empty()
+    if not has_comment:
+        item.trailing = _trivia_empty()
     if item.has_comma and item.post_comma_trivia.pieces:
         if not _has_ws_after_last_newline(item.post_comma_trivia):
             indent = _first_indent_after_newline(style.inter_separator)
