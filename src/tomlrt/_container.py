@@ -922,7 +922,7 @@ def _synth_inline_table(
         )
         is_last = i == len(items) - 1
         entry = InlineTableEntry(
-            leading=Trivia([WhitespaceNode(text=" ")]) if i > 0 else Trivia(),
+            leading=Trivia([WhitespaceNode(text=" ")]),
             key_parts=[_make_keypart(k)],
             key_seps=[],
             pre_eq=" ",
@@ -934,6 +934,8 @@ def _synth_inline_table(
         )
         val.entries.append(entry)
         dict.__setitem__(table, k, sub_dec)
+    if items:
+        val.final_trivia = Trivia([WhitespaceNode(text=" ")])
     return val, table
 
 

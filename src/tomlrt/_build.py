@@ -295,14 +295,15 @@ def _decode_array(
     arr = Array()
     arr._value = value  # noqa: SLF001
     for item in value.items:
-        arr.append(
+        list.append(
+            arr,
             _decode_value(
                 item.value,
                 layout_root=layout_root,
                 parent=None,
                 path=(),
                 owner=owner,
-            )
+            ),
         )
     return arr
 
