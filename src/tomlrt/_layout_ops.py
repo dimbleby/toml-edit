@@ -300,19 +300,20 @@ def delete_key(c: Container, key: str) -> None:
     for r in c._index.get(key, []):  # noqa: SLF001
         _add_ref(r)
 
-    # 2. Subtree containers + descendant refs.
+    # 2. Subtree containers + AoTs + descendant refs.
     subtree_containers: list[Container] = []
-    _collect_subtree(val, subtree_containers, _add_ref)
+    subtree_aots: list[Any] = []
+    _collect_subtree(val, subtree_containers, subtree_aots, _add_ref)
 
-    # 3. Scrub ancestor chain + subtree containers.
+    # 3. Scrub ancestor chain only — subtree containers will be
+    # detached as a unit (their refs preserved against an orphan doc).
     chain: list[Container] = []
     cur: Container | None = c
     while cur is not None:
         chain.append(cur)
         cur = cur._parent  # noqa: SLF001
-    scrub: list[Container] = [*chain, *subtree_containers]
 
-    for cc in scrub:
+    for cc in chain:
         old_refs = cc._refs  # noqa: SLF001
         kept: list[SlotRef] = [r for r in old_refs if id(r.slot) not in owned_ids]
         if len(kept) != len(old_refs):
@@ -321,12 +322,6 @@ def delete_key(c: Container, key: str) -> None:
             for r in kept:
                 if r.local_key is not None:
                     cc._index.setdefault(r.local_key, []).append(r)  # noqa: SLF001
-            # Clear an owned `_header_ref` BEFORE recomputing `_body_tail`,
-            # so the recompute does not fall back to a header slot that is
-            # itself about to be unlinked. (Live containers never have an
-            # owned header — only discarded subtree containers do — but
-            # leaving the orphan internally consistent is friendlier to
-            # held views and Phase 3e detach work.)
             if (
                 cc._header_ref is not None  # noqa: SLF001
                 and id(cc._header_ref.slot) in owned_ids  # noqa: SLF001
@@ -347,7 +342,10 @@ def delete_key(c: Container, key: str) -> None:
                     "to unlink — owned-set is incomplete"
                 )
 
-    # 5. Unlink owned slots; clean up AoTEntry.entry_slots for live entries.
+    # 5. Unlink owned slots from the doc; clean up AoTEntry.entry_slots
+    # for live (still-attached) entries. Owned slots are then
+    # transplanted to an orphan Document if there are subtree
+    # containers / AoTs the user may still hold references to.
     surviving_aot_entries = _surviving_aot_entries(doc)
     for slot in owned_slots:
         owner = getattr(slot, "owner_aot_entry", None)
@@ -355,6 +353,18 @@ def delete_key(c: Container, key: str) -> None:
             with contextlib.suppress(ValueError):
                 owner.entry_slots.remove(slot)
         unlink_slot(slot, doc)
+
+    if subtree_containers or subtree_aots:
+        from tomlrt._container import Document as _Document  # noqa: PLC0415
+
+        orphan = _Document()
+        orphan._newline = doc._newline  # noqa: SLF001
+        for slot in owned_slots:
+            _splice_at_end(slot, orphan)
+        for sc in subtree_containers:
+            sc._layout_root = orphan  # noqa: SLF001
+        for ao in subtree_aots:
+            ao._layout_root = orphan  # noqa: SLF001
 
     # 6. Drop the dict entry.
     dict.__delitem__(c, key)
@@ -366,9 +376,10 @@ def delete_key(c: Container, key: str) -> None:
 def _collect_subtree(
     val: object,
     containers_out: list[Container],
+    aots_out: list[Any],
     add_ref: Callable[[SlotRef], None],
 ) -> None:
-    """Walk ``val``'s container subtree, collecting non-inline containers and refs."""
+    """Walk ``val``'s container subtree, collecting non-inline containers, AoTs and refs."""
     from tomlrt._array import AoT  # noqa: PLC0415
     from tomlrt._container import Container  # noqa: PLC0415
 
@@ -379,10 +390,11 @@ def _collect_subtree(
         for r in val._refs:  # noqa: SLF001
             add_ref(r)
         for child in val.values():
-            _collect_subtree(child, containers_out, add_ref)
+            _collect_subtree(child, containers_out, aots_out, add_ref)
     elif isinstance(val, AoT):
+        aots_out.append(val)
         for entry in val:
-            _collect_subtree(entry, containers_out, add_ref)
+            _collect_subtree(entry, containers_out, aots_out, add_ref)
 
 
 def _surviving_aot_entries(doc: Document) -> set[int]:
@@ -1178,6 +1190,7 @@ def add_aot_entry(aot: object, body: object, *, rehome: object | None = None) ->
     entry.entry_slots.append(header)
 
     # Build entry-root container (or rehome an existing one).
+    body_items: list[tuple[Any, Any]]
     if rehome is not None:
         assert isinstance(rehome, Table)
         assert rehome._layout_root is None  # noqa: SLF001
