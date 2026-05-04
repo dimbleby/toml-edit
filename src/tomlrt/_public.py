@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
-from typing import IO
+from typing import IO, TYPE_CHECKING
 
-from tomlrt._container import Document
+from tomlrt._build import build_from_parse
 from tomlrt._parser import _Parser
+
+if TYPE_CHECKING:
+    from tomlrt._container import Document
 
 
 def loads(text: str) -> Document:
     """Parse a TOML document string into a [`Document`][tomlrt.Document]."""
     parser = _Parser(text)
     result = parser.parse()
-    return Document._from_parse(result.slots, result.trailing, result.newline)  # noqa: SLF001
+    return build_from_parse(result)
 
 
 def load(fp: IO[bytes]) -> Document:

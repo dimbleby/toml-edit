@@ -1,14 +1,11 @@
-"""Container layer (Phase 1 stub).
+"""Logical container layer.
 
-Phase 1 only needs `Document` as a thin owner of the physical
-slot stream (head/tail of the doubly-linked list, plus trailing
-trivia and detected newline). The full `Container` machinery
-(``_index``, ``_refs``, ``_header_ref``, anchors, etc.) is built
-out in later phases.
-
-`Table`, `Array`, `AoT`, `TomlInput` are placeholder symbols so
-the public ``__init__.py`` re-exports work; their full APIs are
-filled in by Phase 2+.
+`Container(dict)` is the dict-typed base for both `Document` (the
+root) and `Table` (sections + inline tables). Phase 2 only needs the
+read surface: dict-storage populated in doc-stream-first-occurrence
+order, typed accessors, conversion helpers, and the `render()` entry
+point. The mutation-time scaffolding (`_index`, `_refs`,
+`_header_ref`, `_body_tail`, `_subtree_tail`) is deferred to Phase 3.
 """
 
 from __future__ import annotations
@@ -21,63 +18,125 @@ from tomlrt._trivia import Trivia
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from tomlrt._slots import Slot
+    from tomlrt._slots import AoTEntry, Slot
 
 
-class Document:
+class Container(dict[str, Any]):
+    """Dict-typed base for `Document` and `Table` views.
+
+    Phase 2 surface: dict reads + typed accessors + `to_dict`. The
+    insertion-anchor / index / ref machinery used by mutation lives
+    behind further attributes added in Phase 3.
+    """
+
+    __slots__ = (
+        "_inline",
+        "_layout_root",
+        "_owner_aot_entry",
+        "_parent",
+        "_path",
+    )
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._layout_root: Document | None = None
+        self._path: tuple[str, ...] = ()
+        self._inline: bool = False
+        self._parent: Container | None = None
+        self._owner_aot_entry: AoTEntry | None = None
+
+    # ------------------------------------------------------------------
+    # Typed accessors
+    # ------------------------------------------------------------------
+
+    def table(self, key: str) -> Table:
+        """Return ``self[key]`` typed as a `Table`.
+
+        Raises ``KeyError`` if the key is missing and ``TypeError`` if
+        the value is not a table.
+        """
+        v = self[key]
+        if not isinstance(v, Table):
+            msg = f"value at {key!r} is {type(v).__name__}, not Table"
+            raise TypeError(msg)
+        return v
+
+    def array(self, key: str) -> Array:
+        """Return ``self[key]`` typed as an inline `Array`."""
+        v = self[key]
+        if not isinstance(v, Array):
+            msg = f"value at {key!r} is {type(v).__name__}, not Array"
+            raise TypeError(msg)
+        return v
+
+    def aot(self, key: str) -> AoT:
+        """Return ``self[key]`` typed as an array-of-tables (`AoT`)."""
+        v = self[key]
+        if not isinstance(v, AoT):
+            msg = f"value at {key!r} is {type(v).__name__}, not AoT"
+            raise TypeError(msg)
+        return v
+
+    # ------------------------------------------------------------------
+    # Conversion
+    # ------------------------------------------------------------------
+
+    def to_dict(self) -> dict[str, Any]:
+        """Materialise a plain-Python ``dict`` (recursive)."""
+        out: dict[str, Any] = {}
+        for k, v in self.items():
+            out[k] = _to_python(v)
+        return out
+
+
+class Table(Container):
+    """A section table, implicit table, or inline table view."""
+
+    __slots__ = ()
+
+
+class Document(Container):
     """A parsed TOML document.
 
-    Phase 1 surface: ``render()`` -> str produces the original
-    source byte-for-byte. The full dict-shaped API is Phase 2+.
+    Owns the physical slot stream (head/tail of the doubly-linked list,
+    plus trailing trivia and detected newline). The dict-typed body is
+    inherited from `Container`.
     """
 
     __slots__ = ("_head", "_newline", "_tail", "_trailing")
 
     def __init__(self, data: Mapping[str, Any] | None = None) -> None:
+        super().__init__()
         if data is not None:
-            msg = "Document(data=...) is not supported in Phase 1"
+            msg = "Document(data=...) is not supported in Phase 2"
             raise NotImplementedError(msg)
         self._head: Slot | None = None
         self._tail: Slot | None = None
         self._trailing: Trivia = Trivia()
         self._newline: str = "\n"
-
-    @classmethod
-    def _from_parse(cls, slots: list[Slot], trailing: Trivia, newline: str) -> Document:
-        doc = cls.__new__(cls)
-        doc._head = slots[0] if slots else None  # noqa: SLF001
-        doc._tail = slots[-1] if slots else None  # noqa: SLF001
-        doc._trailing = trailing  # noqa: SLF001
-        doc._newline = newline  # noqa: SLF001
-        return doc
+        self._layout_root = self
 
     def render(self) -> str:
         return render(self)
 
 
-# Phase 1 placeholder — `Container` will be the dict-like base of
-# `Document`/`Table` from Phase 2 onwards. Aliased so other modules
-# (e.g. `_slots.SlotRef`) can import it now.
-Container = Document
+def _to_python(v: Any) -> Any:
+    """Recursively materialise a tomlrt view into plain Python values."""
+    if isinstance(v, Container):
+        return v.to_dict()
+    if isinstance(v, AoT):
+        return [t.to_dict() for t in v]
+    if isinstance(v, Array):
+        return [_to_python(x) for x in v]
+    return v
 
 
-# Phase 1 placeholder symbols. Tests that need these will start
-# passing in later phases.
-
-
-class Table:  # pragma: no cover - Phase 2+
-    pass
-
-
-class Array:  # pragma: no cover - Phase 2+
-    pass
-
-
-class AoT:  # pragma: no cover - Phase 2+
-    pass
-
+# `_array` depends on `Container` for `Table`, so the import is at the
+# bottom to avoid a circular import. The `Array` / `AoT` symbols are
+# re-exported for convenience.
+from tomlrt._array import AoT, Array  # noqa: E402
 
 TomlInput = "Mapping[str, Any] | Document"
 
 
-__all__ = ["AoT", "Array", "Document", "Table", "TomlInput"]
+__all__ = ["AoT", "Array", "Container", "Document", "Table", "TomlInput"]
