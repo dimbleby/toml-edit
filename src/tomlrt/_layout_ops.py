@@ -379,7 +379,7 @@ def _collect_subtree(
     aots_out: list[Any],
     add_ref: Callable[[SlotRef], None],
 ) -> None:
-    """Walk ``val``'s container subtree, collecting non-inline containers, AoTs and refs."""
+    """Walk ``val``'s container subtree, collecting containers, AoTs and refs."""
     from tomlrt._array import AoT  # noqa: PLC0415
     from tomlrt._container import Container  # noqa: PLC0415
 
