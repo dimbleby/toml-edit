@@ -371,14 +371,27 @@ def _check_cross_stream(doc: Document) -> None:
     # Active AoT entries by path: updated *after* an aot-entry header
     # is processed (its own bindings still see the pre-state).
     active: dict[tuple[str, ...], AoTEntry] = {}
+    # Active rendered table/AoT-entry header path: the scope a KV
+    # slot will appear in when rendered. Updated whenever we cross a
+    # `StructuralHeaderSlot`. Used to catch slots whose stated
+    # ``host_path`` disagrees with the rendered scope they sit in
+    # (which would mean parsing the rendered output gives back a
+    # different document).
+    active_header_path: tuple[str, ...] = ()
     cur: Slot | None = doc._head  # noqa: SLF001
     while cur is not None:
         emissions: list[tuple[tuple[str, ...], int | None, str | None]]
         if isinstance(cur, KVSlot):
+            if cur.host_path != active_header_path:
+                _fail(
+                    f"KVSlot {cur.key} has host_path={cur.host_path} but "
+                    f"renders under active header {active_header_path}"
+                )
             emissions = list(_expected_refs_for_kv(cur, active))
         else:
             assert isinstance(cur, StructuralHeaderSlot)
             emissions = _expected_refs_for_header(cur, active)
+            active_header_path = cur.path
         for target_path, owner_id, local_key in emissions:
             target = container_map.get((target_path, owner_id))
             if target is None:

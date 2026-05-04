@@ -161,16 +161,35 @@ class Container(dict[str, Any]):
                 slot.value = _coerce_scalar(value)
                 dict.__setitem__(self, key, value)
                 return
-        msg = "non-scalar mutation arrives in Phase 3b/3c/3d"
-        raise NotImplementedError(msg)
+            msg = "non-scalar replacement arrives in Phase 3d"
+            raise NotImplementedError(msg)
+        # New direct-KV insert (Phase 3c).
+        if not _is_scalar(value):
+            msg = (
+                "Phase 3c only supports scalar inserts; inline / structural "
+                "sources arrive in Phase 3d/4"
+            )
+            raise NotImplementedError(msg)
+        from tomlrt import _layout_ops  # noqa: PLC0415
+
+        _layout_ops.append_direct_kv(self, key, _coerce_scalar(value))
+        dict.__setitem__(self, key, value)
 
     @override
     def __delitem__(self, key: str) -> None:
         if self._inline:
             self._inline_delitem(key)
             return
-        msg = "section delete arrives in Phase 3d"
-        raise NotImplementedError(msg)
+        if key not in self:
+            raise KeyError(key)
+        current = dict.__getitem__(self, key)
+        if not _is_scalar(current):
+            msg = "structural delete arrives in Phase 3d"
+            raise NotImplementedError(msg)
+        from tomlrt import _layout_ops  # noqa: PLC0415
+
+        _layout_ops.delete_direct_kv(self, key)
+        dict.__delitem__(self, key)
 
     # ------------------------------------------------------------------
     # Inline-table dispatch (Phase 3b)
