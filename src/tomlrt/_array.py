@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     else:
         from typing_extensions import Self
 
+    from tomlrt._array_comments import ArrayEolView, ArrayLeadingView
     from tomlrt._container import Container, Document, Table
     from tomlrt._values import ArrayValue
 
@@ -176,6 +177,20 @@ class Array(list[Any]):
     @multiline.setter
     def multiline(self, value: bool) -> None:
         self.set_multiline(multiline=value)
+
+    @property
+    def comments(self) -> ArrayEolView:
+        """EOL comment view, indexed by item position."""
+        from tomlrt._array_comments import ArrayEolView  # noqa: PLC0415
+
+        return ArrayEolView(self)
+
+    @property
+    def leading_comments(self) -> ArrayLeadingView:
+        """Leading-comment view, indexed by item position."""
+        from tomlrt._array_comments import ArrayLeadingView  # noqa: PLC0415
+
+        return ArrayLeadingView(self)
 
     def set_multiline(self, *, multiline: bool, indent: str | None = None) -> Array:
         """Switch this array between flush single-line and multi-line form.

@@ -299,7 +299,7 @@ class LeadingCommentView(MutableMapping[str, tuple[str, ...]]):
             raise KeyError(msg)
         v: object = value
         if isinstance(v, str):
-            msg = "leading comments must be a sequence of strings"
+            msg = "leading_comments must be an iterable of comment strings"
             raise TypeError(msg)
         comments = tuple(value)
         for c in comments:
@@ -451,7 +451,7 @@ def _header_leading_set(c: Container, value: tuple[str, ...]) -> None:
         raise TOMLError(msg)
     v: object = value
     if isinstance(v, str):
-        msg = "header_leading_comments must be a sequence of strings"
+        msg = "header_leading_comments must be an iterable of comment strings"
         raise TypeError(msg)
     comments = tuple(value)
     for cm in comments:
@@ -483,7 +483,7 @@ def _validate_comment_seq(value: tuple[str, ...], name: str) -> tuple[str, ...]:
 
     v: object = value
     if isinstance(v, str):
-        msg = f"{name} must be a sequence of strings"
+        msg = f"{name} must be an iterable of comment strings"
         raise TypeError(msg)
     out = tuple(value)
     for c in out:
