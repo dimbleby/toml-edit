@@ -1820,3 +1820,171 @@ def test_dotted_add_respects_blank_line_policy() -> None:
 
         a.d = 99
         """)
+
+
+def test_clear_doc_with_sections_drops_all_and_keeps_doc_empty() -> None:
+    src = td("""
+        [a]
+        x = 1
+        [b]
+        y = 2
+        [c.d]
+        z = 3
+        """)
+    doc = tomlrt.loads(src)
+    doc.clear()
+    assert dict(doc) == {}
+    assert tomlrt.dumps(doc) == ""
+    doc["new"] = 1
+    assert tomlrt.dumps(doc) == "new = 1\n"
+
+
+def test_clear_doc_with_aot_children_drops_all() -> None:
+    src = td("""
+        [[a]]
+        n = 1
+        [[a]]
+        n = 2
+        [b]
+        x = 1
+        """)
+    doc = tomlrt.loads(src)
+    doc.clear()
+    assert dict(doc) == {}
+    assert tomlrt.dumps(doc) == ""
+
+
+def test_clear_doc_orphans_held_section_view() -> None:
+    doc = tomlrt.loads(td("""
+        [a]
+        x = 1
+        [a.sub]
+        y = 2
+        """))
+    held = doc["a"]
+    doc.clear()
+    assert dict(doc) == {}
+    assert held["x"] == 1
+    assert held["sub"]["y"] == 2
+    held["x"] = 99
+    assert held["x"] == 99
+    assert "x" not in doc
+
+
+def test_clear_doc_orphans_held_aot_view() -> None:
+    doc = tomlrt.loads(td("""
+        [[a]]
+        n = 1
+        [[a]]
+        n = 2
+        """))
+    held = doc["a"]
+    doc.clear()
+    assert tomlrt.dumps(doc) == ""
+    assert [dict(e) for e in held] == [{"n": 1}, {"n": 2}]
+
+
+def test_clear_nested_section_keeps_anchor_and_drops_subsections() -> None:
+    src = td("""
+        [a]
+        x = 1
+        [a.sub]
+        y = 2
+        [b]
+        z = 3
+        """)
+    doc = tomlrt.loads(src)
+    doc["a"].clear()
+    assert dict(doc["a"]) == {}
+    assert dict(doc["b"]) == {"z": 3}
+    out = tomlrt.dumps(doc)
+    assert "[a]" in out
+    assert "[a.sub]" not in out
+    assert "[b]" in out
+
+
+def test_clear_aot_entry_does_not_touch_siblings() -> None:
+    src = td("""
+        [[items]]
+        a = 1
+        [items.sub]
+        x = 1
+        [[items]]
+        a = 2
+        [items.sub]
+        x = 2
+        """)
+    doc = tomlrt.loads(src)
+    doc["items"][0].clear()
+    assert dict(doc["items"][0]) == {}
+    assert dict(doc["items"][1]) == {"a": 2, "sub": {"x": 2}}
+
+
+def test_clear_inline_table_empties_and_round_trips() -> None:
+    src = "obj = { a = 1, b = 2, c = 3 }\n"
+    doc = tomlrt.loads(src)
+    obj = doc.table("obj")
+    obj.clear()
+    assert dict(obj) == {}
+    out = tomlrt.dumps(doc)
+    assert _reparses(out) == {"obj": {}}
+
+
+def test_clear_inline_table_orphans_held_array() -> None:
+    src = "obj = { xs = [1, 2, 3] }\n"
+    doc = tomlrt.loads(src)
+    obj = doc.table("obj")
+    held = obj["xs"]
+    assert isinstance(held, Array)
+    obj.clear()
+    assert dict(obj) == {}
+    held.append(4)
+    assert list(held) == [1, 2, 3, 4]
+
+
+def test_clear_dotted_subtable_drops_only_its_subtree() -> None:
+    src = td("""
+        [s]
+        a.b.x = 1
+        a.b.y = 2
+        a.c = 3
+        d = 4
+        """)
+    doc = tomlrt.loads(src)
+    sub = doc["s"]["a"]["b"]
+    sub.clear()
+    assert dict(sub) == {}
+    assert doc["s"]["a"]["c"] == 3
+    assert "x" not in sub
+    assert doc["s"]["d"] == 4
+    out = tomlrt.dumps(doc)
+    assert _reparses(out) == {"s": {"a": {"c": 3}, "d": 4}}
+
+
+def test_clear_empty_table_is_noop() -> None:
+    doc = tomlrt.loads("")
+    doc.clear()
+    assert tomlrt.dumps(doc) == ""
+
+
+def test_clear_doc_with_top_level_array_detaches_it() -> None:
+    src = "xs = [1, 2, 3]\n[a]\nx = 1\n"
+    doc = tomlrt.loads(src)
+    held = doc["xs"]
+    assert isinstance(held, Array)
+    doc.clear()
+    assert tomlrt.dumps(doc) == ""
+    held.append(4)
+    assert list(held) == [1, 2, 3, 4]
+
+
+def test_clear_empty_inline_and_dotted_subtable_are_noops() -> None:
+    doc = tomlrt.loads("obj = {}\n")
+    doc.table("obj").clear()
+    assert tomlrt.dumps(doc) == "obj = {}\n"
+
+    doc2 = tomlrt.loads("[s]\na.b = 1\n")
+    sub = doc2["s"]["a"]
+    del sub["b"]
+    sub.clear()
+    assert dict(sub) == {}
