@@ -234,6 +234,7 @@ class Array(list[Any]):
         )
         for it in items:
             it.leading = Trivia()
+            it.post_comma_trivia = Trivia()
         items[0].leading = Trivia([NewlineNode(text="\n"), WhitespaceNode(text=ind)])
         self._value.final_trivia = Trivia()
         _renormalise_commas(items, style, self._value)
