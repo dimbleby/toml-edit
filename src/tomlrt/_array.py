@@ -39,6 +39,7 @@ class Array(list[Any]):
         items: Any = None,
         *,
         multiline: bool = False,
+        indent: str = "    ",
     ) -> None:
         super().__init__()
         from tomlrt._values import ArrayValue  # noqa: PLC0415
@@ -51,6 +52,16 @@ class Array(list[Any]):
         # by the doc, not a free orphan".
         self._attached: bool = False
         if items is None:
+            if multiline:
+                from tomlrt._trivia import (  # noqa: PLC0415
+                    NewlineNode,
+                    Trivia,
+                    WhitespaceNode,
+                )
+
+                self._value.final_trivia = Trivia(
+                    [NewlineNode(text="\n"), WhitespaceNode(text=indent)]
+                )
             return
         from tomlrt._container import _synth_inline_array  # noqa: PLC0415
 
@@ -68,7 +79,7 @@ class Array(list[Any]):
             style = _ArrayStyle(
                 is_multiline=True,
                 inter_separator=Trivia(
-                    [NewlineNode(text="\n"), WhitespaceNode(text="    ")]
+                    [NewlineNode(text="\n"), WhitespaceNode(text=indent)]
                 ),
                 trailing_comma=True,
                 trailing_post=Trivia([NewlineNode(text="\n")]),
@@ -77,9 +88,22 @@ class Array(list[Any]):
                 it.leading = Trivia()
                 it.post_comma_trivia = Trivia()
             val.items[0].leading = Trivia(
-                [NewlineNode(text="\n"), WhitespaceNode(text="    ")]
+                [NewlineNode(text="\n"), WhitespaceNode(text=indent)]
             )
             _renormalise_commas(val.items, style, val)
+        elif multiline and not val.items:
+            # Empty multiline factory: park the prospective leading
+            # for the first append in final_trivia, matching how an
+            # empty multiline array parses (`[\n    ]`).
+            from tomlrt._trivia import (  # noqa: PLC0415
+                NewlineNode,
+                Trivia,
+                WhitespaceNode,
+            )
+
+            val.final_trivia = Trivia(
+                [NewlineNode(text="\n"), WhitespaceNode(text=indent)]
+            )
 
     def to_list(self) -> list[Any]:
         """Materialise a plain-Python ``list`` (recursive)."""
@@ -149,13 +173,19 @@ class Array(list[Any]):
             return self._multiline
         return self._style().is_multiline
 
-    def set_multiline(self, *, multiline: bool) -> None:
+    @multiline.setter
+    def multiline(self, value: bool) -> None:
+        self.set_multiline(multiline=value)
+
+    def set_multiline(self, *, multiline: bool, indent: str | None = None) -> Array:
         """Switch this array between flush single-line and multi-line form.
 
         Raises ``TOMLError`` when collapsing a multi-line array that
         carries comments (per-item leading or post_comma trivia
         containing a comment), since those would have nowhere to live
         on a single line.
+
+        Returns ``self`` for chaining.
         """
         from tomlrt._errors import TOMLError  # noqa: PLC0415
         from tomlrt._trivia import (  # noqa: PLC0415
@@ -165,9 +195,10 @@ class Array(list[Any]):
             WhitespaceNode,
         )
 
+        ind = "    " if indent is None else indent
         if self._value is None:
             self._multiline = multiline
-            return
+            return self
         items = self._value.items
         if not multiline:
             for it in items:
@@ -187,27 +218,26 @@ class Array(list[Any]):
                 trailing_post=Trivia(),
             )
             _renormalise_commas(items, flush_style, self._value)
-            return
+            return self
         # multiline=True
         self._multiline = True
         if not items:
             self._value.final_trivia = Trivia(
-                [NewlineNode(text="\n"), WhitespaceNode(text="    ")]
+                [NewlineNode(text="\n"), WhitespaceNode(text=ind)]
             )
-            return
+            return self
         style = _ArrayStyle(
             is_multiline=True,
-            inter_separator=Trivia(
-                [NewlineNode(text="\n"), WhitespaceNode(text="    ")]
-            ),
+            inter_separator=Trivia([NewlineNode(text="\n"), WhitespaceNode(text=ind)]),
             trailing_comma=True,
             trailing_post=Trivia([NewlineNode(text="\n")]),
         )
         for it in items:
             it.leading = Trivia()
-        items[0].leading = Trivia([NewlineNode(text="\n"), WhitespaceNode(text="    ")])
+        items[0].leading = Trivia([NewlineNode(text="\n"), WhitespaceNode(text=ind)])
         self._value.final_trivia = Trivia()
         _renormalise_commas(items, style, self._value)
+        return self
 
     def _synth_cst(self, value: Any) -> Any:
         from tomlrt._container import _synth_value  # noqa: PLC0415
