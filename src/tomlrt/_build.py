@@ -92,6 +92,9 @@ def _open_aot_entry(
     aot = parent.get(name)
     if aot is None:
         aot = AoT()
+        aot._layout_root = doc  # noqa: SLF001
+        aot._path = path  # noqa: SLF001
+        aot._parent = parent  # noqa: SLF001
         parent[name] = aot
     assert isinstance(aot, AoT), (
         f"AoT header [[{'.'.join(path)}]] collides with non-AoT at "
@@ -153,7 +156,16 @@ def _apply_kv(doc: Document, slot: KVSlot) -> None:
     target = _walk_dotted(host, decoded[:-1], slot.owner_aot_entry)
     name = decoded[-1]
     assert slot.value is not None
-    target[name] = _value_to_python(slot.value, parent=target, name=name)
+    assert name not in target, (
+        f"duplicate key {name!r} reached builder under {target._path}; validator drift"  # noqa: SLF001
+    )
+    target[name] = _decode_value(
+        slot.value,
+        layout_root=target._layout_root,  # noqa: SLF001
+        parent=target,
+        path=(*target._path, name),  # noqa: SLF001
+        owner=target._owner_aot_entry,  # noqa: SLF001
+    )
 
 
 def _resolve_host(doc: Document, host_path: tuple[str, ...]) -> Container:
@@ -204,32 +216,73 @@ def _walk_dotted(
 # ---------------------------------------------------------------------------
 
 
-def _value_to_python(value: Value, *, parent: Container, name: str) -> object:
+def _decode_value(
+    value: Value,
+    *,
+    layout_root: Document | None,
+    parent: Container | None,
+    path: tuple[str, ...],
+    owner: AoTEntry | None,
+) -> object:
+    """Decode any TOML value to its Python representation.
+
+    ``layout_root`` / ``parent`` / ``path`` / ``owner`` are the
+    logical-attachment metadata the resulting view should carry if it
+    is itself a `Table` (inline) or a nested `Array`. For values that
+    do not live in a container's dict storage (e.g. an element of an
+    inline array), pass ``parent=None`` and an empty ``path``.
+    """
     if isinstance(value, ArrayValue):
-        return _decode_array(value)
+        return _decode_array(value, layout_root=layout_root, owner=owner)
     if isinstance(value, InlineTableValue):
-        return _decode_inline_table(value, parent=parent, name=name)
+        return _decode_inline_table(
+            value,
+            layout_root=layout_root,
+            parent=parent,
+            path=path,
+            owner=owner,
+        )
     # All scalar value types carry the decoded Python value as `.value`.
     return value.value
 
 
-def _decode_array(value: ArrayValue) -> Array:
+def _decode_array(
+    value: ArrayValue,
+    *,
+    layout_root: Document | None,
+    owner: AoTEntry | None,
+) -> Array:
     arr = Array()
     arr._value = value  # noqa: SLF001
     for item in value.items:
-        arr.append(_value_to_python_top(item.value))
+        # Items inside an inline array have no logical container parent
+        # and no path of their own.
+        arr.append(
+            _decode_value(
+                item.value,
+                layout_root=layout_root,
+                parent=None,
+                path=(),
+                owner=owner,
+            )
+        )
     return arr
 
 
 def _decode_inline_table(
-    value: InlineTableValue, *, parent: Container, name: str
+    value: InlineTableValue,
+    *,
+    layout_root: Document | None,
+    parent: Container | None,
+    path: tuple[str, ...],
+    owner: AoTEntry | None,
 ) -> Table:
     table = Table()
-    table._layout_root = parent._layout_root  # noqa: SLF001
-    table._path = (*parent._path, name)  # noqa: SLF001
+    table._layout_root = layout_root  # noqa: SLF001
+    table._path = path  # noqa: SLF001
     table._parent = parent  # noqa: SLF001
     table._inline = True  # noqa: SLF001
-    table._owner_aot_entry = parent._owner_aot_entry  # noqa: SLF001
+    table._owner_aot_entry = owner  # noqa: SLF001
     for entry in value.entries:
         # Inline-table entries can themselves be dotted (TOML 1.1).
         decoded_key = [p.value for p in entry.key_parts]
@@ -238,35 +291,28 @@ def _decode_inline_table(
             sub = cur.get(step)
             if sub is None:
                 inner = Table()
-                inner._layout_root = table._layout_root  # noqa: SLF001
+                inner._layout_root = layout_root  # noqa: SLF001
                 inner._path = (*cur._path, step)  # noqa: SLF001
                 inner._parent = cur  # noqa: SLF001
                 inner._inline = True  # noqa: SLF001
-                inner._owner_aot_entry = cur._owner_aot_entry  # noqa: SLF001
+                inner._owner_aot_entry = owner  # noqa: SLF001
                 cur[step] = inner
                 cur = inner
             else:
                 assert isinstance(sub, Table)
                 cur = sub
         leaf = decoded_key[-1]
-        cur[leaf] = _value_to_python(entry.value, parent=cur, name=leaf)
+        assert leaf not in cur, (
+            f"duplicate inline-table key {leaf!r} reached builder; validator drift"
+        )
+        cur[leaf] = _decode_value(
+            entry.value,
+            layout_root=layout_root,
+            parent=cur,
+            path=(*cur._path, leaf),  # noqa: SLF001
+            owner=owner,
+        )
     return table
-
-
-def _value_to_python_top(value: Value) -> object:
-    """Decode a value that lives directly inside an inline array.
-
-    The parent is the array, not a table, so the inline-table case has
-    no `parent`/`name` — synthesise a detached one.
-    """
-    if isinstance(value, ArrayValue):
-        return _decode_array(value)
-    if isinstance(value, InlineTableValue):
-        # Detached inline table — `_path` is empty and `_parent` is None.
-        # That's fine for read-only Phase 2; mutation paths will care.
-        sentinel = Table()
-        return _decode_inline_table(value, parent=sentinel, name="")
-    return value.value
 
 
 def build_from_parse(result: ParseResult) -> Document:
