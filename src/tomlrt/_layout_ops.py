@@ -457,16 +457,9 @@ def _prune_empty_implicit_ancestors(c: Container) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _kv_separator_leading(c: Container, doc: Document) -> Trivia:
-    """Pick leading trivia for a new direct-KV slot in container ``c``.
-
-    Inherits indentation from the most recent existing direct-KV slot
-    in ``c``. Adds a leading blank line iff every prior gap between
-    direct-KV slots already has one (i.e. user is uniformly
-    blank-separating their KVs).
-    """
-    kvs: list[KVSlot] = []
+def _collect_direct_kvs(c: Container) -> list[KVSlot]:
     same_owner = c._owner_aot_entry  # noqa: SLF001
+    out: list[KVSlot] = []
     for ref in c._refs:  # noqa: SLF001
         s = ref.slot
         if (
@@ -475,22 +468,127 @@ def _kv_separator_leading(c: Container, doc: Document) -> Trivia:
             and len(s.key_parts) == 1
             and s.owner_aot_entry is same_owner
         ):
-            kvs.append(s)
-    if not kvs:
-        return Trivia()
-    # Indent = trailing whitespace after the last newline in last KV's
-    # leading (or all leading whitespace if no newline present).
-    last_pieces = kvs[-1].leading.pieces
-    indent_text = ""
-    last_nl_idx = -1
-    for i, p in enumerate(last_pieces):
+            out.append(s)
+    return out
+
+
+def _extract_indent(leading: Trivia) -> str:
+    """Return indent (whitespace after the last newline) of ``leading``."""
+    pieces = leading.pieces
+    last_nl = -1
+    for i, p in enumerate(pieces):
         if isinstance(p, NewlineNode):
-            last_nl_idx = i
-    for p in last_pieces[last_nl_idx + 1 :]:
+            last_nl = i
+    text = ""
+    for p in pieces[last_nl + 1 :]:
         if isinstance(p, WhitespaceNode):
-            indent_text += p.text
+            text += p.text
         else:
             break
+    return text
+
+
+def _aot_sibling_kvs(c: Container) -> list[KVSlot]:
+    """Return the previous sibling entry's direct KVs.
+
+    If ``c`` is an AoT entry root, return the direct KVs of the most
+    recent prior sibling entry that has any (else empty).
+    """
+    from tomlrt._array import AoT  # noqa: PLC0415
+
+    owner = c._owner_aot_entry  # noqa: SLF001
+    if owner is None:
+        return []
+    parent = c._parent  # noqa: SLF001
+    if parent is None:
+        return []
+    key = c._path[-1] if c._path else None  # noqa: SLF001
+    if key is None or key not in parent:
+        return []
+    aot = dict.__getitem__(parent, key)
+    if not isinstance(aot, AoT):
+        return []
+    found_self = False
+    for entry_table in reversed(list(aot)):
+        if entry_table is c:
+            found_self = True
+            continue
+        if not found_self:
+            continue
+        sibs = _collect_direct_kvs(entry_table)
+        if sibs:
+            return sibs
+    return []
+
+
+def _kv_separator_leading(c: Container, doc: Document) -> Trivia:
+    """Pick leading trivia for a new direct-KV slot in container ``c``.
+
+    Inherits indentation from the most recent existing direct-KV slot
+    in ``c``. Adds a leading blank line iff every prior gap between
+    same-owner direct-KV slots already has one (i.e. user is uniformly
+    blank-separating their KVs).
+
+    For an AoT entry with no own KVs yet, falls back to inheriting
+    indent (only) from the previous sibling entry's KVs.
+    """
+    kvs = _collect_direct_kvs(c)
+    if not kvs:
+        sibling_kvs = _aot_sibling_kvs(c)
+        if sibling_kvs:
+            indent_text = _extract_indent(sibling_kvs[-1].leading)
+            if indent_text:
+                return Trivia([WhitespaceNode(text=indent_text)])
+        return Trivia()
+    indent_text = _extract_indent(kvs[-1].leading)
+    add_blank = False
+    if len(kvs) >= 2:
+        add_blank = all(
+            any(isinstance(p, NewlineNode) for p in kv.leading.pieces) for kv in kvs[1:]
+        )
+    pieces: list[Any] = []
+    if add_blank:
+        pieces.append(NewlineNode(text=doc._newline))  # noqa: SLF001
+    if indent_text:
+        pieces.append(WhitespaceNode(text=indent_text))
+    return Trivia(pieces)
+
+
+def _collect_host_kvs(host: Container) -> list[KVSlot]:
+    """All KV slots whose ``host_path`` matches ``host._path`` (any keypath length)."""
+    same_owner = host._owner_aot_entry  # noqa: SLF001
+    out: list[KVSlot] = []
+    for ref in host._refs:  # noqa: SLF001
+        s = ref.slot
+        if (
+            isinstance(s, KVSlot)
+            and s.host_path == host._path  # noqa: SLF001
+            and s.owner_aot_entry is same_owner
+        ):
+            out.append(s)
+    # Deduplicate (a KV with dotted path generates multiple refs in
+    # the host's _refs — once per intermediate container — but we
+    # only want each slot once for indent/blank inspection).
+    seen: set[int] = set()
+    deduped: list[KVSlot] = []
+    for s in out:
+        if id(s) in seen:
+            continue
+        seen.add(id(s))
+        deduped.append(s)
+    return deduped
+
+
+def _host_kv_separator_leading(host: Container, doc: Document) -> Trivia:
+    """Pick leading trivia for a new dotted-KV slot whose host is ``host``.
+
+    Inherits indent + blank-line policy from existing KVs (any
+    keypath length) under the same host.
+    """
+    kvs = _collect_host_kvs(host)
+    if not kvs:
+        return Trivia()
+    indent_text = _extract_indent(kvs[-1].leading)
     add_blank = False
     if len(kvs) >= 2:
         add_blank = all(
@@ -598,7 +696,7 @@ def _append_dotted_kv_under_implicit(c: Container, key: str, value: Value) -> No
     parts = [_make_keypart(k) for k in keypath]
     seps = ["."] * (len(parts) - 1)
     new_slot = KVSlot(
-        leading=Trivia(),
+        leading=_host_kv_separator_leading(host, doc),
         host_path=host._path,  # noqa: SLF001
         key_parts=parts,
         key_seps=seps,
@@ -934,10 +1032,27 @@ def _splice_at_end(slot: Slot, doc: Document) -> None:
 def _build_section_leading(doc: Document) -> Trivia:
     """Trivia for a fresh section header.
 
-    Empty doc → no leading; non-empty → one blank line of separation.
+    Empty doc → no leading; non-empty → respect the user's existing
+    structural-header separator convention (compact-style with no
+    blanks → no leading; otherwise one blank line of separation).
     """
     if doc._head is None:  # noqa: SLF001
         return Trivia()
+    headers: list[StructuralHeaderSlot] = []
+    cur: Slot | None = doc._head  # noqa: SLF001
+    while cur is not None:
+        if isinstance(cur, StructuralHeaderSlot):
+            headers.append(cur)
+        cur = cur._next  # noqa: SLF001
+    # Look at separators between consecutive headers (skip the first
+    # — its leading is the file preamble, not a separator).
+    if len(headers) >= 2:
+        any_no_blank = any(
+            not any(isinstance(p, NewlineNode) for p in h.leading.pieces)
+            for h in headers[1:]
+        )
+        if any_no_blank:
+            return Trivia()
     return Trivia([NewlineNode(text=doc._newline)])  # noqa: SLF001
 
 
