@@ -33,12 +33,13 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from tomlrt._slots import AoTEntry, KVSlot, SlotRef, StructuralHeaderSlot
-from tomlrt._trivia import CommentNode, EolTrivia, NewlineNode, Trivia
+from tomlrt._trivia import CommentNode, EolTrivia, NewlineNode, Trivia, WhitespaceNode
 from tomlrt._values import KeyPart
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from tomlrt._array import AoT
     from tomlrt._container import Container, Document
     from tomlrt._slots import Slot
     from tomlrt._values import Value
@@ -88,18 +89,26 @@ def insert_before_head(new_slot: Slot, doc: Document) -> None:
     doc._head = new_slot  # noqa: SLF001
 
 
-def unlink_slot(slot: Slot, doc: Document) -> None:
-    """Remove ``slot`` from ``doc``'s linked list (does not touch caches)."""
+def unlink_slot(
+    slot: Slot, doc: Document, *, strip_new_head_leading: bool = True
+) -> None:
+    """Remove ``slot`` from ``doc``'s linked list (does not touch caches).
+
+    When ``strip_new_head_leading`` is True (default), if the unlink
+    promotes a successor to be the new doc head, leading blank-line
+    pieces on that successor are stripped — what was a separator from
+    the removed first slot must not show up as a stray blank at the
+    top of the file. Pass False for transient unlinks (e.g. AoT
+    renormalise that re-splices the same slots) where the leading
+    must be preserved.
+    """
     p = slot._prev  # noqa: SLF001
     n = slot._next  # noqa: SLF001
     if p is not None:
         p._next = n  # noqa: SLF001
     else:
         doc._head = n  # noqa: SLF001
-        # Strip leading blank-line trivia from the new doc head — what
-        # was a separator from the removed first slot must not show up
-        # as a stray blank at the top of the file.
-        if n is not None:
+        if n is not None and strip_new_head_leading:
             _strip_leading_blank_lines(n)
     if n is not None:
         n._prev = p  # noqa: SLF001
@@ -448,6 +457,53 @@ def _prune_empty_implicit_ancestors(c: Container) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _kv_separator_leading(c: Container, doc: Document) -> Trivia:
+    """Pick leading trivia for a new direct-KV slot in container ``c``.
+
+    Inherits indentation from the most recent existing direct-KV slot
+    in ``c``. Adds a leading blank line iff every prior gap between
+    direct-KV slots already has one (i.e. user is uniformly
+    blank-separating their KVs).
+    """
+    kvs: list[KVSlot] = []
+    same_owner = c._owner_aot_entry  # noqa: SLF001
+    for ref in c._refs:  # noqa: SLF001
+        s = ref.slot
+        if (
+            isinstance(s, KVSlot)
+            and s.host_path == c._path  # noqa: SLF001
+            and len(s.key_parts) == 1
+            and s.owner_aot_entry is same_owner
+        ):
+            kvs.append(s)
+    if not kvs:
+        return Trivia()
+    # Indent = trailing whitespace after the last newline in last KV's
+    # leading (or all leading whitespace if no newline present).
+    last_pieces = kvs[-1].leading.pieces
+    indent_text = ""
+    last_nl_idx = -1
+    for i, p in enumerate(last_pieces):
+        if isinstance(p, NewlineNode):
+            last_nl_idx = i
+    for p in last_pieces[last_nl_idx + 1 :]:
+        if isinstance(p, WhitespaceNode):
+            indent_text += p.text
+        else:
+            break
+    add_blank = False
+    if len(kvs) >= 2:
+        add_blank = all(
+            any(isinstance(p, NewlineNode) for p in kv.leading.pieces) for kv in kvs[1:]
+        )
+    pieces: list[Any] = []
+    if add_blank:
+        pieces.append(NewlineNode(text=doc._newline))  # noqa: SLF001
+    if indent_text:
+        pieces.append(WhitespaceNode(text=indent_text))
+    return Trivia(pieces)
+
+
 def _build_kv_slot(c: Container, key: str, value: Value, doc: Document) -> KVSlot:
     """Synthesise a new ``KVSlot`` carrying default trivia + style."""
     # Promote a header without final newline: e.g. user parsed `a = 1`
@@ -467,7 +523,7 @@ def _build_kv_slot(c: Container, key: str, value: Value, doc: Document) -> KVSlo
         else KeyPart(raw=_quote_basic(key), value=key, kind="basic")
     )
     return KVSlot(
-        leading=Trivia(),
+        leading=_kv_separator_leading(c, doc),
         host_path=c._path,  # noqa: SLF001
         key_parts=[kp],
         key_seps=[],
@@ -907,6 +963,39 @@ def attach_empty_aot(parent: Container, key: str, source_aot: object) -> object:
     return source_aot
 
 
+def _aot_separator(aot: AoT, doc: Document) -> Trivia:
+    """Pick the leading-trivia for a newly-appended AoT entry header.
+
+    Inspects the leading trivia on existing entry headers (ordinal ≥1)
+    to learn the user's separator convention:
+
+    - 0 prior separators (`len(aot) <= 1`): default to a single
+      newline (which produces one blank line).
+    - any prior separator has *no* blank: respect that — emit empty
+      leading so the new header sits on the next line with no blank.
+    - all prior separators have a blank: emit a single newline.
+    """
+    nl = doc._newline  # noqa: SLF001
+    headers: list[Any] = []
+    for entry_table in aot:
+        e = entry_table._owner_aot_entry  # noqa: SLF001
+        if e is not None and e.entry_slots:
+            headers.append(e.entry_slots[0])
+    # headers[0] is the file-leading entry, not a separator.
+    separators = headers[1:]
+    if not separators:
+        return Trivia([NewlineNode(text=nl)])
+    any_no_blank = False
+    for h in separators:
+        nl_count = sum(1 for p in h.leading.pieces if isinstance(p, NewlineNode))
+        if nl_count == 0:
+            any_no_blank = True
+            break
+    if any_no_blank:
+        return Trivia()
+    return Trivia([NewlineNode(text=nl)])
+
+
 def add_aot_entry(aot: object, body: object) -> object:
     """Append a ``[[path]]`` entry to ``aot`` and return its `Table` view."""
     from tomlrt._array import AoT  # noqa: PLC0415
@@ -928,11 +1017,7 @@ def add_aot_entry(aot: object, body: object) -> object:
 
     ordinal = len(aot)
     entry = AoTEntry(path=path, ordinal=ordinal)
-    leading = (
-        _build_section_leading(doc)
-        if ordinal == 0
-        else Trivia([NewlineNode(text=doc._newline)])  # noqa: SLF001
-    )
+    leading = _build_section_leading(doc) if ordinal == 0 else _aot_separator(aot, doc)
     header = _new_section_header(
         path,
         leading=leading,
@@ -1365,7 +1450,7 @@ def renormalise_aot_order(aot: object, new_logical_order: list[Any]) -> None:
     # pointers — since the logical mapping doesn't change.
     for slots in per_entry_slots:
         for s in slots:
-            unlink_slot(s, doc)
+            unlink_slot(s, doc, strip_new_head_leading=False)
 
     # Build a per-entry-Table -> entry_slots map (the user-facing
     # `Table`s in new_logical_order may be re-arrangements of the
@@ -1385,6 +1470,13 @@ def renormalise_aot_order(aot: object, new_logical_order: list[Any]) -> None:
             else:
                 insert_after(insert_after_slot, slot, doc)
             insert_after_slot = slot
+
+    # If the renormalisation promoted a different slot to doc head,
+    # strip its leading blanks (matching the unlink_slot policy for
+    # real deletes). Safe no-op if the head's leading already lacks
+    # blanks.
+    if anchor_prev is None and doc._head is not None:  # noqa: SLF001
+        _strip_leading_blank_lines(doc._head)  # noqa: SLF001
 
     # Reflect the new order in the AoT's own list view.
     list.clear(aot)
