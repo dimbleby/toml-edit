@@ -38,7 +38,7 @@ class Array(list[Any]):
         """Return ``self[index]`` typed as a nested `Array`."""
         v = self[index]
         if not isinstance(v, Array):
-            msg = f"item at {index} is {type(v).__name__}, not Array"
+            msg = f"item at {index} is {type(v).__name__}, not an Array"
             raise TypeError(msg)
         return v
 
@@ -48,9 +48,21 @@ class Array(list[Any]):
 
         v = self[index]
         if not isinstance(v, Table):
-            msg = f"item at {index} is {type(v).__name__}, not Table"
+            msg = f"item at {index} is {type(v).__name__}, not a Table"
             raise TypeError(msg)
         return v
+
+    def get_array(self, index: int, default: Any = None) -> Any:
+        """Like `array(index)` but returns ``default`` for out-of-range."""
+        if index < -len(self) or index >= len(self):
+            return default
+        return self.array(index)
+
+    def get_table(self, index: int, default: Any = None) -> Any:
+        """Like `table(index)` but returns ``default`` for out-of-range."""
+        if index < -len(self) or index >= len(self):
+            return default
+        return self.table(index)
 
 
 class AoT(list["Table"]):

@@ -35,7 +35,7 @@ from tomlrt._values import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
     from typing_extensions import Self
 
@@ -100,33 +100,89 @@ class Container(dict[str, Any]):
     # Typed accessors
     # ------------------------------------------------------------------
 
-    def table(self, key: str) -> Table:
-        """Return ``self[key]`` typed as a `Table`.
+    def table(self, key: str | Sequence[str]) -> Table:
+        """Return the value at ``key`` typed as a `Table`.
 
-        Raises ``KeyError`` if the key is missing and ``TypeError`` if
-        the value is not a table.
+        ``key`` may be a single name, a dotted-string path, or a
+        sequence of names.
         """
-        v = self[key]
+        v = self.entry(key)
         if not isinstance(v, Table):
-            msg = f"value at {key!r} is {type(v).__name__}, not Table"
+            msg = f"value at {key!r} is {type(v).__name__}, not a Table"
             raise TypeError(msg)
         return v
 
-    def array(self, key: str) -> Array:
-        """Return ``self[key]`` typed as an inline `Array`."""
-        v = self[key]
+    def array(self, key: str | Sequence[str]) -> Array:
+        """Return the value at ``key`` typed as an `Array`."""
+        v = self.entry(key)
         if not isinstance(v, Array):
-            msg = f"value at {key!r} is {type(v).__name__}, not Array"
+            msg = f"value at {key!r} is {type(v).__name__}, not an Array"
             raise TypeError(msg)
         return v
 
-    def aot(self, key: str) -> AoT:
-        """Return ``self[key]`` typed as an array-of-tables (`AoT`)."""
-        v = self[key]
+    def aot(self, key: str | Sequence[str]) -> AoT:
+        """Return the value at ``key`` typed as an array-of-tables (`AoT`)."""
+        v = self.entry(key)
         if not isinstance(v, AoT):
-            msg = f"value at {key!r} is {type(v).__name__}, not AoT"
+            msg = f"value at {key!r} is {type(v).__name__}, not an AoT"
             raise TypeError(msg)
         return v
+
+    def get_table(self, key: str | Sequence[str], default: Any = None) -> Any:
+        """Like `table(key)` but returns ``default`` if the key is missing."""
+        try:
+            v = self.entry(key)
+        except KeyError:
+            return default
+        if not isinstance(v, Table):
+            msg = f"value at {key!r} is {type(v).__name__}, not a Table"
+            raise TypeError(msg)
+        return v
+
+    def get_array(self, key: str | Sequence[str], default: Any = None) -> Any:
+        """Like `array(key)` but returns ``default`` if the key is missing."""
+        try:
+            v = self.entry(key)
+        except KeyError:
+            return default
+        if not isinstance(v, Array):
+            msg = f"value at {key!r} is {type(v).__name__}, not an Array"
+            raise TypeError(msg)
+        return v
+
+    def get_aot(self, key: str | Sequence[str], default: Any = None) -> Any:
+        """Like `aot(key)` but returns ``default`` if the key is missing."""
+        try:
+            v = self.entry(key)
+        except KeyError:
+            return default
+        if not isinstance(v, AoT):
+            msg = f"value at {key!r} is {type(v).__name__}, not an AoT"
+            raise TypeError(msg)
+        return v
+
+    def entry(self, path: str | Sequence[str]) -> Any:
+        """Resolve a (possibly dotted) path; raises ``KeyError`` if missing.
+
+        Raises ``TypeError`` if descent passes through a non-table.
+        """
+        parts = _split_path(path)
+        cur: Any = self
+        for i, p in enumerate(parts):
+            if not isinstance(cur, Container):
+                msg = f"cannot descend into {parts[i - 1]!r}: not a table"
+                raise TypeError(msg)
+            if p not in cur:
+                raise KeyError(p)
+            cur = dict.__getitem__(cur, p)
+        return cur
+
+    def get_entry(self, path: str | Sequence[str], default: Any = None) -> Any:
+        """Like `entry(path)` but returns ``default`` if the path is missing."""
+        try:
+            return self.entry(path)
+        except KeyError:
+            return default
 
     # ------------------------------------------------------------------
     # Conversion
@@ -440,6 +496,18 @@ class Document(Container):
 
     def render(self) -> str:
         return render(self)
+
+
+def _split_path(path: str | Sequence[str]) -> list[str]:
+    """Split a path argument into a list of component names.
+
+    A ``str`` is interpreted as a dotted path (no quoting support; for
+    keys containing dots, pass a sequence). A non-string ``Sequence``
+    is taken verbatim.
+    """
+    if isinstance(path, str):
+        return path.split(".") if path else []
+    return list(path)
 
 
 def _to_python(v: Any) -> Any:
