@@ -184,7 +184,9 @@ class Array(list[Any]):
         # multiline=True
         self._multiline = True
         if not items:
-            self._value.final_trivia = Trivia([NewlineNode(text="\n")])
+            self._value.final_trivia = Trivia(
+                [NewlineNode(text="\n"), WhitespaceNode(text="    ")]
+            )
             return
         style = _ArrayStyle(
             is_multiline=True,
@@ -246,6 +248,14 @@ class Array(list[Any]):
 
                 indent = _indent_from_final_trivia(ft)
                 pieces = list(ft.pieces)
+                # If the final_trivia is just a bare newline (no
+                # interior content), use the array style's inferred
+                # indent (e.g. `    `) so an appended item lands at
+                # the conventional column.
+                if not indent and len(pieces) == 1 and isinstance(
+                    pieces[0], NewlineNode
+                ):
+                    indent = _first_indent_after_newline(style.inter_separator)
                 if indent and pieces and isinstance(pieces[-1], NewlineNode):
                     pieces.append(WhitespaceNode(text=indent))
                 adopted_leading = Trivia(pieces)
@@ -599,14 +609,50 @@ def _detect_style(value: ArrayValue | None, *, multiline_flag: bool) -> _ArraySt
             inter_sep = Trivia([NewlineNode(text=nl_text), WhitespaceNode(text="    ")])
         else:
             inter_sep = Trivia([WhitespaceNode(text=" ")])
+    elif is_multiline and len(items) == 1:
+        # Single-item multiline arrays: post_comma_trivia of the
+        # only item may carry a trailing comment block but lack a
+        # trailing indent (the next byte is `]`). Stitch on the
+        # indent from items[0].leading after the LAST newline so an
+        # appended item lands at the right column without disturbing
+        # any interior comment.
+        if not _has_ws_after_last_newline(inter_sep):
+            indent = _first_indent_after_newline(items[0].leading)
+            if indent:
+                pieces_list = list(inter_sep.pieces)
+                last_nl = -1
+                for j, p in enumerate(pieces_list):
+                    if isinstance(p, NewlineNode):
+                        last_nl = j
+                if last_nl >= 0:
+                    pieces_list.insert(last_nl + 1, WhitespaceNode(text=indent))
+                    inter_sep = Trivia(pieces_list)
     # Trailing-comma policy: the last item's has_comma if any.
     if items:
         trailing_comma = items[-1].has_comma
-        trailing_post = (
-            _clone_trivia(items[-1].post_comma_trivia)
-            if items[-1].has_comma
-            else Trivia()
-        )
+        if items[-1].has_comma:
+            tp = items[-1].post_comma_trivia
+            if is_multiline:
+                # In a multiline layout, post_comma_trivia of the last
+                # item may carry a trailing comment block (e.g. a
+                # `# tail` line that "belonged" to the previous tail
+                # position). The structural trailing_post is just the
+                # newline (and any bracket-pad indent) immediately
+                # before `]`. Take everything from the LAST newline
+                # forward.
+                pieces_list = list(tp.pieces)
+                last_nl = -1
+                for j, p in enumerate(pieces_list):
+                    if isinstance(p, NewlineNode):
+                        last_nl = j
+                if last_nl >= 0:
+                    trailing_post = Trivia(list(pieces_list[last_nl:]))
+                else:
+                    trailing_post = _clone_trivia(tp)
+            else:
+                trailing_post = _clone_trivia(tp)
+        else:
+            trailing_post = Trivia()
     else:
         trailing_comma = is_multiline
         # Sample newline style from the empty array's final_trivia
@@ -638,6 +684,49 @@ def _clone_trivia(trivia: Any) -> Any:
     from tomlrt._trivia import Trivia  # noqa: PLC0415
 
     return Trivia(list(trivia.pieces))
+
+
+def _has_ws_after_last_newline(trivia: Any) -> bool:
+    from tomlrt._trivia import NewlineNode, WhitespaceNode  # noqa: PLC0415
+
+    pieces = trivia.pieces
+    last_nl = -1
+    for i, p in enumerate(pieces):
+        if isinstance(p, NewlineNode):
+            last_nl = i
+    if last_nl < 0:
+        return False
+    return last_nl + 1 < len(pieces) and isinstance(
+        pieces[last_nl + 1], WhitespaceNode
+    )
+
+
+def _has_ws_after_newline(trivia: Any) -> bool:
+    from tomlrt._trivia import NewlineNode, WhitespaceNode  # noqa: PLC0415
+
+    pieces = trivia.pieces
+    for i, p in enumerate(pieces):
+        if (
+            isinstance(p, NewlineNode)
+            and i + 1 < len(pieces)
+            and isinstance(pieces[i + 1], WhitespaceNode)
+        ):
+            return True
+    return False
+
+
+def _first_indent_after_newline(trivia: Any) -> str:
+    from tomlrt._trivia import NewlineNode, WhitespaceNode  # noqa: PLC0415
+
+    pieces = trivia.pieces
+    for i, p in enumerate(pieces):
+        if (
+            isinstance(p, NewlineNode)
+            and i + 1 < len(pieces)
+            and isinstance(pieces[i + 1], WhitespaceNode)
+        ):
+            return str(pieces[i + 1].text)
+    return ""
 
 
 def _indent_from_final_trivia(ft: Any) -> str:
