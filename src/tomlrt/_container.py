@@ -576,7 +576,11 @@ class Table(Container):
         t._inline = True
         if body is not None:
             for k, v in body.items():
-                dict.__setitem__(t, k, v)
+                _k: Any = k
+                if not isinstance(_k, str):
+                    msg = f"inline-table key must be str, got {type(_k).__name__}"
+                    raise TypeError(msg)
+                dict.__setitem__(t, _k, v)
         return t
 
 
@@ -886,6 +890,20 @@ def _synth_value(
     if isinstance(v, Container) and not v._inline:  # noqa: SLF001
         msg = "live-attach of section Container is Phase 4"
         raise NotImplementedError(msg)
+    # Unattached inline Container (Table.inline()) — live attach: rehome
+    # the existing object instead of creating a fresh Table view, so the
+    # user's reference stays the document's view.
+    if (
+        isinstance(v, Container)
+        and v._inline  # noqa: SLF001
+        and v._layout_root is None  # noqa: SLF001
+    ):
+        return _live_attach_inline_table(
+            v, layout_root=layout_root, parent=parent, path=path, owner=owner
+        )
+    # Unattached Array — live attach.
+    if isinstance(v, Array) and v._value is not None and v._layout_root() is None:  # noqa: SLF001
+        return _live_attach_array(v, layout_root=layout_root, owner=owner)
     # Mappings (incl. inline Container) → inline table.
     if isinstance(v, Mapping) or (isinstance(v, Container) and v._inline):  # noqa: SLF001
         return _synth_inline_table(
@@ -896,6 +914,81 @@ def _synth_value(
         return _synth_inline_array(v, layout_root=layout_root, owner=owner)
     msg = f"Cannot convert {type(v).__name__} to a TOML value"
     raise TypeError(msg)
+
+
+def _live_attach_inline_table(
+    t: Container,
+    *,
+    layout_root: Document | None,
+    parent: Container | None,
+    path: tuple[str, ...],
+    owner: AoTEntry | None,
+) -> tuple[InlineTableValue, Container]:
+    """Rehome an unattached inline `Table` into ``layout_root``.
+
+    Builds an ``InlineTableValue`` from ``t``'s current dict contents,
+    points ``t._value`` at it, and records the position. Returns
+    ``(value, t)`` so the caller stores ``t`` itself (preserving
+    user-visible identity) in the parent dict.
+    """
+    val = InlineTableValue()
+    t._layout_root = layout_root  # noqa: SLF001
+    t._path = path  # noqa: SLF001
+    t._parent = parent  # noqa: SLF001
+    t._inline = True  # noqa: SLF001
+    t._owner_aot_entry = owner  # noqa: SLF001
+    t._value = val  # noqa: SLF001
+
+    items = list(t.items())
+    for i, (k, sub) in enumerate(items):
+        sub_cst, sub_dec = _synth_value(
+            sub,
+            layout_root=layout_root,
+            parent=t,
+            path=(*path, k),
+            owner=owner,
+        )
+        is_last = i == len(items) - 1
+        entry = InlineTableEntry(
+            leading=Trivia([WhitespaceNode(text=" ")]),
+            key_parts=[_make_keypart(k)],
+            key_seps=[],
+            pre_eq=" ",
+            post_eq=" ",
+            value=sub_cst,
+            trailing=Trivia(),
+            has_comma=not is_last,
+            post_comma_trivia=Trivia(),
+        )
+        val.entries.append(entry)
+        dict.__setitem__(t, k, sub_dec)
+    if items:
+        val.final_trivia = Trivia([WhitespaceNode(text=" ")])
+    return val, t
+
+
+def _live_attach_array(
+    a: Array,
+    *,
+    layout_root: Document | None,
+    owner: AoTEntry | None,
+) -> tuple[ArrayValue, Array]:
+    """Rehome an unattached `Array` into ``layout_root``.
+
+    If the Array already has a ``_value`` (built by the ``Array(items)``
+    constructor), keep it as-is and just rehome. Otherwise synthesise
+    fresh items from the current contents.
+    """
+    if a._value is not None:  # noqa: SLF001
+        # Already has a backing CST (e.g. built via Array(items=...)).
+        return a._value, a  # noqa: SLF001
+    # Cold path: build from current decoded contents.
+    val, _arr = _synth_inline_array(list(a), layout_root=layout_root, owner=owner)
+    a._value = val  # noqa: SLF001
+    list.clear(a)
+    for v in _arr:
+        list.append(a, v)
+    return val, a
 
 
 def _synth_inline_table(

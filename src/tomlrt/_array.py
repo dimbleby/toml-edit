@@ -41,37 +41,39 @@ class Array(list[Any]):
         multiline: bool = False,
     ) -> None:
         super().__init__()
-        self._value: ArrayValue | None = None
+        from tomlrt._values import ArrayValue  # noqa: PLC0415
+
+        self._value: ArrayValue | None = ArrayValue()
         self._multiline: bool = multiline
-        if items is not None:
-            from tomlrt._container import _synth_inline_array  # noqa: PLC0415
+        if items is None:
+            return
+        from tomlrt._container import _synth_inline_array  # noqa: PLC0415
 
-            val, arr = _synth_inline_array(list(items), layout_root=None, owner=None)
-            self._value = val
-            for v in arr:
-                list.append(self, v)
-            if multiline:
-                from tomlrt._trivia import (  # noqa: PLC0415
-                    NewlineNode,
-                    Trivia,
-                    WhitespaceNode,
-                )
+        val, arr = _synth_inline_array(list(items), layout_root=None, owner=None)
+        self._value = val
+        for v in arr:
+            list.append(self, v)
+        if multiline and val.items:
+            from tomlrt._trivia import (  # noqa: PLC0415
+                NewlineNode,
+                Trivia,
+                WhitespaceNode,
+            )
 
-                # Restyle as multiline: each item on its own line, indent
-                # of 4 spaces, trailing comma + final newline before ].
-                style = _ArrayStyle(
-                    is_multiline=True,
-                    inter_separator=Trivia(
-                        [NewlineNode(text="\n"), WhitespaceNode(text="    ")]
-                    ),
-                    trailing_comma=True,
-                    trailing_post=Trivia([NewlineNode(text="\n")]),
-                )
-                if val.items:
-                    val.items[0].leading = Trivia(
-                        [NewlineNode(text="\n"), WhitespaceNode(text="    ")]
-                    )
-                    _renormalise_commas(val.items, style)
+            style = _ArrayStyle(
+                is_multiline=True,
+                inter_separator=Trivia(
+                    [NewlineNode(text="\n"), WhitespaceNode(text="    ")]
+                ),
+                trailing_comma=True,
+                trailing_post=Trivia([NewlineNode(text="\n")]),
+            )
+            for it in val.items:
+                it.leading = Trivia()
+            val.items[0].leading = Trivia(
+                [NewlineNode(text="\n"), WhitespaceNode(text="    ")]
+            )
+            _renormalise_commas(val.items, style)
 
     def to_list(self) -> list[Any]:
         """Materialise a plain-Python ``list`` (recursive)."""
@@ -520,11 +522,14 @@ class AoT(list["Table"]):
 
     __slots__ = ("_layout_root", "_parent", "_path")
 
-    def __init__(self) -> None:
+    def __init__(self, entries: Any = None) -> None:
         super().__init__()
         self._layout_root: Document | None = None
         self._path: tuple[str, ...] = ()
         self._parent: Container | None = None
+        if entries is not None:
+            for e in entries:
+                list.append(self, _make_unattached_entry(e))
 
     def to_list(self) -> list[dict[str, Any]]:
         """Materialise a list of plain-Python ``dict``s (recursive)."""
