@@ -580,7 +580,23 @@ def _detect_style(value: ArrayValue | None, *, multiline_flag: bool) -> _ArraySt
             break
     if inter_sep is None:
         if is_multiline:
-            inter_sep = Trivia([NewlineNode(text="\n"), WhitespaceNode(text="    ")])
+            # Sample newline style from any newline already in the
+            # array body so CRLF stays CRLF.
+            nl_text = "\n"
+            if value is not None:
+                for p in value.final_trivia.pieces:
+                    if isinstance(p, NewlineNode):
+                        nl_text = p.text
+                        break
+                else:
+                    for it in items:
+                        for p in it.post_comma_trivia.pieces:
+                            if isinstance(p, NewlineNode):
+                                nl_text = p.text
+                                break
+                        if nl_text != "\n":
+                            break
+            inter_sep = Trivia([NewlineNode(text=nl_text), WhitespaceNode(text="    ")])
         else:
             inter_sep = Trivia([WhitespaceNode(text=" ")])
     # Trailing-comma policy: the last item's has_comma if any.
@@ -593,7 +609,17 @@ def _detect_style(value: ArrayValue | None, *, multiline_flag: bool) -> _ArraySt
         )
     else:
         trailing_comma = is_multiline
-        trailing_post = Trivia([NewlineNode(text="\n")]) if is_multiline else Trivia()
+        # Sample newline style from the empty array's final_trivia
+        # so CRLF documents stay CRLF after append. Falls back to LF.
+        nl_text = "\n"
+        if value is not None:
+            for p in value.final_trivia.pieces:
+                if isinstance(p, NewlineNode):
+                    nl_text = p.text
+                    break
+        trailing_post = (
+            Trivia([NewlineNode(text=nl_text)]) if is_multiline else Trivia()
+        )
     return _ArrayStyle(
         is_multiline=is_multiline,
         inter_separator=inter_sep,
@@ -617,21 +643,36 @@ def _clone_trivia(trivia: Any) -> Any:
 def _indent_from_final_trivia(ft: Any) -> str:
     """Extract a logical indent from `final_trivia` pieces.
 
-    Returns the first whitespace block that immediately follows a
-    newline, or "" if none. Used by `Array.append` to indent a new
-    first item to match an existing comment block.
+    Prefers the indent of the last comment line (so a varied-indent
+    or blank-line-prefixed comment block aligns the new item with
+    the *most recent* commented line). Falls back to the indent of
+    the last whitespace-after-newline block, then to "".
     """
-    from tomlrt._trivia import NewlineNode, WhitespaceNode  # noqa: PLC0415
+    from tomlrt._trivia import (  # noqa: PLC0415
+        CommentNode,
+        NewlineNode,
+        WhitespaceNode,
+    )
 
     pieces = ft.pieces
-    for i, p in enumerate(pieces):
-        if (
-            isinstance(p, NewlineNode)
-            and i + 1 < len(pieces)
-            and isinstance(pieces[i + 1], WhitespaceNode)
-        ):
-            return str(pieces[i + 1].text)
-    return ""
+    last_comment_indent: str | None = None
+    last_ws_after_nl: str | None = None
+    j = 0
+    while j < len(pieces):
+        if isinstance(pieces[j], NewlineNode) and j + 1 < len(pieces):
+            ws = ""
+            if isinstance(pieces[j + 1], WhitespaceNode):
+                ws = str(pieces[j + 1].text)
+                last_ws_after_nl = ws
+                k = j + 2
+            else:
+                k = j + 1
+            if k < len(pieces) and isinstance(pieces[k], CommentNode):
+                last_comment_indent = ws
+        j += 1
+    if last_comment_indent is not None:
+        return last_comment_indent
+    return last_ws_after_nl or ""
 
 
 def _trailing_indent_of(leading: Any) -> Any:
@@ -648,6 +689,11 @@ def _trailing_indent_of(leading: Any) -> Any:
     for j, p in enumerate(pieces):
         if isinstance(p, NewlineNode):
             last_nl = j
+    if last_nl < 0:
+        # No newline → this leading is single-line bracket padding,
+        # not an item indent. The displaced item should not inherit
+        # bracket padding as its leading.
+        return Trivia()
     indent_pieces = []
     for p in pieces[last_nl + 1 :]:
         if isinstance(p, WhitespaceNode):
