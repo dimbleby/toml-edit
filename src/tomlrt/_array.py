@@ -11,7 +11,13 @@ Phase 3 (inline) and Phase 4 (AoT and multi-line array).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+import sys
+from typing import TYPE_CHECKING, Any, Self, SupportsIndex
+
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
 
 if TYPE_CHECKING:
     from tomlrt._container import Container, Document, Table
@@ -94,9 +100,126 @@ class AoT(list["Table"]):
         from tomlrt import _layout_ops  # noqa: PLC0415
         from tomlrt._container import Table  # noqa: PLC0415
 
+        if self._layout_root is None:
+            list.append(self, _make_unattached_entry(body))
+            return self[-1]
         result = _layout_ops.add_aot_entry(self, body)
         assert isinstance(result, Table)
         return result
+
+    # ------------------------------------------------------------------
+    # Supported list-mutator surface (Phase 4-minimal).
+    # Anything not implemented here is overridden below to fail closed
+    # rather than corrupt the doc-stream via inherited `list` behaviour.
+    # ------------------------------------------------------------------
+
+    @override
+    def pop(self, index: SupportsIndex = -1) -> Table:
+        from tomlrt import _layout_ops  # noqa: PLC0415
+
+        idx = int(index)
+        if self._layout_root is None:
+            return list.pop(self, idx)
+        result = _layout_ops.remove_aot_entry(self, idx)
+        from tomlrt._container import Table  # noqa: PLC0415
+
+        assert isinstance(result, Table)
+        return result
+
+    @override
+    def __delitem__(self, key: SupportsIndex | slice) -> None:
+        from tomlrt import _layout_ops  # noqa: PLC0415
+
+        if isinstance(key, slice):
+            msg = "AoT slice deletion is deferred to a later phase"
+            raise NotImplementedError(msg)
+        if self._layout_root is None:
+            list.__delitem__(self, key)
+            return
+        _layout_ops.remove_aot_entry(self, int(key))
+
+    @override
+    def clear(self) -> None:
+        from tomlrt import _layout_ops  # noqa: PLC0415
+
+        if self._layout_root is None:
+            list.clear(self)
+            return
+        while len(self) > 0:
+            _layout_ops.remove_aot_entry(self, -1)
+
+    @override
+    def __setitem__(  # type: ignore[override]
+        self, index: int | slice, value: object
+    ) -> None:
+        from tomlrt import _layout_ops  # noqa: PLC0415
+
+        if isinstance(index, slice):
+            msg = "AoT slice assignment is deferred to a later phase"
+            raise NotImplementedError(msg)
+        if self._layout_root is None:
+            assert isinstance(value, dict)
+            list.__setitem__(self, index, _make_unattached_entry(value))
+            return
+        _layout_ops.replace_aot_entry(self, index, value)
+
+    @override
+    def append(self, value: Table | dict[str, Any]) -> None:
+        # Same semantics as `add(body)` but with no return value (list API).
+        from tomlrt import _layout_ops  # noqa: PLC0415
+
+        if self._layout_root is None:
+            assert isinstance(value, dict)
+            list.append(self, _make_unattached_entry(value))
+            return
+        _layout_ops.add_aot_entry(self, value)
+
+    @override
+    def extend(self, values: Any) -> None:
+        msg = "AoT.extend is deferred to a later phase"
+        raise NotImplementedError(msg)
+
+    @override
+    def insert(self, index: SupportsIndex, value: Table) -> None:
+        msg = "AoT.insert is deferred to a later phase"
+        raise NotImplementedError(msg)
+
+    @override
+    def remove(self, value: Table) -> None:
+        msg = "AoT.remove is deferred to a later phase"
+        raise NotImplementedError(msg)
+
+    @override
+    def reverse(self) -> None:
+        msg = "AoT.reverse is deferred to Phase 5"
+        raise NotImplementedError(msg)
+
+    @override
+    def sort(self, *args: Any, **kwargs: Any) -> None:
+        msg = "AoT.sort is deferred to Phase 5"
+        raise NotImplementedError(msg)
+
+    @override
+    def __iadd__(self, other: Any) -> Self:  # type: ignore[override]
+        msg = "AoT.__iadd__ is deferred to a later phase"
+        raise NotImplementedError(msg)
+
+    @override
+    def __imul__(self, n: SupportsIndex) -> Self:
+        msg = "AoT.__imul__ is deferred to a later phase"
+        raise NotImplementedError(msg)
+
+
+def _make_unattached_entry(body: object | None) -> Table:
+    """Build a fresh unattached `Table` view as an AoT-entry placeholder."""
+    from tomlrt._container import Table  # noqa: PLC0415
+
+    t = Table()
+    if body is not None:
+        assert isinstance(body, dict)
+        for k, v in body.items():
+            dict.__setitem__(t, k, v)
+    return t
 
 
 __all__ = ["AoT", "Array"]

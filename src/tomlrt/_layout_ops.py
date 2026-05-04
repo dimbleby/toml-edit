@@ -818,8 +818,14 @@ def add_aot_entry(aot: object, body: object) -> object:
     entry_table._refs.append(entry_ref)  # noqa: SLF001
     entry_table._header_ref = entry_ref  # noqa: SLF001
 
-    # Splice header at end-of-doc.
-    _splice_at_end(header, doc)
+    # Splice header after the last existing AoT-owned slot if any,
+    # else at end-of-doc.
+    anchor = _last_aot_slot(aot)
+    if anchor is None:
+        _splice_at_end(header, doc)
+    else:
+        _ensure_terminator(anchor, doc)
+        insert_after(anchor, header, doc)
 
     # File parent-chain refs for this entry's header.
     parent_ref = SlotRef(slot=header, container=parent, local_key=path[-1])
@@ -1041,6 +1047,139 @@ def _items_for_synth(source: object) -> list[tuple[Any, Any]]:
     raise TypeError(msg)
 
 
+def _last_aot_slot(aot: object) -> Slot | None:
+    """Return the last doc-stream slot owned by any entry of ``aot``."""
+    from tomlrt._array import AoT  # noqa: PLC0415
+
+    assert isinstance(aot, AoT)
+    last: Slot | None = None
+    for entry_table in aot:
+        e = entry_table._owner_aot_entry  # noqa: SLF001
+        if e is None:
+            continue
+        for s in e.entry_slots:
+            last = s
+    return last
+
+
+def _scrub_refs_to_owned_slots(c: Container, owned: set[Slot]) -> None:
+    """Remove every SlotRef in ``c`` that points at a slot in ``owned``.
+
+    Recurses into nested live `Container` / `Array` / `AoT` values held
+    in dict/list storage. Inline containers are skipped (they can't
+    reference doc-stream slots).
+    """
+    from tomlrt._array import AoT, Array  # noqa: PLC0415
+    from tomlrt._container import Container as ContainerType  # noqa: PLC0415
+
+    if c._inline:  # noqa: SLF001
+        return
+    new_refs = [r for r in c._refs if r.slot not in owned]  # noqa: SLF001
+    if len(new_refs) != len(c._refs):  # noqa: SLF001
+        c._refs[:] = new_refs  # noqa: SLF001
+        # Rebuild _index from remaining refs that have a local_key.
+        new_index: dict[str, list[SlotRef]] = {}
+        for r in new_refs:
+            if r.local_key is not None:
+                new_index.setdefault(r.local_key, []).append(r)
+        c._index.clear()  # noqa: SLF001
+        c._index.update(new_index)  # noqa: SLF001
+        # Clear header_ref if it pointed at an owned slot.
+        if c._header_ref is not None and c._header_ref.slot in owned:  # noqa: SLF001
+            c._header_ref = None  # noqa: SLF001
+        # Clear body_tail if it pointed at an owned slot.
+        if c._body_tail is not None and c._body_tail in owned:  # noqa: SLF001
+            c._body_tail = None  # noqa: SLF001
+    # Recurse.
+    for v in list(dict.values(c)):
+        if isinstance(v, ContainerType):
+            _scrub_refs_to_owned_slots(v, owned)
+        elif isinstance(v, AoT):
+            for sub in v:
+                _scrub_refs_to_owned_slots(sub, owned)
+        elif isinstance(v, Array):
+            # Inline arrays don't carry SlotRefs.
+            pass
+
+
+def remove_aot_entry(aot: object, index: int) -> object:
+    """Remove ``aot[index]``, unlink its slots, and return a snapshot.
+
+    The snapshot is a fresh unattached `Table` populated from the
+    removed entry's dict storage (via deep-ish copy of plain values
+    only — nested live typed containers in the entry are not yet
+    detached; that lands with Phase 3e).
+    """
+    from tomlrt._array import AoT  # noqa: PLC0415
+    from tomlrt._container import Table  # noqa: PLC0415
+
+    assert isinstance(aot, AoT)
+    n = len(aot)
+    if not -n <= index < n:
+        msg = f"AoT index {index} out of range (len {n})"
+        raise IndexError(msg)
+    if index < 0:
+        index += n
+    entry_table = aot[index]
+    layout_root = aot._layout_root  # noqa: SLF001
+    parent = aot._parent  # noqa: SLF001
+    assert layout_root is not None
+    assert parent is not None
+    doc = layout_root
+    e = entry_table._owner_aot_entry  # noqa: SLF001
+    assert e is not None
+    owned = set(e.entry_slots)
+
+    # Snapshot the entry's dict-storage values to a fresh Table.
+    snapshot = Table()
+    for k, v in entry_table.items():
+        dict.__setitem__(snapshot, k, v)
+
+    # Scrub refs from every still-live container, walking from the doc.
+    _scrub_refs_to_owned_slots(doc, owned)
+
+    # Unlink owned slots from the doc-stream linked list.
+    for slot in list(e.entry_slots):
+        unlink_slot(slot, doc)
+
+    # Pop entry from the AoT logical list.
+    list.pop(aot, index)
+
+    # If empty AoT now, also remove the parent _index[k] entry entirely
+    # (dict storage of parent retains the AoT object).
+    last_key = aot._path[-1]  # noqa: SLF001
+    if len(aot) == 0 and not parent._index.get(last_key):  # noqa: SLF001
+        parent._index.pop(last_key, None)  # noqa: SLF001
+
+    return snapshot
+
+
+def replace_aot_entry(aot: object, index: int, body: object) -> None:
+    """Replace ``aot[index]`` in place with a fresh entry from ``body``."""
+    from tomlrt._array import AoT  # noqa: PLC0415
+
+    assert isinstance(aot, AoT)
+    n = len(aot)
+    if not -n <= index < n:
+        msg = f"AoT index {index} out of range (len {n})"
+        raise IndexError(msg)
+    if index < 0:
+        index += n
+    # For now: pre-validate body (must be Mapping or None), then
+    # remove + re-insert. True in-place splicing at the old position
+    # is a follow-up; tests that pin doc-position fidelity will tell us.
+    if body is not None and not isinstance(body, dict):
+        from collections.abc import Mapping  # noqa: PLC0415
+
+        if not isinstance(body, Mapping):
+            msg = (
+                f"AoT entry replacement body must be Mapping, got {type(body).__name__}"
+            )
+            raise TypeError(msg)
+    remove_aot_entry(aot, index)
+    add_aot_entry(aot, body)
+
+
 __all__ = [
     "add_aot_entry",
     "append_direct_kv",
@@ -1050,5 +1189,7 @@ __all__ = [
     "delete_key",
     "insert_after",
     "insert_before_head",
+    "remove_aot_entry",
+    "replace_aot_entry",
     "unlink_slot",
 ]

@@ -150,7 +150,7 @@ def _open_aot_entry(
         f"{name!r} (got {type(aot).__name__}); validator drift"
     )
     table = _make_table(parent, path, owner=entry)
-    aot.append(table)
+    list.append(aot, table)
     own_ref = _record_ref(table, header, None)
     table._header_ref = own_ref  # noqa: SLF001
     table._body_tail = header  # noqa: SLF001
