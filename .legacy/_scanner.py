@@ -11,7 +11,7 @@ String scanning is, by design, *semantic* — escape sequences are
 decoded, surrogate code points are rejected, the leading newline
 after the opening triple-quote delimiter is trimmed, and the
 multi-line trailing-quote allowance is enforced. The returned
-`StringValue` carries both the raw lexeme (filled by `scan_string`)
+`StringNode` carries both the raw lexeme (filled by `scan_string`)
 and the decoded value.
 """
 
@@ -19,26 +19,24 @@ from __future__ import annotations
 
 import re
 from datetime import date, datetime, time, timedelta, timezone
-from typing import TYPE_CHECKING, Final, Literal
+from typing import TYPE_CHECKING, Final
 
 from tomlrt._errors import TOMLParseError
-from tomlrt._trivia import (
+from tomlrt._nodes import (
+    BoolNode,
     CommentNode,
+    DateTimeNode,
+    FloatNode,
+    IntegerNode,
+    KeyPart,
     NewlineNode,
+    StringNode,
     Trivia,
     WhitespaceNode,
 )
-from tomlrt._values import (
-    BoolValue,
-    DateTimeValue,
-    FloatValue,
-    IntegerValue,
-    KeyPart,
-    StringValue,
-)
 
 if TYPE_CHECKING:
-    from tomlrt._values import IntStyle, Value
+    from tomlrt._nodes import IntStyle, KeyKind, ValueNode
 
 # Comment body: anything except newline + control chars (tab is OK).
 _RE_COMMENT_BODY: Final = re.compile(r"[^\r\n\x00-\x08\x0b-\x1f\x7f]*")
@@ -327,11 +325,11 @@ class _Scanner:
     # Strings
     # ------------------------------------------------------------------
 
-    def scan_string(self, *, allow_multiline: bool = True) -> StringValue:
+    def scan_string(self, *, allow_multiline: bool = True) -> StringNode:
         """Scan a string starting at the cursor; populate `raw`.
 
         Dispatches on the opening quote character: `"` -> basic,
-        `'` -> literal. The returned `StringValue` carries both the
+        `'` -> literal. The returned `StringNode` carries both the
         verbatim source slice (for round-tripping) and the decoded
         value; its `style` reflects the chosen flavour.
 
@@ -348,10 +346,10 @@ class _Scanner:
             node = self._scan_basic_string(allow_multiline=allow_multiline)
         else:
             node = self._scan_literal_string(allow_multiline=allow_multiline)
-        node.lexeme = self.src[start : self.pos]
+        node.raw = self.src[start : self.pos]
         return node
 
-    def _scan_basic_string(self, *, allow_multiline: bool) -> StringValue:
+    def _scan_basic_string(self, *, allow_multiline: bool) -> StringNode:
         """Scan a basic string. Decodes escapes; never sets `raw`.
 
         Precondition: cursor is at `"`. Callers route through
@@ -375,7 +373,7 @@ class _Scanner:
             ch = src[self.pos]
             if ch == '"':
                 self.pos += 1
-                return StringValue(lexeme="", value="".join(out), style="basic")
+                return StringNode(raw="", value="".join(out), style="basic")
             if ch == "\\":
                 out.append(self._scan_escape())
                 continue
@@ -389,7 +387,7 @@ class _Scanner:
             msg = f"invalid control character U+{cp:04X} in string"
             raise self.error(msg)
 
-    def _scan_ml_basic_string(self) -> StringValue:
+    def _scan_ml_basic_string(self) -> StringNode:
         assert self.starts_with('"""')
         self.pos += 3
         # A newline immediately after the opening delimiter is trimmed.
@@ -416,7 +414,7 @@ class _Scanner:
                     out.append('"')
                     self.pos += 1
                     extras += 1
-                return StringValue(lexeme="", value="".join(out), style="ml-basic")
+                return StringNode(raw="", value="".join(out), style="ml-basic")
             ch = self.peek()
             if ch == '"':
                 # Single or double quote (not the closing triple) — emit and
@@ -472,7 +470,7 @@ class _Scanner:
             out.append(ch)
             self.pos += 1
 
-    def _scan_literal_string(self, *, allow_multiline: bool) -> StringValue:
+    def _scan_literal_string(self, *, allow_multiline: bool) -> StringNode:
         """Scan a literal string. No escapes; never sets `raw`.
 
         Precondition: cursor is at `'`. Callers route through
@@ -495,7 +493,7 @@ class _Scanner:
         if ch == "'":
             value = src[start : self.pos]
             self.pos += 1
-            return StringValue("", value, "literal")
+            return StringNode("", value, "literal")
         if ch == "\n" or ch == "\r":
             msg = "newline in literal string"
             raise self.error(msg)
@@ -506,7 +504,7 @@ class _Scanner:
         msg = f"invalid control character U+{cp:04X} in string"
         raise self.error(msg)
 
-    def _scan_ml_literal_string(self) -> StringValue:
+    def _scan_ml_literal_string(self) -> StringNode:
         assert self.starts_with("'''")
         self.pos += 3
         if self.peek() == "\n":
@@ -531,7 +529,7 @@ class _Scanner:
                     out.append("'")
                     self.pos += 1
                     extras += 1
-                return StringValue(lexeme="", value="".join(out), style="ml-literal")
+                return StringNode(raw="", value="".join(out), style="ml-literal")
             ch = self.peek()
             if ch == "'":
                 # Single quote, not the closing triple — emit and continue.
@@ -600,10 +598,8 @@ class _Scanner:
         ch = src[pos] if pos < self.end else ""
         if ch == '"' or ch == "'":
             s = self.scan_string(allow_multiline=False)
-            kind: Literal["bare", "basic", "literal"] = (
-                "basic" if s.style == "basic" else "literal"
-            )
-            return KeyPart(s.lexeme, s.value, kind)
+            kind: KeyKind = "basic" if s.style == "basic" else "literal"
+            return KeyPart(s.raw, s.value, kind)
         m = _RE_BARE_KEY.match(src, pos)
         if m is not None:
             end_pos = m.end()
@@ -649,7 +645,7 @@ class _Scanner:
     # ``scan_value_atom``.
     # ------------------------------------------------------------------
 
-    def scan_value_atom(self) -> Value:
+    def scan_value_atom(self) -> ValueNode:
         """Scan a non-container, non-string value at the cursor.
 
         Recognises bools, special floats (``inf`` / ``nan``, with
@@ -669,19 +665,19 @@ class _Scanner:
         # Whole-token keyword classification.
         if token == "true":  # noqa: S105
             self.pos = end
-            return BoolValue("true", value=True)
+            return BoolNode("true", value=True)
         if token == "false":  # noqa: S105
             self.pos = end
-            return BoolValue("false", value=False)
+            return BoolNode("false", value=False)
         if token in ("inf", "+inf"):
             self.pos = end
-            return FloatValue(lexeme=token, value=float("inf"))
+            return FloatNode(raw=token, value=float("inf"))
         if token == "-inf":  # noqa: S105
             self.pos = end
-            return FloatValue(lexeme=token, value=float("-inf"))
+            return FloatNode(raw=token, value=float("-inf"))
         if token in ("nan", "+nan", "-nan"):
             self.pos = end
-            return FloatValue(lexeme=token, value=float("nan"))
+            return FloatNode(raw=token, value=float("nan"))
 
         # Date/time literals always carry a fixed punctuation char in
         # a known position. Try them before numbers so e.g. ``1979-…``
@@ -723,7 +719,7 @@ class _Scanner:
             return False
         return "." in body or "e" in body or "E" in body
 
-    def _parse_integer_token(self, token: str, *, at: int) -> IntegerValue:
+    def _parse_integer_token(self, token: str, *, at: int) -> IntegerNode:
         body = token
         if body.startswith(("0x", "0o", "0b")):
             prefix = body[:2]
@@ -744,7 +740,7 @@ class _Scanner:
             base = {"0x": 16, "0o": 8, "0b": 2}[prefix]
             value = int(digits.replace("_", ""), base)
             style_map: dict[str, IntStyle] = {"0x": "hex", "0o": "oct", "0b": "bin"}
-            return IntegerValue(token, value, style_map[prefix])
+            return IntegerNode(token, value, style_map[prefix])
 
         sign = ""
         if body and body[0] in "+-":
@@ -767,9 +763,9 @@ class _Scanner:
             msg = f"leading zeros are not allowed in {token!r}"
             raise self.error(msg, at=at)
         value = int(sign + digits_only)
-        return IntegerValue(token, value, "dec")
+        return IntegerNode(token, value, "dec")
 
-    def _parse_float_token(self, token: str, *, at: int) -> FloatValue:
+    def _parse_float_token(self, token: str, *, at: int) -> FloatNode:
         body = token
         sign = ""
         if body and body[0] in "+-":
@@ -828,9 +824,9 @@ class _Scanner:
                 raise self.error(msg, at=at)
 
         value = float(sign + norm)
-        return FloatValue(token, value)
+        return FloatNode(token, value)
 
-    def _parse_datetime_token(self, token: str, *, at: int) -> DateTimeValue:
+    def _parse_datetime_token(self, token: str, *, at: int) -> DateTimeNode:
         # TOML allows a single space as the date/time separator. If we
         # just scanned a 10-char date and the next chars look like
         # ``" HH:..."``, fold them into one local-datetime token.
@@ -858,7 +854,7 @@ class _Scanner:
         *,
         at: int,
         raw: str,
-    ) -> DateTimeValue:
+    ) -> DateTimeNode:
         # Local time?
         if len(text) >= 3 and text[2] == ":":
             try:
@@ -866,7 +862,7 @@ class _Scanner:
             except ValueError as exc:
                 msg = f"invalid time {text!r}: {exc}"
                 raise self.error(msg, at=at) from exc
-            return DateTimeValue(raw, value, "local-time")
+            return DateTimeNode(raw, value, "local-time")
 
         if len(text) < 10 or text[4] != "-" or text[7] != "-":
             msg = f"invalid date/datetime {text!r}"
@@ -883,7 +879,7 @@ class _Scanner:
 
         rest = text[10:]
         if not rest:
-            return DateTimeValue(raw, d, "local-date")
+            return DateTimeNode(raw, d, "local-date")
         if rest[0] not in ("T", "t", " "):
             msg = f"expected date/time separator, got {rest[0]!r}"
             raise self.error(msg, at=at)
@@ -899,7 +895,7 @@ class _Scanner:
             except ValueError as exc:
                 msg = f"invalid time {time_part!r}: {exc}"
                 raise self.error(msg, at=at) from exc
-            return DateTimeValue(raw, datetime.combine(d, t), "local-datetime")
+            return DateTimeNode(raw, datetime.combine(d, t), "local-datetime")
         try:
             t = self._parse_time_text(time_part[:offset_pos])
             tz = self._parse_offset(time_part[offset_pos:])
@@ -907,7 +903,7 @@ class _Scanner:
             msg = f"invalid datetime {text!r}: {exc}"
             raise self.error(msg, at=at) from exc
         dt = datetime.combine(d, t).replace(tzinfo=tz)
-        return DateTimeValue(raw, dt, "offset-datetime")
+        return DateTimeNode(raw, dt, "offset-datetime")
 
     @staticmethod
     def _parse_time_text(text: str) -> time:

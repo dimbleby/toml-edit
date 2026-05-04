@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
-from tomlrt._container import AoT, Array, Document, Table, TomlInput
+from tomlrt._document import (
+    AoT,
+    Array,
+    Document,
+    Table,
+    TomlInput,
+)
 from tomlrt._errors import TOMLError, TOMLParseError
-from tomlrt._public import dump, dumps, load, loads
+from tomlrt._public import document, dump, dumps, load, loads, parse
 
 __all__ = [
     "AoT",
@@ -14,8 +20,10 @@ __all__ = [
     "TOMLParseError",
     "Table",
     "TomlInput",
+    "document",
     "dump",
     "dumps",
     "load",
     "loads",
+    "parse",
 ]
