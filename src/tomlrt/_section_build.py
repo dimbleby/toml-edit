@@ -415,17 +415,18 @@ def _section_insert_index(
     # Top-level: shared parent prefix is always empty, so just append.
     if not parent:
         return len(sections)
-    last_sibling = -1
-    for i, sec in enumerate(sections):
+    plen = len(parent)
+    # Reverse scan: we want the *last* sibling, so a forward scan
+    # cannot early-exit; reverse stops at the first hit.
+    for i in range(len(sections) - 1, -1, -1):
+        sec = sections[i]
         hdr = sec.header
         if hdr is None:
             continue
         hpath = hdr.key.path
-        if len(hpath) >= len(parent) and hpath[: len(parent)] == parent:
-            last_sibling = i
-    if last_sibling < 0:
-        return len(sections)
-    return last_sibling + 1
+        if len(hpath) >= plen and hpath[:plen] == parent:
+            return i + 1
+    return len(sections)
 
 
 def _make_dotted_key(path: tuple[str, ...]) -> Key:
