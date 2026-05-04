@@ -5,7 +5,7 @@ root) and `Table` (sections + inline tables). Phase 2 only needs the
 read surface: dict-storage populated in doc-stream-first-occurrence
 order, typed accessors, conversion helpers, and the `render()` entry
 point. The mutation-time scaffolding (`_index`, `_refs`,
-`_header_ref`, `_body_tail`, `_subtree_tail`) is deferred to Phase 3.
+`_header_ref`, `_body_tail`) is deferred to Phase 3.
 """
 
 from __future__ import annotations
@@ -40,11 +40,12 @@ class Container(dict[str, Any]):
     """Dict-typed base for `Document` and `Table` views.
 
     Reads are pure dict operations. Mutation paths use the per-container
-    cache (`_index` / `_refs` / `_header_ref` / `_body_tail` /
-    `_subtree_tail`) maintained alongside the dict storage. For inline
-    tables (`_inline=True`) the slot-stream caches stay `None` and
-    `_value` points at the backing `InlineTableValue` instead — inline
-    mutation lives in a separate code path (Phase 3b).
+    cache (`_index` / `_refs` / `_header_ref` / `_body_tail`)
+    maintained alongside the dict storage. ``_subtree_tail`` is exposed
+    as a derived `@property` over `_refs`. For inline tables
+    (`_inline=True`) the slot-stream caches stay empty and `_value`
+    points at the backing `InlineTableValue` instead — inline mutation
+    lives in a separate code path (Phase 3b).
     """
 
     __slots__ = (
@@ -57,7 +58,6 @@ class Container(dict[str, Any]):
         "_parent",
         "_path",
         "_refs",
-        "_subtree_tail",
         "_value",
     )
 
@@ -72,8 +72,20 @@ class Container(dict[str, Any]):
         self._refs: list[SlotRef] = []
         self._header_ref: SlotRef | None = None
         self._body_tail: Slot | None = None
-        self._subtree_tail: Slot | None = None
         self._value: InlineTableValue | None = None
+
+    @property
+    def _subtree_tail(self) -> Slot | None:
+        """Last slot owned anywhere in this container's subtree.
+
+        Derived strictly from ``_refs`` ordering; not stored. Used as
+        the insert-after anchor for child structural blocks (sections,
+        AoT entries, dotted-descendant slots). Reading this on an
+        inline-table view (where ``_refs`` stays empty) returns
+        ``None``.
+        """
+        refs = self._refs
+        return refs[-1].slot if refs else None
 
     # ------------------------------------------------------------------
     # Typed accessors

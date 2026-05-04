@@ -1,10 +1,11 @@
 """Debug-only cache-invariant checker.
 
 Walks an attached `Document` and verifies the cache fields populated
-by `_build` (`_index`, `_refs`, `_header_ref`, `_body_tail`,
-`_subtree_tail`) are consistent with the dict storage and with each
-other. Used by tests via `check(doc)` and (when explicitly enabled)
-by mutation paths in debug builds.
+by `_build` (`_index`, `_refs`, `_header_ref`, `_body_tail`) are
+consistent with the dict storage and with each other.
+``_subtree_tail`` is a derived `@property` over `_refs` and so cannot
+drift; we don't check it here. Used by tests via `check(doc)` and
+(when explicitly enabled) by mutation paths in debug builds.
 
 The checker is deliberately strict: any caller-visible mutation that
 leaves the caches in an inconsistent state is a bug, period.
@@ -93,10 +94,8 @@ def _check_inline(c: Container) -> None:
         _fail(f"inline table {c._path} has non-empty _refs")  # noqa: SLF001
     if c._header_ref is not None:  # noqa: SLF001
         _fail(f"inline table {c._path} has _header_ref set")  # noqa: SLF001
-    if c._body_tail is not None or c._subtree_tail is not None:  # noqa: SLF001
-        _fail(
-            f"inline table {c._path} has body_tail/subtree_tail set"  # noqa: SLF001
-        )
+    if c._body_tail is not None:  # noqa: SLF001
+        _fail(f"inline table {c._path} has body_tail set")  # noqa: SLF001
     # When this inline table owns its `InlineTableValue` (a top-level
     # inline table — i.e. one not synthesised from a dotted inline-key
     # in a parent), verify dict storage matches the entries' first
@@ -237,14 +236,11 @@ def _check_section_caches(c: Container) -> None:
             )
         if hr not in c._refs:  # noqa: SLF001
             _fail("_header_ref not present in _refs")
-    # _body_tail / _subtree_tail must point at slots actually in this
-    # container's _refs (i.e., _refs contains a ref to that slot).
+    # _body_tail must point at a slot actually in this container's _refs.
+    # ``_subtree_tail`` is a derived property over ``_refs`` so it cannot
+    # drift; no separate membership check needed.
     if c._refs:  # noqa: SLF001
         ref_slots = {id(r.slot) for r in c._refs}  # noqa: SLF001
-        if c._subtree_tail is not None and id(c._subtree_tail) not in ref_slots:  # noqa: SLF001
-            _fail(
-                f"_subtree_tail not in _refs of container {c._path}"  # noqa: SLF001
-            )
         if c._body_tail is not None and id(c._body_tail) not in ref_slots:  # noqa: SLF001
             _fail(
                 f"_body_tail not in _refs of container {c._path}"  # noqa: SLF001
@@ -430,13 +426,7 @@ def _check_cross_stream(doc: Document) -> None:
                 f"  expected keys: {sorted(expected_index)}\n"
                 f"  actual keys:   {sorted(actual_index)}"
             )
-        expected_subtree = c._refs[-1].slot if c._refs else None  # noqa: SLF001
-        if c._subtree_tail is not expected_subtree:  # noqa: SLF001
-            _fail(
-                f"container {path}: _subtree_tail mismatch\n"
-                f"  expected: {expected_subtree!r}\n"
-                f"  actual:   {c._subtree_tail!r}"  # noqa: SLF001
-            )
+        # ``_subtree_tail`` is a derived property; no separate check.
         # Body tail: last slot in _refs satisfying body-region predicate.
         expected_body = _expected_body_tail(c)
         if c._body_tail is not expected_body:  # noqa: SLF001

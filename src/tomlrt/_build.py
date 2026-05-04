@@ -49,15 +49,14 @@ def build_initial_containers(doc: Document, slots: list[Slot]) -> None:
 def _record_ref(c: Container, slot: Slot, local_key: str | None) -> SlotRef:
     """Append a `SlotRef` to ``c._refs`` (and ``c._index`` if keyed).
 
-    Always advances ``c._subtree_tail`` to ``slot`` (slots are added in
-    doc-stream order). ``_body_tail`` is updated by callers per the
-    body-region rules.
+    ``c._subtree_tail`` is exposed as a derived property over ``_refs``
+    so it does not need explicit maintenance here. ``_body_tail`` is
+    updated by callers per the body-region rules.
     """
     ref = SlotRef(slot=slot, container=c, local_key=local_key)
     c._refs.append(ref)  # noqa: SLF001
     if local_key is not None:
         c._index.setdefault(local_key, []).append(ref)  # noqa: SLF001
-    c._subtree_tail = slot  # noqa: SLF001
     return ref
 
 
