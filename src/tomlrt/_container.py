@@ -10,31 +10,55 @@ point. The mutation-time scaffolding (`_index`, `_refs`,
 
 from __future__ import annotations
 
+import sys
 from typing import TYPE_CHECKING, Any
 
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
+
 from tomlrt._render import render
+from tomlrt._slots import KVSlot
 from tomlrt._trivia import Trivia
+from tomlrt._values import (
+    BoolValue,
+    DateTimeValue,
+    FloatValue,
+    IntegerValue,
+    StringValue,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from tomlrt._slots import AoTEntry, Slot
+    from tomlrt._slots import AoTEntry, Slot, SlotRef
+    from tomlrt._values import InlineTableValue
 
 
 class Container(dict[str, Any]):
     """Dict-typed base for `Document` and `Table` views.
 
-    Phase 2 surface: dict reads + typed accessors + `to_dict`. The
-    insertion-anchor / index / ref machinery used by mutation lives
-    behind further attributes added in Phase 3.
+    Reads are pure dict operations. Mutation paths use the per-container
+    cache (`_index` / `_refs` / `_header_ref` / `_body_tail` /
+    `_subtree_tail`) maintained alongside the dict storage. For inline
+    tables (`_inline=True`) the slot-stream caches stay `None` and
+    `_value` points at the backing `InlineTableValue` instead — inline
+    mutation lives in a separate code path (Phase 3b).
     """
 
     __slots__ = (
+        "_body_tail",
+        "_header_ref",
+        "_index",
         "_inline",
         "_layout_root",
         "_owner_aot_entry",
         "_parent",
         "_path",
+        "_refs",
+        "_subtree_tail",
+        "_value",
     )
 
     def __init__(self) -> None:
@@ -44,6 +68,12 @@ class Container(dict[str, Any]):
         self._inline: bool = False
         self._parent: Container | None = None
         self._owner_aot_entry: AoTEntry | None = None
+        self._index: dict[str, list[SlotRef]] = {}
+        self._refs: list[SlotRef] = []
+        self._header_ref: SlotRef | None = None
+        self._body_tail: Slot | None = None
+        self._subtree_tail: Slot | None = None
+        self._value: InlineTableValue | None = None
 
     # ------------------------------------------------------------------
     # Typed accessors
@@ -88,6 +118,40 @@ class Container(dict[str, Any]):
             out[k] = _to_python(v)
         return out
 
+    # ------------------------------------------------------------------
+    # Mutation (Phase 3a: scalar-replaces-scalar only)
+    # ------------------------------------------------------------------
+
+    @override
+    def __setitem__(self, key: str, value: Any) -> None:
+        if key in self and self[key] is value:
+            return
+        if self._inline:
+            msg = "inline-table mutation arrives in Phase 3b"
+            raise NotImplementedError(msg)
+        if key in self:
+            current = dict.__getitem__(self, key)
+            if _is_scalar(current) and _is_scalar(value):
+                refs = self._index.get(key)
+                if not refs:
+                    msg = (
+                        f"internal: key {key!r} present in dict but missing from _index"
+                    )
+                    raise AssertionError(msg)
+                primary = refs[0]
+                slot = primary.slot
+                if not isinstance(slot, KVSlot) or len(slot.key) != 1:
+                    msg = (
+                        "Phase 3a only supports scalar replacement of "
+                        "a direct, non-dotted KV"
+                    )
+                    raise NotImplementedError(msg)
+                slot.value = _coerce_scalar(value)
+                dict.__setitem__(self, key, value)
+                return
+        msg = "non-scalar mutation arrives in Phase 3b/3c/3d"
+        raise NotImplementedError(msg)
+
 
 class Table(Container):
     """A section table, implicit table, or inline table view."""
@@ -129,6 +193,97 @@ def _to_python(v: Any) -> Any:
     if isinstance(v, Array):
         return [_to_python(x) for x in v]
     return v
+
+
+# ---------------------------------------------------------------------------
+# Scalar coercion (Phase 3a — minimal; full coverage in Phase 3c via
+# `_coerce.py`).
+# ---------------------------------------------------------------------------
+
+
+def _is_scalar(v: object) -> bool:
+    """True iff ``v`` is a TOML scalar (and not an array / table)."""
+    from datetime import date, datetime, time  # noqa: PLC0415
+
+    # `bool` is an `int` subclass — explicit allow keeps the semantics
+    # in this gate clear.
+    if isinstance(v, bool):
+        return True
+    if isinstance(v, (int, float, str)):
+        return True
+    return isinstance(v, (datetime, date, time))
+
+
+def _coerce_scalar(
+    v: object,
+) -> StringValue | IntegerValue | FloatValue | BoolValue | DateTimeValue:
+    """Coerce a Python scalar to a fresh `Value` with a default lexeme."""
+    from datetime import date, datetime, time  # noqa: PLC0415
+
+    if isinstance(v, bool):
+        return BoolValue(lexeme="true" if v else "false", value=v)
+    if isinstance(v, int):
+        return IntegerValue(lexeme=str(v), value=v, style="dec")
+    if isinstance(v, float):
+        return FloatValue(lexeme=_float_lexeme(v), value=v)
+    if isinstance(v, str):
+        return StringValue(lexeme=_basic_string_lexeme(v), value=v, style="basic")
+    if isinstance(v, datetime):
+        return DateTimeValue(lexeme=v.isoformat(), value=v, kind=_dt_kind(v))
+    if isinstance(v, date):
+        return DateTimeValue(lexeme=v.isoformat(), value=v, kind="local-date")
+    if isinstance(v, time):
+        return DateTimeValue(lexeme=v.isoformat(), value=v, kind="local-time")
+    msg = f"cannot coerce {type(v).__name__} to a TOML scalar"
+    raise TypeError(msg)
+
+
+def _float_lexeme(v: float) -> str:
+    import math  # noqa: PLC0415
+
+    if math.isnan(v):
+        return "nan"
+    if math.isinf(v):
+        return "-inf" if v < 0 else "inf"
+    s = repr(v)
+    # Python may emit "1e10" — TOML requires a fractional component or an
+    # exponent; keep the repr() output as is (TOML accepts both).
+    if "." not in s and "e" not in s and "E" not in s and "n" not in s:
+        s += ".0"
+    return s
+
+
+def _basic_string_lexeme(v: str) -> str:
+    out = ['"']
+    for ch in v:
+        c = ord(ch)
+        if ch == "\\":
+            out.append("\\\\")
+        elif ch == '"':
+            out.append('\\"')
+        elif ch == "\b":
+            out.append("\\b")
+        elif ch == "\t":
+            out.append("\\t")
+        elif ch == "\n":
+            out.append("\\n")
+        elif ch == "\f":
+            out.append("\\f")
+        elif ch == "\r":
+            out.append("\\r")
+        elif c < 0x20 or c == 0x7F:
+            out.append(f"\\u{c:04X}")
+        else:
+            out.append(ch)
+    out.append('"')
+    return "".join(out)
+
+
+def _dt_kind(v: object) -> Any:
+    from datetime import datetime  # noqa: PLC0415
+
+    assert isinstance(v, datetime)
+    return "offset-datetime" if v.tzinfo is not None else "local-datetime"
 
 
 # `_array` depends on `Container` for `Table`, so the import is at the

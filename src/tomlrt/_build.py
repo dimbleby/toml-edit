@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 from tomlrt._array import AoT, Array
 from tomlrt._container import Container, Document, Table
-from tomlrt._slots import KVSlot, StructuralHeaderSlot
+from tomlrt._slots import KVSlot, SlotRef, StructuralHeaderSlot
 from tomlrt._values import (
     ArrayValue,
     InlineTableValue,
@@ -42,6 +42,46 @@ def build_initial_containers(doc: Document, slots: list[Slot]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Cache primitives
+# ---------------------------------------------------------------------------
+
+
+def _record_ref(c: Container, slot: Slot, local_key: str | None) -> SlotRef:
+    """Append a `SlotRef` to ``c._refs`` (and ``c._index`` if keyed).
+
+    Always advances ``c._subtree_tail`` to ``slot`` (slots are added in
+    doc-stream order). ``_body_tail`` is updated by callers per the
+    body-region rules.
+    """
+    ref = SlotRef(slot=slot, container=c, local_key=local_key)
+    c._refs.append(ref)  # noqa: SLF001
+    if local_key is not None:
+        c._index.setdefault(local_key, []).append(ref)  # noqa: SLF001
+    c._subtree_tail = slot  # noqa: SLF001
+    return ref
+
+
+def _maybe_advance_body_tail(c: Container, slot: Slot) -> None:
+    """Advance ``c._body_tail`` if ``slot`` belongs to ``c``'s body region.
+
+    A slot belongs to ``c``'s body region iff:
+
+    - ``slot`` is a ``KVSlot``;
+    - ``slot.owner_aot_entry is c._owner_aot_entry``;
+    - either ``c`` has no own structural header (purely implicit /
+      document root / inherited-implicit) **or** the slot is hosted
+      under ``c``'s exact path (``slot.host_path == c._path``).
+    """
+    if not isinstance(slot, KVSlot):
+        return
+    if slot.owner_aot_entry is not c._owner_aot_entry:  # noqa: SLF001
+        return
+    if c._header_ref is not None and slot.host_path != c._path:  # noqa: SLF001
+        return
+    c._body_tail = slot  # noqa: SLF001
+
+
+# ---------------------------------------------------------------------------
 # Header handling
 # ---------------------------------------------------------------------------
 
@@ -49,14 +89,12 @@ def build_initial_containers(doc: Document, slots: list[Slot]) -> None:
 def _apply_header(doc: Document, slot: StructuralHeaderSlot) -> None:
     if slot.kind == "aot-entry":
         assert slot.entry is not None
-        _open_aot_entry(doc, slot.path, slot.entry)
+        _open_aot_entry(doc, slot, slot.entry)
     else:
-        _open_table(doc, slot.path, slot)
+        _open_table(doc, slot)
 
 
-def _open_table(
-    doc: Document, path: tuple[str, ...], header: StructuralHeaderSlot
-) -> Table:
+def _open_table(doc: Document, header: StructuralHeaderSlot) -> Table:
     """Open ``[a.b.c]`` — return the `Table` view for ``path``.
 
     Walks (and creates as needed) all implicit ancestors. Raises if an
@@ -64,59 +102,77 @@ def _open_table(
     should have already rejected this; the assertion guards against
     drift).
     """
-    parent = _resolve_parent(doc, path[:-1])
+    path = header.path
+    parent_chain = _resolve_chain(doc, path[:-1])
+    parent = parent_chain[-1]
     name = path[-1]
+    # Ancestor binding refs (chain[:i] -> child step path[i]).
+    for i, ancestor in enumerate(parent_chain):
+        _record_ref(ancestor, header, path[i])
     existing = parent.get(name)
     if existing is None:
         table = _make_table(parent, path, owner=header.owner_aot_entry)
-        parent[name] = table
-        return table
-    # Re-opening an implicit table promoted by an earlier dotted KV
-    # or child header. The validator has already enforced that this
-    # is legal.
-    assert isinstance(existing, Table), (
-        f"header [{'.'.join(path)}] reopens a non-table at "
-        f"{name!r} (got {type(existing).__name__}); validator drift"
-    )
-    return existing
+        dict.__setitem__(parent, name, table)
+    else:
+        assert isinstance(existing, Table), (
+            f"header [{'.'.join(path)}] reopens a non-table at "
+            f"{name!r} (got {type(existing).__name__}); validator drift"
+        )
+        table = existing
+    # Own-header ref + body-tail reset for this container.
+    own_ref = _record_ref(table, header, None)
+    table._header_ref = own_ref  # noqa: SLF001
+    table._body_tail = header  # noqa: SLF001
+    return table
 
 
 def _open_aot_entry(
     doc: Document,
-    path: tuple[str, ...],
+    header: StructuralHeaderSlot,
     entry: AoTEntry,
 ) -> Table:
     """Open ``[[a.b]]`` — append a fresh `Table` to the AoT at ``path``."""
-    parent = _resolve_parent(doc, path[:-1])
+    path = header.path
+    parent_chain = _resolve_chain(doc, path[:-1])
+    parent = parent_chain[-1]
     name = path[-1]
+    # Ancestor binding refs to the [[..]] header slot.
+    for i, ancestor in enumerate(parent_chain):
+        _record_ref(ancestor, header, path[i])
     aot = parent.get(name)
     if aot is None:
         aot = AoT()
         aot._layout_root = doc  # noqa: SLF001
         aot._path = path  # noqa: SLF001
         aot._parent = parent  # noqa: SLF001
-        parent[name] = aot
+        dict.__setitem__(parent, name, aot)
     assert isinstance(aot, AoT), (
         f"AoT header [[{'.'.join(path)}]] collides with non-AoT at "
         f"{name!r} (got {type(aot).__name__}); validator drift"
     )
     table = _make_table(parent, path, owner=entry)
     aot.append(table)
+    own_ref = _record_ref(table, header, None)
+    table._header_ref = own_ref  # noqa: SLF001
+    table._body_tail = header  # noqa: SLF001
     return table
 
 
-def _resolve_parent(doc: Document, prefix: tuple[str, ...]) -> Container:
-    """Walk ``prefix`` from ``doc``, creating implicit tables as needed.
+def _resolve_chain(doc: Document, prefix: tuple[str, ...]) -> list[Container]:
+    """Return the container chain ``[doc, doc.a, doc.a.b, ...]`` for prefix.
 
-    For an AoT prefix, descends into the *most recent* entry.
+    Creates implicit containers as needed (these are reachable from
+    later headers). For an AoT prefix, descends into the most recent
+    entry. The returned list always has length ``len(prefix) + 1``.
     """
+    chain: list[Container] = [doc]
     cur: Container = doc
     for i, name in enumerate(prefix):
         sub = cur.get(name)
         if sub is None:
             child_path = prefix[: i + 1]
             child = _make_table(cur, child_path, owner=cur._owner_aot_entry)  # noqa: SLF001
-            cur[name] = child
+            dict.__setitem__(cur, name, child)
             cur = child
         elif isinstance(sub, Table):
             cur = sub
@@ -129,7 +185,8 @@ def _resolve_parent(doc: Document, prefix: tuple[str, ...]) -> Container:
                 f"{type(sub).__name__}, not a Table/AoT (validator drift)"
             )
             raise AssertionError(msg)
-    return cur
+        chain.append(cur)
+    return chain
 
 
 def _make_table(
@@ -151,64 +208,56 @@ def _make_table(
 
 def _apply_kv(doc: Document, slot: KVSlot) -> None:
     """Bind a `key = value` slot into its host container."""
-    host = _resolve_host(doc, slot.host_path)
     decoded = slot.key
-    target = _walk_dotted(host, decoded[:-1], slot.owner_aot_entry)
-    name = decoded[-1]
-    assert slot.value is not None
-    assert name not in target, (
-        f"duplicate key {name!r} reached builder under {target._path}; validator drift"  # noqa: SLF001
-    )
-    target[name] = _decode_value(
-        slot.value,
-        layout_root=target._layout_root,  # noqa: SLF001
-        parent=target,
-        path=(*target._path, name),  # noqa: SLF001
-        owner=target._owner_aot_entry,  # noqa: SLF001
-    )
-
-
-def _resolve_host(doc: Document, host_path: tuple[str, ...]) -> Container:
-    """Find the host container of a KV (the table its header opened).
-
-    Identical to `_resolve_parent` for the head path; an empty
-    `host_path` is the document root.
-    """
-    if not host_path:
-        return doc
-    return _resolve_parent_or_self(doc, host_path)
-
-
-def _resolve_parent_or_self(doc: Document, path: tuple[str, ...]) -> Container:
-    cur: Container = doc
-    for name in path:
-        sub = cur[name]
-        if isinstance(sub, AoT):
-            cur = sub[-1]
-        else:
-            assert isinstance(sub, Table)
-            cur = sub
-    return cur
-
-
-def _walk_dotted(
-    host: Container, prefix: tuple[str, ...], owner: AoTEntry | None
-) -> Container:
-    """Walk a dotted-KV intermediate path inside an already-open host."""
-    cur: Container = host
-    for i, name in enumerate(prefix):
-        sub = cur.get(name)
+    # Logical container chain that this KV's binding refs land in:
+    # host -> host.k0 -> host.k0.k1 -> ... -> host.k[:-1]
+    host_chain = _resolve_chain(doc, slot.host_path)
+    leaf_chain: list[Container] = list(host_chain)
+    cur = host_chain[-1]
+    for step in decoded[:-1]:
+        sub = cur.get(step)
         if sub is None:
-            child_path = cur._path + tuple(prefix[: i + 1])  # noqa: SLF001
-            child = _make_table(cur, child_path, owner=owner)
-            cur[name] = child
+            child_path = (*cur._path, step)  # noqa: SLF001
+            child = _make_table(cur, child_path, owner=slot.owner_aot_entry)
+            dict.__setitem__(cur, step, child)
             cur = child
         else:
             assert isinstance(sub, Table), (
-                f"dotted-key step {name!r} hits {type(sub).__name__} (validator drift)"
+                f"dotted-key step {step!r} hits {type(sub).__name__} (validator drift)"
             )
             cur = sub
-    return cur
+        leaf_chain.append(cur)
+    target = leaf_chain[-1]
+    name = decoded[-1]
+    assert name not in target, (
+        f"duplicate key {name!r} reached builder under {target._path}; "  # noqa: SLF001
+        "validator drift"
+    )
+    # Binding refs at every container along the logical path: container
+    # leaf_chain[i] gets a ref filed under the i-th step (which is
+    # decoded[i] for i in 0..len(decoded)-1; for the host_chain prefix
+    # that already had refs from header handling, this is still the
+    # right next-step). The chain length is len(host_path) + len(decoded).
+    full_steps = (*slot.host_path, *decoded)
+    assert len(full_steps) == len(leaf_chain)  # leaf_chain[0] is doc
+    for i, ancestor in enumerate(leaf_chain):
+        ref = _record_ref(ancestor, slot, full_steps[i])
+        _maybe_advance_body_tail(ancestor, slot)
+        # Silence unused-variable warning; the ref is filed via
+        # _record_ref's side-effect.
+        del ref
+    assert slot.value is not None
+    dict.__setitem__(
+        target,
+        name,
+        _decode_value(
+            slot.value,
+            layout_root=target._layout_root,  # noqa: SLF001
+            parent=target,
+            path=(*target._path, name),  # noqa: SLF001
+            owner=target._owner_aot_entry,  # noqa: SLF001
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -224,14 +273,7 @@ def _decode_value(
     path: tuple[str, ...],
     owner: AoTEntry | None,
 ) -> object:
-    """Decode any TOML value to its Python representation.
-
-    ``layout_root`` / ``parent`` / ``path`` / ``owner`` are the
-    logical-attachment metadata the resulting view should carry if it
-    is itself a `Table` (inline) or a nested `Array`. For values that
-    do not live in a container's dict storage (e.g. an element of an
-    inline array), pass ``parent=None`` and an empty ``path``.
-    """
+    """Decode any TOML value to its Python representation."""
     if isinstance(value, ArrayValue):
         return _decode_array(value, layout_root=layout_root, owner=owner)
     if isinstance(value, InlineTableValue):
@@ -242,7 +284,6 @@ def _decode_value(
             path=path,
             owner=owner,
         )
-    # All scalar value types carry the decoded Python value as `.value`.
     return value.value
 
 
@@ -255,8 +296,6 @@ def _decode_array(
     arr = Array()
     arr._value = value  # noqa: SLF001
     for item in value.items:
-        # Items inside an inline array have no logical container parent
-        # and no path of their own.
         arr.append(
             _decode_value(
                 item.value,
@@ -283,8 +322,8 @@ def _decode_inline_table(
     table._parent = parent  # noqa: SLF001
     table._inline = True  # noqa: SLF001
     table._owner_aot_entry = owner  # noqa: SLF001
+    table._value = value  # noqa: SLF001
     for entry in value.entries:
-        # Inline-table entries can themselves be dotted (TOML 1.1).
         decoded_key = [p.value for p in entry.key_parts]
         cur: Container = table
         for step in decoded_key[:-1]:
@@ -296,7 +335,11 @@ def _decode_inline_table(
                 inner._parent = cur  # noqa: SLF001
                 inner._inline = True  # noqa: SLF001
                 inner._owner_aot_entry = owner  # noqa: SLF001
-                cur[step] = inner
+                # Inner inline-tables created from a dotted inline-table
+                # entry don't have their own backing InlineTableValue;
+                # `_value` stays None. Phase 3b decides if/how to
+                # materialise these for mutation.
+                dict.__setitem__(cur, step, inner)
                 cur = inner
             else:
                 assert isinstance(sub, Table)
@@ -305,12 +348,16 @@ def _decode_inline_table(
         assert leaf not in cur, (
             f"duplicate inline-table key {leaf!r} reached builder; validator drift"
         )
-        cur[leaf] = _decode_value(
-            entry.value,
-            layout_root=layout_root,
-            parent=cur,
-            path=(*cur._path, leaf),  # noqa: SLF001
-            owner=owner,
+        dict.__setitem__(
+            cur,
+            leaf,
+            _decode_value(
+                entry.value,
+                layout_root=layout_root,
+                parent=cur,
+                path=(*cur._path, leaf),  # noqa: SLF001
+                owner=owner,
+            ),
         )
     return table
 
