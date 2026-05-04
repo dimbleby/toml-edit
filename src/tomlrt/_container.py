@@ -40,6 +40,7 @@ if TYPE_CHECKING:
 
     from typing_extensions import Self
 
+    from tomlrt._comments import EolCommentView, LeadingCommentView
     from tomlrt._slots import AoTEntry, Slot, SlotRef
     from tomlrt._values import (
         Value,
@@ -83,6 +84,30 @@ class Container(dict[str, Any]):
         self._header_ref: SlotRef | None = None
         self._body_tail: Slot | None = None
         self._value: InlineTableValue | None = None
+
+    @property
+    def comments(self) -> EolCommentView:
+        """Mapping view of EOL comments on this container's direct keys."""
+        from tomlrt._comments import EolCommentView  # noqa: PLC0415
+
+        if self._inline:
+            from tomlrt._errors import TOMLError  # noqa: PLC0415
+
+            msg = "comments view not available on inline tables"
+            raise TOMLError(msg)
+        return EolCommentView(self)
+
+    @property
+    def leading_comments(self) -> LeadingCommentView:
+        """Mapping view of leading-comment blocks on this container's direct keys."""
+        from tomlrt._comments import LeadingCommentView  # noqa: PLC0415
+
+        if self._inline:
+            from tomlrt._errors import TOMLError  # noqa: PLC0415
+
+            msg = "leading_comments view not available on inline tables"
+            raise TOMLError(msg)
+        return LeadingCommentView(self)
 
     @property
     def _subtree_tail(self) -> Slot | None:
