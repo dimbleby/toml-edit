@@ -638,6 +638,73 @@ class Container(dict[str, Any]):
         assert isinstance(attached, Table)
         return attached
 
+    def promote_inline(self, key: str) -> Table:
+        """Convert an inline-table KV at ``key`` into a section header.
+
+        Returns the live view at ``key`` after promotion. Raises
+        ``TOMLError`` if the key is missing or doesn't refer to an
+        inline-style table. If the value is already a section table,
+        returns it unchanged.
+        """
+        from tomlrt._errors import TOMLError  # noqa: PLC0415
+
+        if self._inline:
+            msg = "inline-table promotion is not supported on inline tables"
+            raise TOMLError(msg)
+        if key not in self:
+            msg = f"key {key!r} not in table"
+            raise KeyError(msg)
+        cur = dict.__getitem__(self, key)
+        if isinstance(cur, Container) and not cur._inline:  # noqa: SLF001
+            assert isinstance(cur, Table)
+            return cur
+        if not (isinstance(cur, Container) and cur._inline):  # noqa: SLF001
+            msg = f"{key!r} is not an inline table"
+            raise TOMLError(msg)
+        snapshot = cur.to_dict()
+        del self[key]
+        self[key] = Table.section(snapshot)
+        result = dict.__getitem__(self, key)
+        assert isinstance(result, Table)
+        return result
+
+    def promote_array(self, key: str) -> AoT:
+        """Convert an array-of-inline-tables at ``key`` into an AoT.
+
+        Returns the live AoT view at ``key``. If the value is already
+        an AoT, returns it unchanged. Raises ``TOMLError`` if the key
+        is missing, refers to a non-array, an empty array, or an array
+        with non-inline-table elements.
+        """
+        from tomlrt._array import AoT, Array  # noqa: PLC0415
+        from tomlrt._errors import TOMLError  # noqa: PLC0415
+
+        if self._inline:
+            msg = "array-of-tables promotion is not supported on inline tables"
+            raise TOMLError(msg)
+        if key not in self:
+            msg = f"key {key!r} not in table"
+            raise KeyError(msg)
+        cur = dict.__getitem__(self, key)
+        if isinstance(cur, AoT):
+            return cur
+        if not isinstance(cur, Array):
+            msg = f"{key!r} is not an array"
+            raise TOMLError(msg)
+        if len(cur) == 0:
+            msg = f"cannot promote empty array {key!r}"
+            raise TOMLError(msg)
+        for el in cur:
+            if not (isinstance(el, Container) and el._inline):  # noqa: SLF001
+                msg = f"{key!r} contains a non-inline-table element"
+                raise TOMLError(msg)
+        snapshot = cur.to_list()
+        del self[key]
+        self[key] = AoT(snapshot)
+        result = dict.__getitem__(self, key)
+        assert isinstance(result, AoT)
+        return result
+
 
 class Table(Container):
     """A section table, implicit table, or inline table view."""
