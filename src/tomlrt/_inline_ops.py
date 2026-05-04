@@ -88,7 +88,10 @@ def _find_prefix_entries(iv: InlineTableValue, key_path: tuple[str, ...]) -> lis
 
 
 def _is_ws_only(trivia: Trivia) -> bool:
-    return all(isinstance(p, WhitespaceNode) for p in trivia.pieces)
+    """True iff trivia contains no comments (whitespace + newlines OK)."""
+    from tomlrt._trivia import CommentNode  # noqa: PLC0415
+
+    return not any(isinstance(p, CommentNode) for p in trivia.pieces)
 
 
 def _make_key_parts(path: tuple[str, ...]) -> list[KeyPart]:
@@ -119,6 +122,10 @@ def _quote_basic(s: str) -> str:
 
 def _ws(text: str) -> Trivia:
     return Trivia(pieces=[WhitespaceNode(text=text)])
+
+
+def _clone_trivia(trivia: Trivia) -> Trivia:
+    return Trivia(pieces=list(trivia.pieces))
 
 
 # ---------------------------------------------------------------------------
@@ -153,12 +160,21 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
         msg = f"internal: append_entry called for existing key {key!r}"
         raise AssertionError(msg)
 
+    # Detect = padding from any existing entry; default to ` = ` only
+    # if the table is empty.
+    if iv.entries:
+        sample = iv.entries[0]
+        eq_pre = sample.pre_eq
+        eq_post = sample.post_eq
+    else:
+        eq_pre = " "
+        eq_post = " "
     new_entry = InlineTableEntry(
         leading=Trivia(),
         key_parts=_make_key_parts(key_path),
         key_seps=["."] * (len(key_path) - 1),
-        pre_eq=" ",
-        post_eq=" ",
+        pre_eq=eq_pre,
+        post_eq=eq_post,
         value=new_value,
         trailing=Trivia(),
         has_comma=False,
@@ -166,16 +182,29 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
     )
 
     if not iv.entries:
-        # Empty {} → { key = value }.  Mirror the conventional spacing
-        # whatever the user originally wrote (final_trivia might already
-        # encode it).
-        new_entry.leading = _ws(" ")
-        new_entry.trailing = iv.final_trivia if iv.final_trivia.pieces else _ws(" ")
-        iv.final_trivia = Trivia()
+        # Empty {} → mirror the original inner padding (whatever was
+        # parsed into final_trivia: "" for `{}`, " " for `{ }`, etc.).
+        bracket_pad = _clone_trivia(iv.final_trivia) if iv.final_trivia.pieces else None
+        if bracket_pad is not None:
+            new_entry.leading = bracket_pad
+            new_entry.trailing = _clone_trivia(bracket_pad)
+            iv.final_trivia = Trivia()
         iv.entries.append(new_entry)
         return
 
+    # Detect inter-item separator from the existing first commaful
+    # entry (so compact `a=1,b=2` keeps `,` not `, `).
+    inter_sep: Trivia | None = None
+    for ent in iv.entries:
+        if ent.has_comma:
+            inter_sep = ent.post_comma_trivia
+            break
+    if inter_sep is None:
+        inter_sep = _ws(" ")
+
     last = iv.entries[-1]
+    # Original trailing-comma policy: was the prior tail comma-trailed?
+    keep_trailing_comma = last.has_comma
     if last.has_comma:
         # Existing trailing comma (TOML 1.1 style); the new entry slots in
         # before whatever post-comma trivia carried the closing space —
@@ -184,25 +213,32 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
         # layout, not to the inserted entry.
         if _is_ws_only(last.post_comma_trivia):
             new_entry.trailing = last.post_comma_trivia
-            last.post_comma_trivia = _ws(" ")
+            last.post_comma_trivia = _clone_trivia(inter_sep)
         else:
-            new_entry.leading = _ws(" ")
-            new_entry.trailing = _ws(" ")
+            new_entry.leading = _clone_trivia(inter_sep)
+            new_entry.trailing = _clone_trivia(inter_sep)
     elif _is_ws_only(last.trailing):
         # No comma yet — promote `last`: take its (whitespace-only)
         # trailing as the new closing space for the inserted entry and
-        # replace it with a ", " separator.
-        new_entry.trailing = last.trailing if last.trailing.pieces else _ws(" ")
+        # replace it with the inter-item separator.
+        new_entry.trailing = last.trailing if last.trailing.pieces else Trivia()
         last.trailing = Trivia()
         last.has_comma = True
-        last.post_comma_trivia = _ws(" ")
+        last.post_comma_trivia = _clone_trivia(inter_sep)
     else:
         # `last.trailing` carries a comment / newline (TOML 1.1
         # multiline). Don't migrate — leave it where the user put it
         # and append a comma + new entry with default spacing.
         last.has_comma = True
-        last.post_comma_trivia = _ws(" ")
+        last.post_comma_trivia = _clone_trivia(inter_sep)
         new_entry.trailing = _ws(" ")
+    if keep_trailing_comma:
+        # Preserve a trailing-comma policy: the new tail also carries
+        # a trailing comma, with the bracket-pad it just adopted moved
+        # past the comma.
+        new_entry.has_comma = True
+        new_entry.post_comma_trivia = new_entry.trailing
+        new_entry.trailing = Trivia()
     iv.entries.append(new_entry)
 
 
@@ -225,49 +261,61 @@ def delete_entry(t: Container, key: str) -> bool:
         idx, removed = found
         iv.entries.pop(idx)
         _fix_tail_after_delete(iv, idx, removed)
+        _fix_head_after_delete(iv, idx, removed)
         return True
 
     # Prefix delete: dotted-prefix container.
     indices = _find_prefix_entries(iv, full_path)
     if not indices:
         return False
+    original_len = len(iv.entries)
     last_removed_idx = indices[-1]
     last_removed_entry = iv.entries[last_removed_idx]
+    first_removed_was_head = indices[0] == 0
+    first_removed_leading = iv.entries[indices[0]].leading
     for i in reversed(indices):
         iv.entries.pop(i)
-    # Tail fixup: only if the removed block extended through the old end.
-    if last_removed_idx == len(iv.entries):  # entries shrank past `last_removed_idx`
-        _fix_tail_after_delete(iv, last_removed_idx, last_removed_entry)
+    # Tail fixup: only if the original tail was actually removed.
+    if last_removed_idx == original_len - 1:
+        _fix_tail_after_delete(iv, len(iv.entries), last_removed_entry)
+    if first_removed_was_head and iv.entries and not iv.entries[0].leading.pieces:
+        iv.entries[0].leading = first_removed_leading
     return True
 
 
 def _fix_tail_after_delete(
     iv: InlineTableValue, removed_idx: int, removed: InlineTableEntry
 ) -> None:
-    """If the removed entry was the last, drop the new last's trailing comma."""
+    """Promote a new tail after deleting the trailing entry.
+
+    Adopt whichever bracket-padding the removed entry was carrying:
+    - removed had a trailing comma: keep the comma policy, adopt its
+      ``post_comma_trivia`` as the new tail's post-comma bracket pad.
+    - removed had no trailing comma: drop the new tail's comma (was
+      the inter-item separator), adopt removed's ``trailing`` as the
+      new tail's bracket pad.
+    """
     if not iv.entries or removed_idx != len(iv.entries):
         return
     new_last = iv.entries[-1]
-    if new_last.has_comma:
-        new_last.trailing = Trivia(
-            pieces=[
-                *new_last.trailing.pieces,
-                *new_last.post_comma_trivia.pieces,
-                *removed.leading.pieces,
-                *removed.trailing.pieces,
-                *removed.post_comma_trivia.pieces,
-            ]
-        )
+    if removed.has_comma:
+        new_last.has_comma = True
+        new_last.post_comma_trivia = removed.post_comma_trivia
+    else:
         new_last.has_comma = False
         new_last.post_comma_trivia = Trivia()
-    else:
-        new_last.trailing = Trivia(
-            pieces=[
-                *new_last.trailing.pieces,
-                *removed.leading.pieces,
-                *removed.trailing.pieces,
-            ]
-        )
+        new_last.trailing = removed.trailing
+
+
+def _fix_head_after_delete(
+    iv: InlineTableValue, removed_idx: int, removed: InlineTableEntry
+) -> None:
+    """Migrate bracket-leading from a deleted head entry to the new head."""
+    if not iv.entries or removed_idx != 0:
+        return
+    new_first = iv.entries[0]
+    if removed.leading.pieces and not new_first.leading.pieces:
+        new_first.leading = removed.leading
 
 
 __all__ = ["append_entry", "delete_entry", "replace_entry_value"]

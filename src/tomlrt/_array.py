@@ -78,7 +78,7 @@ class Array(list[Any]):
             val.items[0].leading = Trivia(
                 [NewlineNode(text="\n"), WhitespaceNode(text="    ")]
             )
-            _renormalise_commas(val.items, style)
+            _renormalise_commas(val.items, style, val)
 
     def to_list(self) -> list[Any]:
         """Materialise a plain-Python ``list`` (recursive)."""
@@ -179,7 +179,7 @@ class Array(list[Any]):
                 trailing_comma=False,
                 trailing_post=Trivia(),
             )
-            _renormalise_commas(items, flush_style)
+            _renormalise_commas(items, flush_style, self._value)
             return
         # multiline=True
         self._multiline = True
@@ -198,7 +198,7 @@ class Array(list[Any]):
             it.leading = Trivia()
         items[0].leading = Trivia([NewlineNode(text="\n"), WhitespaceNode(text="    ")])
         self._value.final_trivia = Trivia()
-        _renormalise_commas(items, style)
+        _renormalise_commas(items, style, self._value)
 
     def _synth_cst(self, value: Any) -> Any:
         from tomlrt._container import _synth_value  # noqa: PLC0415
@@ -225,10 +225,26 @@ class Array(list[Any]):
         cst, decoded = self._synth_cst(value)
         items = self._value.items
         style = self._style()
-        new_item = _new_item(cst, leading_first=not items, style=style)
+        # If appending into an empty array, any inner-bracket padding
+        # held in final_trivia is the prospective leading for the new
+        # item — adopt it (without clearing final_trivia) so `[ ]` →
+        # `[ 1 ]` rather than collapsing to either side.
+        adopted_leading: Any | None = None
+        if not items and self._value.final_trivia.pieces:
+            adopted_leading = _clone_trivia(self._value.final_trivia)
+        new_item = _new_item(
+            cst,
+            leading_first=not items,
+            style=style,
+            leading=adopted_leading,
+        )
         if items:
-            _flip_to_internal(items[-1], style)
+            _flip_to_internal(items[-1], style, self._value)
         items.append(new_item)
+        # The new tail inherits the array's terminal style (trailing
+        # comma + post-trivia), e.g. `\n    4,\n` for the multiline
+        # trailing-comma layout.
+        _flip_to_terminal(new_item, style)
         list.append(self, decoded)
 
     @override
@@ -254,9 +270,21 @@ class Array(list[Any]):
         if i < 0:
             i += len(self._value.items)
         items = self._value.items
+        # Snapshot style before mutation so the trailing-comma policy
+        # reflects the original last item, not the newly-exposed one.
+        style = self._style()
+        # If popping the terminal item and it carried bracket-padding
+        # in its `trailing`, migrate that into final_trivia so the new
+        # tail still renders as `... ]`.
+        if (
+            i == len(items) - 1
+            and items[i].trailing.pieces
+            and not self._value.final_trivia.pieces
+        ):
+            self._value.final_trivia = items[i].trailing
         items.pop(i)
         if items:
-            _flip_to_terminal(items[-1], self._style())
+            _flip_to_terminal(items[-1], style)
         return decoded
 
     @override
@@ -304,7 +332,7 @@ class Array(list[Any]):
             # Old prior-last needs internal flip if it was a singleton.
             # Restore terminal status on this one via _flip_to_terminal.
             if len(items) >= 2:
-                _flip_to_internal(items[-2], style)
+                _flip_to_internal(items[-2], style, self._value)
             _flip_to_terminal(new_item, style)
         else:
             # Internal — ensure trailing comma + standard separator.
@@ -317,9 +345,15 @@ class Array(list[Any]):
             list.reverse(self)
             return
         items = self._value.items
+        # Snapshot bracket padding + style before reorder; the leading
+        # of items[0] and the trailing of items[-1] are bracket-padding
+        # that belong to *the array*, not to those particular items.
+        style = self._style()
+        bracket_leading = _clone_trivia(items[0].leading) if items else _trivia_empty()
         items.reverse()
         list.reverse(self)
-        _renormalise_commas(items, self._style())
+        _normalise_for_renormalise(items, bracket_leading)
+        _renormalise_commas(items, style, self._value)
 
     @override
     def sort(self, *, key: Any = None, reverse: bool = False) -> None:
@@ -332,13 +366,17 @@ class Array(list[Any]):
         else:
             order = sorted(range(n), key=lambda i: key(self[i]), reverse=reverse)
         items = self._value.items
+        # See `reverse` — capture style + bracket padding before reorder.
+        style = self._style()
+        bracket_leading = _clone_trivia(items[0].leading) if items else _trivia_empty()
         new_items = [items[j] for j in order]
         new_decoded = [self[j] for j in order]
         items[:] = new_items
         list.clear(self)
         for v in new_decoded:
             list.append(self, v)
-        _renormalise_commas(items, self._style())
+        _normalise_for_renormalise(items, bracket_leading)
+        _renormalise_commas(items, style, self._value)
 
     @override
     def __setitem__(
@@ -381,7 +419,7 @@ class Array(list[Any]):
                 )
             items[key] = new_segment
             list.__setitem__(self, key, new_decoded)
-            _renormalise_commas(items, style)
+            _renormalise_commas(items, style, self._value)
             return
         # int index: just replace the value CST in place.
         i = int(key)
@@ -398,10 +436,21 @@ class Array(list[Any]):
             list.__delitem__(self, key)
             return
         items = self._value.items
+        # Snapshot bracket padding + style before mutation so a delete
+        # at index 0 doesn't strip the leading-bracket padding (which
+        # was owned by the original items[0]) and so trailing-comma
+        # policy reflects the original last item.
+        style = self._style()
+        had_leading = bool(items) and bool(items[0].leading.pieces)
+        leading_first = (
+            _clone_trivia(items[0].leading) if had_leading else _trivia_empty()
+        )
         del items[key]
         list.__delitem__(self, key)
         if items:
-            _flip_to_terminal(items[-1], self._style())
+            if had_leading and not items[0].leading.pieces:
+                items[0].leading = leading_first
+            _flip_to_terminal(items[-1], style)
 
     @override
     def __iadd__(self, other: Any) -> Self:
@@ -427,7 +476,7 @@ class Array(list[Any]):
                 style = self._style()
                 items = self._value.items
                 if items:
-                    _flip_to_internal(items[-1], style)
+                    _flip_to_internal(items[-1], style, self._value)
                 # First-of-original gets internal leading too (since we're
                 # now mid-array).
                 cloned.leading = _internal_leading(style)
@@ -547,8 +596,20 @@ def _new_item(
     )
 
 
-def _flip_to_internal(item: Any, style: _ArrayStyle) -> None:
-    """Make ``item`` look like an internal (non-last) item."""
+def _flip_to_internal(
+    item: Any, style: _ArrayStyle, value: ArrayValue | None = None
+) -> None:
+    """Make ``item`` look like an internal (non-last) item.
+
+    When ``value`` is supplied, any whitespace in ``item.trailing`` is
+    treated as bracket-padding and migrated into ``value.final_trivia``
+    (if that slot is empty) before being cleared from the item — so
+    that the original ``[ ..., x ]`` style survives an item being
+    demoted from terminal to internal.
+    """
+    if value is not None and item.trailing.pieces and not value.final_trivia.pieces:
+        value.final_trivia = item.trailing
+    item.trailing = _trivia_empty()
     item.has_comma = True
     item.post_comma_trivia = _clone_trivia(style.inter_separator)
 
@@ -567,13 +628,31 @@ def _trivia_empty() -> Any:
     return Trivia()
 
 
-def _renormalise_commas(items: list[Any], style: _ArrayStyle) -> None:
+def _renormalise_commas(
+    items: list[Any], style: _ArrayStyle, value: ArrayValue | None = None
+) -> None:
     """Reset has_comma + post_comma_trivia across ``items`` per style."""
     if not items:
         return
     for it in items[:-1]:
-        _flip_to_internal(it, style)
+        _flip_to_internal(it, style, value)
     _flip_to_terminal(items[-1], style)
+
+
+def _normalise_for_renormalise(items: list[Any], bracket_leading: Any) -> None:
+    """Prepare ``items`` for `_renormalise_commas` after a reorder.
+
+    Strips per-item ``leading`` (so the bracket-leading isn't double-
+    counted on whichever item now sits at index 0) and re-applies the
+    captured ``bracket_leading`` to the new ``items[0]``.
+    """
+    from tomlrt._trivia import Trivia  # noqa: PLC0415
+
+    if not items:
+        return
+    for it in items:
+        it.leading = Trivia()
+    items[0].leading = bracket_leading
 
 
 def _clone_item(item: Any) -> Any:
