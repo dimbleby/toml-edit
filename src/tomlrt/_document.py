@@ -357,11 +357,11 @@ class Table(dict[str, Any]):
         self,
         key: str,
         value: TomlInput,
-    ) -> TomlValue | None:
+    ) -> TomlValue:
         """Mutate the CST so ``key`` binds to ``value``.
 
-        Return the new dict-storage value if cheap to compute, else
-        ``None`` (asks the caller to fall back to `_refresh_key`).
+        Returns the new dict-storage value for ``key`` so the caller
+        can update its cache without an extra scan.
         """
         raise NotImplementedError
 
@@ -375,21 +375,6 @@ class Table(dict[str, Any]):
         super().clear()
         for k, v in self._items():
             super().__setitem__(k, v)
-
-    def _refresh_key(self, key: str) -> None:
-        """Re-read ``key`` from the CST after a mutation.
-
-        If ``key`` is no longer present in the CST, it is removed from
-        dict storage. Identity for *other* keys is preserved.
-        """
-        for k, v in self._items():
-            if k == key:
-                # dict.__setitem__ on an existing key preserves position;
-                # on a new key it appends. Both match CST behaviour.
-                super().__setitem__(key, v)
-                return
-        if super().__contains__(key):
-            super().__delitem__(key)
 
     # --- attachment / detachment ------------------------------------------
 
@@ -425,8 +410,6 @@ class Table(dict[str, Any]):
         new_v = self._set_value(key, value)
         if will_live_attach:
             dict.__setitem__(self, key, value)
-        elif new_v is None:
-            self._refresh_key(key)
         else:
             dict.__setitem__(self, key, new_v)
 
@@ -1019,14 +1002,14 @@ class _InlineTable(Table):
 
     # --- _DottedHost protocol ------------------------------------------------
 
-    def _set_at(self, path: tuple[str, ...], value: TomlInput) -> None:
+    def _set_at(self, path: tuple[str, ...], value: TomlInput) -> ValueNode:
         # Preserve in-place update for an exact path match (any depth) so
         # the entry's surrounding trivia and position survive round-tripping.
         for entry in self._node.entries:
             if entry.key.path == path:
                 entry.value = value_to_node(value)
-                return
-        self._replace_prefix(path, value)
+                return entry.value
+        return self._replace_prefix(path, value).value
 
     def _replace_prefix(
         self,
@@ -1071,7 +1054,7 @@ class _InlineTable(Table):
     # --- mapping mutation ----------------------------------------------------
 
     @override
-    def _set_value(self, key: str, value: TomlInput) -> TomlValue | None:
+    def _set_value(self, key: str, value: TomlInput) -> TomlValue:
         # Fast path: brand-new head key (dict cache surfaces single-segment
         # entries and dotted-key sub-tables, so absence here is conclusive).
         prefix = (key,)
@@ -1108,7 +1091,7 @@ class _DottedHost(Protocol):
     top of it re-read live state instead of a stale snapshot.
     """
 
-    def _set_at(self, path: tuple[str, ...], value: TomlInput) -> None: ...
+    def _set_at(self, path: tuple[str, ...], value: TomlInput) -> ValueNode: ...
 
     def _del_prefix(self, prefix: tuple[str, ...]) -> bool: ...
 
@@ -1125,14 +1108,14 @@ class _SectionDottedHost:
     def __init__(self, sections: list[SectionNode]) -> None:
         self._sections = sections
 
-    def _set_at(self, path: tuple[str, ...], value: TomlInput) -> None:
+    def _set_at(self, path: tuple[str, ...], value: TomlInput) -> ValueNode:
         # Preserve in-place update for an exact path match (any depth) so
         # the entry's surrounding trivia and position survive round-tripping.
         for sec in self._sections:
             for kv in sec.entries:
                 if kv.key.path == path:
                     kv.value = value_to_node(value)
-                    return
+                    return kv.value
         # Remove any existing entry at or under this path; remember which
         # section last hosted such an entry so the new dotted KV lands
         # near its predecessors when sections are split.
@@ -1161,6 +1144,7 @@ class _SectionDottedHost:
         new_kv = make_keyvalue_node(_make_dotted_key(path), value)
         new_kv.leading = _section_entry_leading(host_sec)
         host_sec.entries.append(new_kv)
+        return new_kv.value
 
     def _del_prefix(self, prefix: tuple[str, ...]) -> bool:
         any_removed = False
@@ -1241,9 +1225,12 @@ class _DottedSubTable(Table):
                 )
 
     @override
-    def _set_value(self, key: str, value: TomlInput) -> TomlValue | None:
-        self._host._set_at((*self._prefix, key), value)  # noqa: SLF001
-        return None
+    def _set_value(self, key: str, value: TomlInput) -> TomlValue:
+        # ``_set_at`` always lands a single entry at the exact path, so
+        # the resulting view at ``key`` is a terminal value (any prior
+        # deeper entries under ``(*prefix, key)`` were purged).
+        node = self._host._set_at((*self._prefix, key), value)  # noqa: SLF001
+        return _value_for(node)
 
     @override
     def _delete_value(self, key: str) -> None:
@@ -1463,8 +1450,9 @@ class _StdTable(Table):
             ("absent", None)
         """
         # Dict storage is a complete index of every key visible at this
-        # path: ``_populate`` and ``_refresh_key`` keep it in sync with
-        # the CST. If the key isn't cached, no scan can find it.
+        # path: ``_populate`` (and the targeted ``dict.__setitem__`` calls
+        # in ``_commit_value`` / ``_install_at_path``) keep it in sync
+        # with the CST. If the key isn't cached, no scan can find it.
         if not dict.__contains__(self, key):
             return ("absent", None)
         if self._anchor is not None:
@@ -1600,7 +1588,7 @@ class _StdTable(Table):
             ]
 
     @override
-    def _set_value(self, key: str, value: TomlInput) -> TomlValue | None:
+    def _set_value(self, key: str, value: TomlInput) -> TomlValue:
         kind, payload = self._classify(key)
         if kind in ("direct", "extras"):
             # In-place value swap: reuse the existing KV node.
@@ -2218,17 +2206,39 @@ class _StdTable(Table):
         been performed; this method only reconciles the dict-storage
         view.
         """
-        cur: Table = self
+        cur: _StdTable = self
+        narrow_pool: list[SectionNode] | None = None
         for part in parts[:-1]:
             existing = super(Table, cur).get(part)
-            if not isinstance(existing, Table):
-                # Either absent (implicit super-table just materialised
-                # in the CST) or replaced by a non-table en route: refresh
-                # from the CST so dict storage matches.
-                cur._refresh_key(part)  # noqa: SLF001
-            nxt = super(Table, cur).__getitem__(part)
-            assert isinstance(nxt, Table)
-            cur = nxt
+            if isinstance(existing, _StdTable):
+                cur = existing
+                continue
+            # ``part`` is missing in dict storage: an implicit super-
+            # table just materialised in the CST. Construct its view
+            # directly. A missing head implies no pre-existing sections
+            # under it, so the only sections relevant to this sub-tree
+            # are the freshly-spliced ones -- collected lazily on the
+            # first miss and reused for every deeper intermediate (each
+            # deeper ``_iter_table`` filters this pool by its own path
+            # prefix).
+            sub_path = (*cur._path, part)  # noqa: SLF001
+            if narrow_pool is None:
+                sp_len = len(sub_path)
+                narrow_pool = [
+                    sec
+                    for sec in self._doc_node.sections
+                    if sec.header is not None
+                    and len(sec.header.key.path) >= sp_len
+                    and sec.header.key.path[:sp_len] == sub_path
+                ]
+            sub = _StdTable(
+                self._doc_node,
+                sub_path,
+                owner_anchor=cur._owner_anchor,  # noqa: SLF001
+                _pool=narrow_pool,
+            )
+            super(Table, cur).__setitem__(part, sub)
+            cur = sub
         super(Table, cur).__setitem__(parts[-1], obj)
 
 
