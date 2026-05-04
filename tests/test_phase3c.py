@@ -180,11 +180,12 @@ def test_delete_missing_key_raises_keyerror() -> None:
 
 
 def test_section_only_doc_top_level_insert_deferred() -> None:
-    # Inserting a top-level KV into a doc that has only sections needs
-    # a structural seam (blank line); deferred to Phase 3d.
+    # 3d-5 lifted this restriction: inserting a top-level KV into a
+    # section-only doc now works with an inserted blank-line seam.
+    # Test moved to test_phase3d.py.
     doc = loads("[s]\nx = 1\n")
-    with pytest.raises(NotImplementedError):
-        doc["new"] = 1
+    doc["new"] = 1
+    assert dumps(doc) == "new = 1\n\n[s]\nx = 1\n"
 
 
 def test_insert_into_implicit_table_deferred() -> None:

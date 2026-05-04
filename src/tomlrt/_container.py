@@ -14,7 +14,7 @@ import sys
 from typing import TYPE_CHECKING, Any
 
 if sys.version_info >= (3, 12):
-    from typing import override
+    from typing import Self, override
 else:
     from typing_extensions import override
 
@@ -31,6 +31,8 @@ from tomlrt._values import (
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+    from typing_extensions import Self
 
     from tomlrt._slots import AoTEntry, Slot, SlotRef
     from tomlrt._values import InlineTableValue
@@ -185,6 +187,79 @@ class Container(dict[str, Any]):
         from tomlrt import _layout_ops  # noqa: PLC0415
 
         _layout_ops.delete_key(self, key)
+
+    # ------------------------------------------------------------------
+    # Dict-method overrides (Phase 3d-2)
+    #
+    # All of these route through ``self[k] = v`` / ``del self[k]`` so
+    # the inline-vs-section-vs-headerless dispatch in ``__setitem__`` /
+    # ``__delitem__`` handles both flavours uniformly.
+    # ------------------------------------------------------------------
+
+    @override
+    def clear(self) -> None:
+        for k in list(dict.keys(self)):
+            del self[k]
+
+    @override
+    def pop(self, key: str, /, *args: Any) -> Any:
+        if len(args) > 1:
+            msg = f"pop expected at most 2 arguments, got {1 + len(args)}"
+            raise TypeError(msg)
+        if key in self:
+            value = dict.__getitem__(self, key)
+            del self[key]
+            return value
+        if args:
+            return args[0]
+        raise KeyError(key)
+
+    @override
+    def popitem(self) -> tuple[str, Any]:
+        try:
+            key = next(reversed(self))
+        except StopIteration:
+            msg = "dictionary is empty"
+            raise KeyError(msg) from None
+        value = dict.__getitem__(self, key)
+        del self[key]
+        return key, value
+
+    @override
+    def update(self, *args: Any, **kwargs: Any) -> None:
+        if len(args) > 1:
+            msg = f"update expected at most 1 argument, got {len(args)}"
+            raise TypeError(msg)
+        if args:
+            other = args[0]
+            if hasattr(other, "keys"):
+                for k in other.keys():  # noqa: SIM118
+                    self[k] = other[k]
+            else:
+                for k, v in other:
+                    self[k] = v
+        for k, v in kwargs.items():
+            self[k] = v
+
+    @override
+    def setdefault(self, key: str, default: Any = None) -> Any:
+        if key in self:
+            return dict.__getitem__(self, key)
+        self[key] = default
+        return dict.__getitem__(self, key)
+
+    @override
+    def __ior__(self, other: Any) -> Self:  # type: ignore[override]
+        self.update(other)
+        return self
+
+    def __copy__(self) -> Container:
+        msg = "copy.copy on a tomlrt container is deferred to Phase 3e"
+        raise NotImplementedError(msg)
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> Container:
+        msg = "copy.deepcopy on a tomlrt container is deferred to Phase 3e"
+        raise NotImplementedError(msg)
 
     # ------------------------------------------------------------------
     # Inline-table dispatch (Phase 3b)

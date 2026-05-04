@@ -33,7 +33,7 @@ import re
 from typing import TYPE_CHECKING
 
 from tomlrt._slots import KVSlot, SlotRef, StructuralHeaderSlot
-from tomlrt._trivia import EolTrivia, NewlineNode, Trivia
+from tomlrt._trivia import CommentNode, EolTrivia, NewlineNode, Trivia
 from tomlrt._values import KeyPart
 
 if TYPE_CHECKING:
@@ -137,13 +137,13 @@ def append_direct_kv(c: Container, key: str, value: Value) -> None:
         # Header-only container: anchor at the header itself.
         insert_after(header_ref.slot, new_slot, doc)
     elif doc._head is not None:  # noqa: SLF001
-        # Doc root with no top-level KV but the doc has section
-        # headers — Phase 3d will own the seam-with-blank-line case.
-        msg = (
-            "inserting a top-level KV into a section-only document is not "
-            "yet supported (Phase 3d structural seam)"
-        )
-        raise NotImplementedError(msg)
+        # Section-only doc: insert the new KV at the head of the doc
+        # stream, before the first existing slot. Ensure a blank-line
+        # separator on what is about to become the second slot, so the
+        # new KV does not visually collide with `[s]`.
+        old_head = doc._head  # noqa: SLF001
+        insert_before_head(new_slot, doc)
+        _ensure_leading_blank_line(old_head, doc)
     elif doc._trailing.pieces:  # noqa: SLF001
         # Slotless doc with preamble-only trivia (e.g. comment-only
         # source). Inserting would either silently relocate that
@@ -161,14 +161,20 @@ def append_direct_kv(c: Container, key: str, value: Value) -> None:
 
     new_ref = SlotRef(slot=new_slot, container=c, local_key=key)
     # The new ref's correct position in ``c._refs`` is immediately
-    # after the anchor ref (the previous body_tail's ref). For an
-    # implicit / header-only container with no body refs yet, the
-    # new ref goes at the end (after the header ref, if any).
-    if body_tail is None:
-        c._refs.append(new_ref)  # noqa: SLF001
-    else:
+    # after the anchor ref (the previous body_tail's ref). With no
+    # anchor: head-of-doc insert (3d-5) → index 0, so the ref
+    # ordering matches doc-stream (existing section-header refs come
+    # after); header-only / empty-doc → end (no preceding refs to
+    # order against).
+    if body_tail is not None:
         anchor_idx = _find_ref_index_by_slot(c, body_tail)
         c._refs.insert(anchor_idx + 1, new_ref)  # noqa: SLF001
+    elif header_ref is None and doc._head is new_slot:  # noqa: SLF001
+        # Head-of-doc insert: the new ref must precede any existing
+        # section-header refs in c._refs to keep doc-stream order.
+        c._refs.insert(0, new_ref)  # noqa: SLF001
+    else:
+        c._refs.append(new_ref)  # noqa: SLF001
     c._index.setdefault(key, []).append(new_ref)  # noqa: SLF001
     c._body_tail = new_slot  # noqa: SLF001
 
@@ -429,6 +435,29 @@ def _ensure_terminator(slot: Slot, doc: Document) -> None:
             comment=slot.eol.comment,
             newline=NewlineNode(text=doc._newline),  # noqa: SLF001
         )
+
+
+def _ensure_leading_blank_line(slot: Slot, doc: Document) -> None:
+    """Ensure ``slot.leading`` begins with a blank line.
+
+    Used by the section-only-doc head-insert path (3d-5) to separate
+    a freshly inserted top-level KV from the section header that
+    used to be the doc head.
+
+    A run of `pieces` is considered to "start with a blank line"
+    when the first non-whitespace piece is a `NewlineNode` (i.e.
+    optional leading indent then a bare newline). If a comment
+    appears before any newline, we prepend a fresh `NewlineNode`
+    so the comment block is visually detached from the new KV.
+    """
+    pieces = slot.leading.pieces
+    for p in pieces:
+        if isinstance(p, NewlineNode):
+            return
+        if isinstance(p, CommentNode):
+            break
+        # WhitespaceNode: keep scanning.
+    pieces.insert(0, NewlineNode(text=doc._newline))  # noqa: SLF001
 
 
 def _find_ref_index_by_slot(c: Container, slot: Slot) -> int:
