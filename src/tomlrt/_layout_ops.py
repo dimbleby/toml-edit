@@ -521,6 +521,24 @@ def _aot_sibling_kvs(c: Container) -> list[KVSlot]:
     return []
 
 
+def _leading_has_blank_line(leading: Trivia) -> bool:
+    r"""Whether ``leading`` contains at least one blank physical line.
+
+    A blank line is a line in the leading-trivia stream that contains
+    no comment piece. A comment-line newline (e.g. ``# foo\n``) does
+    not count as a blank — the newline belongs to the comment.
+    """
+    has_comment = False
+    for p in leading.pieces:
+        if isinstance(p, CommentNode):
+            has_comment = True
+        elif isinstance(p, NewlineNode):
+            if not has_comment:
+                return True
+            has_comment = False
+    return False
+
+
 def _kv_separator_leading(c: Container, doc: Document) -> Trivia:
     """Pick leading trivia for a new direct-KV slot in container ``c``.
 
@@ -543,9 +561,7 @@ def _kv_separator_leading(c: Container, doc: Document) -> Trivia:
     indent_text = _extract_indent(kvs[-1].leading)
     add_blank = False
     if len(kvs) >= 2:
-        add_blank = all(
-            any(isinstance(p, NewlineNode) for p in kv.leading.pieces) for kv in kvs[1:]
-        )
+        add_blank = all(_leading_has_blank_line(kv.leading) for kv in kvs[1:])
     pieces: list[Any] = []
     if add_blank:
         pieces.append(NewlineNode(text=doc._newline))  # noqa: SLF001
@@ -591,9 +607,7 @@ def _host_kv_separator_leading(host: Container, doc: Document) -> Trivia:
     indent_text = _extract_indent(kvs[-1].leading)
     add_blank = False
     if len(kvs) >= 2:
-        add_blank = all(
-            any(isinstance(p, NewlineNode) for p in kv.leading.pieces) for kv in kvs[1:]
-        )
+        add_blank = all(_leading_has_blank_line(kv.leading) for kv in kvs[1:])
     pieces: list[Any] = []
     if add_blank:
         pieces.append(NewlineNode(text=doc._newline))  # noqa: SLF001
@@ -1029,6 +1043,27 @@ def _splice_at_end(slot: Slot, doc: Document) -> None:
         insert_after(anchor, slot, doc)
 
 
+def _split_leading_structural(leading: Trivia) -> tuple[Trivia, Trivia]:
+    """Split a leading-trivia stream into (structural-prefix, comment-remainder).
+
+    The structural prefix is the run of whitespace and newline pieces
+    before the first comment piece (if any). The remainder starts at
+    the first comment piece and includes everything after it. If
+    there is no comment piece, the whole leading is structural and
+    the remainder is empty.
+
+    Used by AoT reorder: structural separators stay positional;
+    comment remainders travel with their entry.
+    """
+    pieces = leading.pieces
+    cut = len(pieces)
+    for i, p in enumerate(pieces):
+        if isinstance(p, CommentNode):
+            cut = i
+            break
+    return Trivia(list(pieces[:cut])), Trivia(list(pieces[cut:]))
+
+
 def _build_section_leading(doc: Document) -> Trivia:
     """Trivia for a fresh section header.
 
@@ -1047,10 +1082,7 @@ def _build_section_leading(doc: Document) -> Trivia:
     # Look at separators between consecutive headers (skip the first
     # — its leading is the file preamble, not a separator).
     if len(headers) >= 2:
-        any_no_blank = any(
-            not any(isinstance(p, NewlineNode) for p in h.leading.pieces)
-            for h in headers[1:]
-        )
+        any_no_blank = any(not _leading_has_blank_line(h.leading) for h in headers[1:])
         if any_no_blank:
             return Trivia()
     return Trivia([NewlineNode(text=doc._newline)])  # noqa: SLF001
@@ -1100,12 +1132,7 @@ def _aot_separator(aot: AoT, doc: Document) -> Trivia:
     separators = headers[1:]
     if not separators:
         return Trivia([NewlineNode(text=nl)])
-    any_no_blank = False
-    for h in separators:
-        nl_count = sum(1 for p in h.leading.pieces if isinstance(p, NewlineNode))
-        if nl_count == 0:
-            any_no_blank = True
-            break
+    any_no_blank = any(not _leading_has_blank_line(h.leading) for h in separators)
     if any_no_blank:
         return Trivia()
     return Trivia([NewlineNode(text=nl)])
@@ -1507,10 +1534,12 @@ def replace_aot_entry(aot: object, index: int, body: object) -> None:
         msg = f"AoT entry replacement body must be Mapping, got {type(body).__name__}"
         raise TypeError(msg)
     entry_table = aot[index]
+    if body is entry_table:
+        return
+    items = list(body.items()) if body is not None else []
     entry_table.clear()
-    if body is not None:
-        for k, v in body.items():
-            entry_table[k] = v
+    for k, v in items:
+        entry_table[k] = v
 
 
 def renormalise_aot_order(aot: object, new_logical_order: list[Any]) -> None:
@@ -1545,6 +1574,23 @@ def renormalise_aot_order(aot: object, new_logical_order: list[Any]) -> None:
         e = entry_table._owner_aot_entry  # noqa: SLF001
         assert e is not None
         per_entry_slots.append(list(e.entry_slots))
+
+    # Snapshot the structural-separator part of each entry header's
+    # leading, by position. The structural separator (leading blank
+    # lines / whitespace before any comment) belongs to the position
+    # in the doc; the remainder (comment block + interior whitespace)
+    # belongs to the entry and travels with it on reorder.
+    structural_by_position: list[Trivia] = []
+    remainder_by_entry_id: dict[int, Trivia] = {}
+    for i, entry_table in enumerate(list(aot)):
+        if not per_entry_slots[i]:
+            structural_by_position.append(Trivia())
+            remainder_by_entry_id[id(entry_table)] = Trivia()
+            continue
+        head_slot = per_entry_slots[i][0]
+        structural, remainder = _split_leading_structural(head_slot.leading)
+        structural_by_position.append(structural)
+        remainder_by_entry_id[id(entry_table)] = remainder
 
     # Earliest owned slot in doc-stream gives us the splice anchor.
     # Walk the doc once, first hit wins. O(N_doc) but predictable
@@ -1586,12 +1632,17 @@ def renormalise_aot_order(aot: object, new_logical_order: list[Any]) -> None:
                 insert_after(insert_after_slot, slot, doc)
             insert_after_slot = slot
 
-    # If the renormalisation promoted a different slot to doc head,
-    # strip its leading blanks (matching the unlink_slot policy for
-    # real deletes). Safe no-op if the head's leading already lacks
-    # blanks.
-    if anchor_prev is None and doc._head is not None:  # noqa: SLF001
-        _strip_leading_blank_lines(doc._head)  # noqa: SLF001
+    # Re-apply the structural-separator portion of each new-position
+    # entry's header leading from the snapshot (position-keyed),
+    # stitched onto that entry's own comment-remainder (entry-keyed).
+    for new_pos, entry_table in enumerate(new_logical_order):
+        block = slot_blocks[id(entry_table)]
+        if not block:
+            continue
+        head_slot = block[0]
+        structural = structural_by_position[new_pos]
+        remainder = remainder_by_entry_id[id(entry_table)]
+        head_slot.leading = Trivia(list(structural.pieces) + list(remainder.pieces))
 
     # Reflect the new order in the AoT's own list view.
     list.clear(aot)

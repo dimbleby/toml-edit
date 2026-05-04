@@ -445,12 +445,37 @@ class Array(list[Any]):
         leading_first = (
             _clone_trivia(items[0].leading) if had_leading else _trivia_empty()
         )
+        # Snapshot terminal item's trailing for tail-pad migration: if
+        # the delete includes the original last item and final_trivia
+        # is empty, migrate that trailing into final_trivia so the new
+        # tail still renders with bracket padding.
+        last_idx = len(items) - 1
+        had_tail_pad = (
+            bool(items)
+            and bool(items[last_idx].trailing.pieces)
+            and not self._value.final_trivia.pieces
+        )
+        tail_pad = (
+            _clone_trivia(items[last_idx].trailing) if had_tail_pad else _trivia_empty()
+        )
+        if isinstance(key, slice):
+            removed_indices = range(*key.indices(len(items)))
+            tail_was_removed = last_idx in removed_indices
+        else:
+            i = int(key)
+            if i < 0:
+                i += len(items)
+            tail_was_removed = i == last_idx
         del items[key]
         list.__delitem__(self, key)
         if items:
             if had_leading and not items[0].leading.pieces:
                 items[0].leading = leading_first
+            if had_tail_pad and tail_was_removed:
+                self._value.final_trivia = tail_pad
             _flip_to_terminal(items[-1], style)
+        elif had_tail_pad and tail_was_removed:
+            self._value.final_trivia = tail_pad
 
     @override
     def __iadd__(self, other: Any) -> Self:
