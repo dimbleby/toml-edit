@@ -288,7 +288,8 @@ class Container(dict[str, Any]):
                 return
             # Unsupported value type — TypeError, not NIE.
             msg = (
-                f"unsupported value type {type(value).__name__!r} for TOML key {key!r}"
+                f"Cannot convert value of type {type(value).__name__!r} "
+                f"for TOML key {key!r}"
             )
             raise TypeError(msg)
         # New direct-KV insert (Phase 3c / 3d / 4-partial).
@@ -483,14 +484,12 @@ class Container(dict[str, Any]):
         return self
 
     def __copy__(self) -> Container:
-        # A copy is a detached (private) container with the same logical
-        # content. Snapshot via to_dict() and rebuild via Table.section.
-        return Table.section(self.to_dict())
+        # Equivalent to deepcopy: returns an independent detached
+        # container preserving nested typed views, so .table() etc.
+        # continue to work on the copy.
+        return _deep_section_clone(self)
 
     def __deepcopy__(self, memo: dict[int, Any]) -> Container:
-        # Deepcopy is a deep, detached clone where nested mappings
-        # remain typed sections so they can be navigated via
-        # `.table()` etc.
         return _deep_section_clone(self)
 
     # ------------------------------------------------------------------
@@ -577,6 +576,68 @@ class Container(dict[str, Any]):
                 dict.__delitem__(parent, my_key)
             cur = parent
 
+    def install(self, path: str | Sequence[str], value: Any) -> Any:
+        """Set ``value`` at the (possibly dotted) ``path``.
+
+        Intermediate sections are created as needed via `ensure_table`.
+        Returns the live view stored at the leaf.
+        """
+        parts = _validate_path(path)
+        if self._inline and len(parts) > 1:
+            from tomlrt._errors import TOMLError  # noqa: PLC0415
+
+            msg = "cannot install dotted path inside an inline-style table"
+            raise TOMLError(msg)
+        host = self if len(parts) == 1 else self.ensure_table(parts[:-1])
+        host[parts[-1]] = value
+        return host[parts[-1]]
+
+    def ensure_table(self, path: str | Sequence[str]) -> Table:
+        """Return the section at ``path``, creating it if missing.
+
+        If any prefix already exists as a section, descent continues
+        from there. Intermediate components missing entirely are left
+        implicit; only the deepest component gets an explicit
+        ``[a.b.c]`` header. An existing non-table at any component
+        raises ``TypeError``.
+        """
+        parts = _validate_path(path)
+        if self._inline:
+            from tomlrt._errors import TOMLError  # noqa: PLC0415
+
+            msg = "cannot create section table inside an inline-style table"
+            raise TOMLError(msg)
+        cur: Container = self
+        i = 0
+        while i < len(parts):
+            p = parts[i]
+            if p not in cur:
+                break
+            nxt = dict.__getitem__(cur, p)
+            if not isinstance(nxt, Container) or nxt._inline:  # noqa: SLF001
+                msg = f"cannot descend into {p!r}: not a section table"
+                raise TypeError(msg)
+            cur = nxt
+            i += 1
+        if i == len(parts):
+            assert isinstance(cur, Table)
+            return cur
+        if cur._layout_root is None:  # noqa: SLF001
+            # Detached: build nested Table.section()s purely in dict
+            # storage. No layout ops.
+            for p in parts[i:]:
+                child = Table.section()
+                dict.__setitem__(cur, p, child)
+                cur = child
+            assert isinstance(cur, Table)
+            return cur
+        from tomlrt import _layout_ops  # noqa: PLC0415
+
+        new_section = Table.section()
+        attached = _layout_ops.attach_section_at(cur, parts[i:], new_section)
+        assert isinstance(attached, Table)
+        return attached
+
 
 class Table(Container):
     """A section table, implicit table, or inline table view."""
@@ -660,56 +721,6 @@ class Document(Container):
         from tomlrt._public import loads  # noqa: PLC0415
 
         return loads(self.render())
-
-    def install(self, path: str | Sequence[str], value: Any) -> Any:
-        """Set ``value`` at the (possibly dotted) ``path``.
-
-        Intermediate sections are created as needed via `ensure_table`.
-        Returns the live view stored at the leaf.
-        """
-        parts = _validate_path(path)
-        host = self if len(parts) == 1 else self.ensure_table(parts[:-1])
-        host[parts[-1]] = value
-        return host[parts[-1]]
-
-    def ensure_table(self, path: str | Sequence[str]) -> Table:
-        """Return the section at ``path``, creating it if missing.
-
-        If any prefix already exists as a section, descent continues
-        from there. Intermediate components missing entirely are left
-        implicit; only the deepest component gets an explicit
-        ``[a.b.c]`` header. An existing non-table at any component
-        raises ``TypeError``.
-        """
-        parts = _validate_path(path)
-        # Walk as far down as existing structure goes.
-        cur: Container = self
-        i = 0
-        while i < len(parts):
-            p = parts[i]
-            if p not in cur:
-                break
-            nxt = dict.__getitem__(cur, p)
-            if not isinstance(nxt, Container) or nxt._inline:  # noqa: SLF001
-                msg = f"cannot descend into {p!r}: not a section table"
-                raise TypeError(msg)
-            cur = nxt
-            i += 1
-        if i == len(parts):
-            assert isinstance(cur, Table)
-            return cur
-        # Synthesise a single section spanning the remaining components.
-        from tomlrt import _layout_ops  # noqa: PLC0415
-
-        new_section = Table.section()
-        # Compose the deepest section path relative to `cur`.
-        # We need a multi-component child key under `cur`. Easiest: use
-        # attach_section but adjusted. For now we only support single
-        # missing tail (test case has all-missing). Build by rebinding
-        # the section's path manually.
-        attached = _layout_ops.attach_section_at(cur, parts[i:], new_section)
-        assert isinstance(attached, Table)
-        return attached
 
 
 def _deep_section_clone(c: Container) -> Container:
