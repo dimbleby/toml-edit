@@ -3487,9 +3487,35 @@ class AoT(list[Table]):
         any nested ``[a.sub]``-style sub-sections of the dying entry
         would be silently dropped from the orphaned view.
         """
+        if not targets:
+            return
+        # Per-target ``aot_entry_block`` is O(N); calling it once per
+        # target turns clearing N entries into O(N**2). Segment the
+        # document into per-entry blocks in a single pass instead.
+        wanted = {id(sec) for _, sec in targets}
+        blocks: dict[int, list[SectionNode]] = {}
+        current: list[SectionNode] | None = None
+        plen = len(self._path)
+        for sec in self._doc_node.sections:
+            hdr = sec.header
+            if hdr is None:
+                current = None
+                continue
+            hpath = hdr.key.path
+            if hdr.kind == "array" and hpath == self._path:
+                if id(sec) in wanted:
+                    current = [sec]
+                    blocks[id(sec)] = current
+                else:
+                    current = None
+                continue
+            if current is not None and len(hpath) > plen and hpath[:plen] == self._path:
+                current.append(sec)
+                continue
+            current = None
         to_remove: set[SectionNode] = set()
         for entry, sec in targets:
-            block = self._doc_node.aot_entry_block(sec)
+            block = blocks.get(id(sec), [sec])
             entry._detach(DocumentNode(sections=list(block)))  # noqa: SLF001
             to_remove.update(block)
         self._doc_node.remove_sections(to_remove)
