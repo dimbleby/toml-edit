@@ -1218,6 +1218,134 @@ def add_aot_entry(aot: object, body: object) -> object:
     return entry_table
 
 
+def clone_aot_entry(aot: object, src_entry_table: object) -> object:
+    """Append a deep CST clone of ``src_entry_table`` to ``aot``.
+
+    Preserves the source entry's per-slot leading / EOL / lexeme bytes
+    so per-entry comments and trailing-comment formatting survive.
+    The cloned entry's header leading is rewritten to the
+    ``_aot_separator`` policy for "next entry", but any post-structural
+    comment block on the source header is retained.
+
+    Returns the new ``Table`` view.
+    """
+    import copy  # noqa: PLC0415
+
+    from tomlrt._array import AoT  # noqa: PLC0415
+    from tomlrt._container import Table  # noqa: PLC0415
+
+    assert isinstance(aot, AoT)
+    assert isinstance(src_entry_table, Table)
+    parent = aot._parent  # noqa: SLF001
+    layout_root = aot._layout_root  # noqa: SLF001
+    path = aot._path  # noqa: SLF001
+    if layout_root is None or parent is None or not path:
+        msg = "AoT.clone_entry requires the AoT to be attached to a document"
+        raise RuntimeError(msg)
+    doc = layout_root
+
+    src_entry = src_entry_table._owner_aot_entry  # noqa: SLF001
+    if src_entry is None:
+        msg = "Source entry has no owning AoTEntry"
+        raise RuntimeError(msg)
+
+    # Restrict to simple entries (header + direct KVs only). Nested
+    # sub-section descendants need the recursive Table-view rebuild
+    # path — deferred.
+    src_slots = list(src_entry.entry_slots)
+    if not src_slots or not isinstance(src_slots[0], StructuralHeaderSlot):
+        msg = "Source entry has no header slot"
+        raise RuntimeError(msg)
+    for s in src_slots[1:]:
+        if not isinstance(s, KVSlot):
+            msg = (
+                "AoT.__imul__ for entries with nested sub-sections "
+                "is not yet implemented"
+            )
+            raise NotImplementedError(msg)
+
+    ordinal = len(aot)
+    new_entry = AoTEntry(path=path, ordinal=ordinal)
+
+    # Deep-clone slots one at a time, then rebind owner_aot_entry /
+    # entry to the new entry. Reset linked-list pointers — they get
+    # set during splicing below.
+    cloned_slots: list[Slot] = []
+    for s in src_slots:
+        c: Slot = copy.deepcopy(s)
+        c._prev = None  # noqa: SLF001
+        c._next = None  # noqa: SLF001
+        if isinstance(c, (KVSlot, StructuralHeaderSlot)):
+            c.owner_aot_entry = new_entry
+        if isinstance(c, StructuralHeaderSlot) and c.entry is not None:
+            c.entry = new_entry
+        cloned_slots.append(c)
+        new_entry.entry_slots.append(c)
+
+    # Header leading: keep any post-structural comment block from the
+    # source, replace structural prefix with the standard inter-entry
+    # separator.
+    head = cloned_slots[0]
+    assert isinstance(head, StructuralHeaderSlot)
+    cloned_header: StructuralHeaderSlot = head
+    _structural, remainder = _split_leading_structural(cloned_header.leading)
+    sep = _aot_separator(aot, doc)
+    cloned_header.leading = Trivia([*sep.pieces, *remainder.pieces])
+
+    # Build the new entry's Table view.
+    entry_table = Table()
+    entry_table._layout_root = doc  # noqa: SLF001
+    entry_table._path = path  # noqa: SLF001
+    entry_table._parent = parent  # noqa: SLF001
+    entry_table._owner_aot_entry = new_entry  # noqa: SLF001
+    own_header_ref = SlotRef(slot=cloned_header, container=entry_table, local_key=None)
+    entry_table._refs.append(own_header_ref)  # noqa: SLF001
+    entry_table._header_ref = own_header_ref  # noqa: SLF001
+
+    # Splice cloned slots after the last existing AoT-owned slot.
+    anchor = _last_aot_slot(aot)
+    if anchor is None:
+        _splice_at_end(cloned_header, doc)
+    else:
+        _ensure_terminator(anchor, doc)
+        insert_after(anchor, cloned_header, doc)
+    prev: Slot = cloned_header
+    for s in cloned_slots[1:]:
+        _ensure_terminator(prev, doc)
+        insert_after(prev, s, doc)
+        prev = s
+
+    # File parent-chain ref for the new header.
+    parent_ref = SlotRef(slot=cloned_header, container=parent, local_key=path[-1])
+    parent._refs.append(parent_ref)  # noqa: SLF001
+    parent._index.setdefault(path[-1], []).append(parent_ref)  # noqa: SLF001
+
+    # Build refs + dict cache for direct KVs in the cloned body. For
+    # scalars we can reuse the source dict-cache value (immutable).
+    # For inline arrays / inline tables, reusing the view would still
+    # point at the source slots — defer those.
+    for s in cloned_slots[1:]:
+        assert isinstance(s, KVSlot)
+        if len(s.key_parts) != 1:
+            msg = "AoT.__imul__ for entries with dotted KVs is not yet implemented"
+            raise NotImplementedError(msg)
+        key = s.key_parts[0].value
+        kv_ref = SlotRef(slot=s, container=entry_table, local_key=key)
+        entry_table._refs.append(kv_ref)  # noqa: SLF001
+        entry_table._index.setdefault(key, []).append(kv_ref)  # noqa: SLF001
+        src_decoded = src_entry_table[key]
+        if isinstance(src_decoded, (dict, list)):
+            msg = (
+                "AoT.__imul__ for entries with inline-array / inline-table "
+                "values is not yet implemented"
+            )
+            raise NotImplementedError(msg)
+        dict.__setitem__(entry_table, key, src_decoded)
+
+    list.append(aot, entry_table)
+    return entry_table
+
+
 def attach_section_at(
     parent: Container,
     sub_path: tuple[str, ...] | list[str],

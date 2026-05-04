@@ -1042,13 +1042,11 @@ class AoT(list["Table"]):
             return self
         if count == 1 or self._layout_root is None:
             return self
-        # Snapshot original entries then add count-1 deepcopies.
-        from copy import deepcopy  # noqa: PLC0415
-
+        # Snapshot original entries then add count-1 CST clones.
         originals = list(self)
         for _ in range(count - 1):
             for e in originals:
-                _layout_ops.add_aot_entry(self, deepcopy(dict(e)))
+                _layout_ops.clone_aot_entry(self, e)
         return self
 
 
