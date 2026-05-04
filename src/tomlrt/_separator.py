@@ -313,7 +313,7 @@ def _ensure_trailing_indent(trivia: Trivia, indent: str) -> None:
     if nl < 0:
         return
     tail = text[nl + 1 :]
-    if tail or not all(c in " \t" for c in tail):
+    if tail:
         return
     trivia.pieces.append(WhitespaceNode(indent))
 
