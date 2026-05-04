@@ -1631,43 +1631,72 @@ class _StdTable(Table):
         Pure structural removal; caller runs
         `DocumentNode.normalise_top_blank`.
         """
-        for sec in self._direct_sections():
-            sec.entries[:] = [kv for kv in sec.entries if kv.key.path[0] != key]
         prefix = (*self._path, key)
+        captured, kept = self._walk_purge_under(prefix, scrub_direct_head=True)
+        if captured:
+            self._doc_node.sections[:] = kept
+
+    def _walk_purge_under(
+        self,
+        prefix: tuple[str, ...],
+        *,
+        scrub_direct_head: bool,
+    ) -> tuple[list[SectionNode], list[SectionNode]]:
+        """One-pass partition of ``doc_sections`` by ``prefix`` + scope.
+
+        Returns ``(captured, kept)``: ``captured`` is in-scope sections
+        whose header path starts with ``prefix``; ``kept`` is everything
+        else (with two in-place mutations applied as it goes).
+
+        Side effects on ``kept`` sections:
+
+        - if ``scrub_direct_head``: drop KVs whose first key part equals
+          ``prefix[-1]`` from sections that directly back ``self``;
+        - drop ancestor-section dotted KVs whose full path passes
+          through and extends past ``prefix`` (e.g. ``[outer]`` hosting
+          ``foo.bar = 1`` when purging ``foo`` from the ``outer`` view).
+        """
         plen = len(prefix)
+        ppath_len = len(self._path)
+        head_key = prefix[-1]
         scope = self._scope()
         scope_ids = None if scope is None else {id(s) for s in scope}
-        doc_sections = self._doc_node.sections
-        doc_sections[:] = [
-            sec
-            for sec in doc_sections
-            if not (
-                (scope_ids is None or id(sec) in scope_ids)
-                and sec.header is not None
-                and len(sec.header.key.path) >= plen
-                and sec.header.key.path[:plen] == prefix
-            )
-        ]
-        # Drop any ancestor-section dotted KV that contributes to our
-        # path + key (e.g. ``[tool] poetry.name = "x"`` when purging
-        # ``name`` from the ``tool.poetry`` view). The ``hlen >= plen``
-        # check below skips every section we just removed, so iterating
-        # the pre-splice scope is safe.
-        ppath_len = len(self._path)
-        for sec in scope if scope is not None else doc_sections:
+        direct_ids = (
+            {id(s) for s in self._direct_sections()} if scrub_direct_head else set()
+        )
+        captured: list[SectionNode] = []
+        kept: list[SectionNode] = []
+        for sec in self._doc_node.sections:
+            in_scope = scope_ids is None or id(sec) in scope_ids
             hdr = sec.header
             host_path: tuple[str, ...] = hdr.key.path if hdr is not None else ()
             hlen = len(host_path)
-            if hlen >= plen or host_path != prefix[:hlen]:
+            if (
+                in_scope
+                and hdr is not None
+                and hlen >= plen
+                and host_path[:plen] == prefix
+            ):
+                captured.append(sec)
                 continue
-            sec.entries[:] = [
-                kv
-                for kv in sec.entries
-                if not (
-                    len(kv.key.path) > ppath_len - hlen
-                    and (*host_path, *kv.key.path)[:plen] == prefix
-                )
-            ]
+            kept.append(sec)
+            if not in_scope:
+                continue
+            if id(sec) in direct_ids:
+                sec.entries[:] = [
+                    kv for kv in sec.entries if kv.key.path[0] != head_key
+                ]
+                continue
+            if hlen < plen and host_path == prefix[:hlen]:
+                sec.entries[:] = [
+                    kv
+                    for kv in sec.entries
+                    if not (
+                        len(kv.key.path) > ppath_len - hlen
+                        and (*host_path, *kv.key.path)[:plen] == prefix
+                    )
+                ]
+        return captured, kept
 
     @override
     def _set_value(self, key: str, value: TomlInput) -> TomlValue:
@@ -1725,6 +1754,29 @@ class _StdTable(Table):
                     return
             return  # pragma: no cover - defensive: kv must be reachable
         self._purge_conflicting(key)
+        self._doc_node.normalise_top_blank()
+
+    @override
+    def __delitem__(self, key: str) -> None:
+        old = dict.get(self, key)
+        if old is None:
+            raise KeyError(key)
+        if isinstance(old, (_StdTable, AoT)) and old._attached:  # noqa: SLF001
+            # Sub-view delete: one fused walk replaces a per-key
+            # _detach + _purge_conflicting (each O(total sections)).
+            self._delete_subview(key, old)
+        else:
+            if isinstance(old, Array):
+                old._detach()  # noqa: SLF001
+            self._delete_value(key)
+        dict.pop(self, key, None)
+
+    def _delete_subview(self, key: str, old: _StdTable | AoT) -> None:
+        prefix = (*self._path, key)
+        captured, kept = self._walk_purge_under(prefix, scrub_direct_head=False)
+        old._detach(DocumentNode(sections=captured))  # noqa: SLF001
+        if captured:
+            self._doc_node.sections[:] = kept
         self._doc_node.normalise_top_blank()
 
     @override

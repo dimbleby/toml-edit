@@ -1855,12 +1855,14 @@ def test_clear_doc_with_aot_children_drops_all() -> None:
 
 
 def test_clear_doc_orphans_held_section_view() -> None:
-    doc = tomlrt.loads(td("""
+    doc = tomlrt.loads(
+        td("""
         [a]
         x = 1
         [a.sub]
         y = 2
-        """))
+        """)
+    )
     held = doc["a"]
     doc.clear()
     assert dict(doc) == {}
@@ -1872,12 +1874,14 @@ def test_clear_doc_orphans_held_section_view() -> None:
 
 
 def test_clear_doc_orphans_held_aot_view() -> None:
-    doc = tomlrt.loads(td("""
+    doc = tomlrt.loads(
+        td("""
         [[a]]
         n = 1
         [[a]]
         n = 2
-        """))
+        """)
+    )
     held = doc["a"]
     doc.clear()
     assert tomlrt.dumps(doc) == ""
@@ -1988,3 +1992,64 @@ def test_clear_empty_inline_and_dotted_subtable_are_noops() -> None:
     del sub["b"]
     sub.clear()
     assert dict(sub) == {}
+
+
+def test_del_subtable_with_subsections_drops_all() -> None:
+    src = td("""
+        [a]
+        x = 1
+        [a.sub]
+        y = 2
+        [a.sub.deeper]
+        z = 3
+        [b]
+        w = 4
+        """)
+    doc = tomlrt.loads(src)
+    held = doc["a"]
+    del doc["a"]
+    assert "a" not in doc
+    assert dict(doc["b"]) == {"w": 4}
+    assert held["x"] == 1
+    assert held["sub"]["y"] == 2
+    assert held["sub"]["deeper"]["z"] == 3
+
+
+def test_del_aot_drops_all_entries_and_orphans_held_view() -> None:
+    src = td("""
+        [[a]]
+        n = 1
+        [a.sub]
+        x = 1
+        [[a]]
+        n = 2
+        [b]
+        z = 3
+        """)
+    doc = tomlrt.loads(src)
+    held = doc["a"]
+    del doc["a"]
+    assert "a" not in doc
+    assert dict(doc["b"]) == {"z": 3}
+    assert [dict(e) for e in held] == [{"n": 1, "sub": {"x": 1}}, {"n": 2}]
+
+
+def test_del_top_level_array_orphans_held_reference() -> None:
+    src = "xs = [1, 2, 3]\n[a]\ny = 1\n"
+    doc = tomlrt.loads(src)
+    held = doc["xs"]
+    assert isinstance(held, Array)
+    del doc["xs"]
+    assert "xs" not in doc
+    held.append(4)
+    assert list(held) == [1, 2, 3, 4]
+    assert tomlrt.dumps(doc) == "[a]\ny = 1\n"
+
+
+def test_del_loop_leaves_doc_empty() -> None:
+    src = "".join(f"[s{i}]\nx = {i}\n" for i in range(20))
+    doc = tomlrt.loads(src)
+    for k in list(doc):
+        del doc[k]
+    assert dict(doc) == {}
+    assert tomlrt.dumps(doc) == ""

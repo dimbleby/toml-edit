@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Faster `install` on deep dotted paths in large documents.
 - `Table.clear` no longer scales quadratically with document size.
+- Faster delete of sub-tables and AoT children in large documents.
 
 ## [1.3.1] - 2026-05-03
 
