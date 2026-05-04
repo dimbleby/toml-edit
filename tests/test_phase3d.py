@@ -277,3 +277,66 @@ def test_section_delete_then_dump_reparses_to_expected() -> None:
     del doc["a"]
     out = dumps(doc)
     assert loads(out).to_dict() == {"b": {"y": 2}}
+
+
+def test_delete_deep_implicit_inside_aot_prunes() -> None:
+    # Regression: prune walk must run inside AoT entries too. The
+    # initial implementation stopped at any container with
+    # `_owner_aot_entry`, which protected the entry root (correctly)
+    # but also blocked pruning of ordinary implicit descendants
+    # below it, leaving stale `foo = {}` containers behind.
+    doc = loads("[[arr]]\nfoo.bar.baz = 1\n")
+    del doc.aot("arr")[0].table("foo")["bar"]
+    check(doc)
+    assert dumps(doc) == "[[arr]]\n"
+    assert doc.to_dict() == {"arr": [{}]}
+
+
+def test_delete_header_only_section() -> None:
+    # `[s]` with no body — header-only.
+    _rt(
+        "[s]\n",
+        lambda d: d.__delitem__("s"),
+        expect="",
+    )
+
+
+def test_delete_inline_array_value() -> None:
+    _rt(
+        "arr = [1, 2, 3]\ny = 4\n",
+        lambda d: d.__delitem__("arr"),
+        expect="y = 4\n",
+    )
+
+
+def test_delete_inline_array_with_inline_table_inside() -> None:
+    _rt(
+        "arr = [1, {x = 2}]\ny = 3\n",
+        lambda d: d.__delitem__("arr"),
+        expect="y = 3\n",
+    )
+
+
+def test_delete_deep_non_aot_implicit_prune() -> None:
+    # `[a.b.c.d]\nx=1` → a, b, c are all implicit. Deleting d
+    # empties c which empties b which empties a. The walk must
+    # prune them all.
+    doc = loads("[a.b.c.d]\nx = 1\n")
+    del doc.table("a").table("b").table("c")["d"]
+    check(doc)
+    assert dumps(doc) == ""
+    assert "a" not in doc
+
+
+def test_held_deleted_section_view_has_clean_orphan_state() -> None:
+    # Defence-in-depth: held view's caches are internally
+    # consistent after delete (relevant for Phase 3e detach).
+    doc = loads("[a]\nx = 1\n[b]\ny = 2\n")
+    held = doc.table("a")
+    del doc["a"]
+    assert held._refs == []  # noqa: SLF001
+    assert held._header_ref is None  # noqa: SLF001
+    # Specifically NOT a stale unlinked header slot (regression on
+    # the "_recompute_body_tail before _header_ref clear" ordering
+    # bug the duck flagged).
+    assert held._body_tail is None  # noqa: SLF001

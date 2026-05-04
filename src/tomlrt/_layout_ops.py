@@ -250,16 +250,22 @@ def delete_key(c: Container, key: str) -> None:
             for r in kept:
                 if r.local_key is not None:
                     cc._index.setdefault(r.local_key, []).append(r)  # noqa: SLF001
-            if (
-                cc._body_tail is not None  # noqa: SLF001
-                and id(cc._body_tail) in owned_ids  # noqa: SLF001
-            ):
-                cc._body_tail = _recompute_body_tail(cc)  # noqa: SLF001
+            # Clear an owned `_header_ref` BEFORE recomputing `_body_tail`,
+            # so the recompute does not fall back to a header slot that is
+            # itself about to be unlinked. (Live containers never have an
+            # owned header — only discarded subtree containers do — but
+            # leaving the orphan internally consistent is friendlier to
+            # held views and Phase 3e detach work.)
             if (
                 cc._header_ref is not None  # noqa: SLF001
                 and id(cc._header_ref.slot) in owned_ids  # noqa: SLF001
             ):
                 cc._header_ref = None  # noqa: SLF001
+            if (
+                cc._body_tail is not None  # noqa: SLF001
+                and id(cc._body_tail) in owned_ids  # noqa: SLF001
+            ):
+                cc._body_tail = _recompute_body_tail(cc)  # noqa: SLF001
 
     # 4. Defensive: no live container retains a ref to any owned slot.
     if __debug__:
@@ -335,10 +341,18 @@ def _prune_empty_implicit_ancestors(c: Container) -> None:
     """Drop implicit-empty containers from their parent's dict storage.
 
     A container is implicit-empty iff: not the doc root, no
-    ``_header_ref``, empty ``_refs``, empty dict, no ``_owner_aot_entry``.
+    ``_header_ref``, empty ``_refs``, empty dict, not inline.
+
     Such a container has no rendering presence and no slot ownership;
     leaving it in the parent's dict would violate the
-    "every dict key has an _index entry" invariant.
+    "every dict key has an `_index` entry" invariant.
+
+    The walk does NOT need a special stop for AoT-entry root tables
+    or implicit descendants beneath them: AoT-entry root tables are
+    protected by their own ``_header_ref``; implicit descendants
+    inside an AoT entry that become empty must be pruned just as at
+    the doc root, otherwise stale ``foo = {}`` containers would
+    linger inside surviving AoT entries.
     """
     cur: Container | None = c
     while cur is not None:
@@ -349,11 +363,14 @@ def _prune_empty_implicit_ancestors(c: Container) -> None:
             cur._header_ref is not None  # noqa: SLF001
             or cur._refs  # noqa: SLF001
             or len(cur) > 0
-            or cur._owner_aot_entry is not None  # noqa: SLF001
             or cur._inline  # noqa: SLF001
         ):
             return
-        # Find the local key of cur in parent.
+        # Find the local key of cur in parent. If parent stores an
+        # `AoT` under cur's path (cur is an AoT entry root rather
+        # than a dict-keyed sub-container), the identity check below
+        # protects us — entries are never stored directly in the
+        # parent's dict.
         local_key = cur._path[-1] if cur._path else None  # noqa: SLF001
         if local_key is None or local_key not in parent:
             return
