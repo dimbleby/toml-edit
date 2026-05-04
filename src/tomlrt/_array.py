@@ -34,10 +34,44 @@ class Array(list[Any]):
 
     __slots__ = ("_multiline", "_value")
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        items: Any = None,
+        *,
+        multiline: bool = False,
+    ) -> None:
         super().__init__()
         self._value: ArrayValue | None = None
-        self._multiline: bool = False
+        self._multiline: bool = multiline
+        if items is not None:
+            from tomlrt._container import _synth_inline_array  # noqa: PLC0415
+
+            val, arr = _synth_inline_array(list(items), layout_root=None, owner=None)
+            self._value = val
+            for v in arr:
+                list.append(self, v)
+            if multiline:
+                from tomlrt._trivia import (  # noqa: PLC0415
+                    NewlineNode,
+                    Trivia,
+                    WhitespaceNode,
+                )
+
+                # Restyle as multiline: each item on its own line, indent
+                # of 4 spaces, trailing comma + final newline before ].
+                style = _ArrayStyle(
+                    is_multiline=True,
+                    inter_separator=Trivia(
+                        [NewlineNode(text="\n"), WhitespaceNode(text="    ")]
+                    ),
+                    trailing_comma=True,
+                    trailing_post=Trivia([NewlineNode(text="\n")]),
+                )
+                if val.items:
+                    val.items[0].leading = Trivia(
+                        [NewlineNode(text="\n"), WhitespaceNode(text="    ")]
+                    )
+                    _renormalise_commas(val.items, style)
 
     def to_list(self) -> list[Any]:
         """Materialise a plain-Python ``list`` (recursive)."""
@@ -523,6 +557,10 @@ class AoT(list["Table"]):
         from tomlrt import _layout_ops  # noqa: PLC0415
 
         idx = int(index)
+        n = len(self)
+        if not -n <= idx < n:
+            msg = "pop index out of range"
+            raise IndexError(msg)
         if self._layout_root is None:
             return list.pop(self, idx)
         result = _layout_ops.remove_aot_entry(self, idx)
@@ -536,8 +574,13 @@ class AoT(list["Table"]):
         from tomlrt import _layout_ops  # noqa: PLC0415
 
         if isinstance(key, slice):
-            msg = "AoT slice deletion is deferred to a later phase"
-            raise NotImplementedError(msg)
+            if self._layout_root is None:
+                list.__delitem__(self, key)
+                return
+            indices = sorted(range(*key.indices(len(self))), reverse=True)
+            for i in indices:
+                _layout_ops.remove_aot_entry(self, i)
+            return
         if self._layout_root is None:
             list.__delitem__(self, key)
             return
@@ -560,8 +603,63 @@ class AoT(list["Table"]):
         from tomlrt import _layout_ops  # noqa: PLC0415
 
         if isinstance(index, slice):
-            msg = "AoT slice assignment is deferred to a later phase"
-            raise NotImplementedError(msg)
+            try:
+                values = list(value)  # type: ignore[call-overload]
+            except TypeError as exc:
+                msg = "can only assign an iterable"
+                raise TypeError(msg) from exc
+            indices = list(range(*index.indices(len(self))))
+            if (
+                index.step is not None
+                and index.step != 1
+                and len(values) != len(indices)
+            ):
+                msg = (
+                    f"attempt to assign sequence of size {len(values)} "
+                    f"to extended slice of size {len(indices)}"
+                )
+                raise ValueError(msg)
+            # Validate every assigned value is a Mapping/Table BEFORE
+            # mutating the AoT (atomicity preflight).
+            from collections.abc import Mapping  # noqa: PLC0415
+
+            for v in values:
+                if not isinstance(v, Mapping):
+                    msg = f"AoT entries must be Mapping/Table; got {type(v).__name__}"
+                    raise TypeError(msg)
+            if self._layout_root is None:
+                list.__setitem__(
+                    self, index, [_make_unattached_entry(v) for v in values]
+                )
+                return
+            # For contiguous step == 1: replace by delete-range then
+            # insert at the start index. Order matters: build new
+            # entries via add (appended to end), then renormalise.
+            if index.step is None or index.step == 1:
+                start = index.indices(len(self))[0]
+                # Delete the range first.
+                for i in sorted(indices, reverse=True):
+                    _layout_ops.remove_aot_entry(self, i)
+                # Add new entries at the end then renormalise into
+                # position.
+                new_entries = []
+                for v in values:
+                    e = _layout_ops.add_aot_entry(self, v)
+                    new_entries.append(e)
+                # Now reorder so the new block lives at `start`.
+                cur: list[Any] = list(self)
+                cur = cur[: -len(new_entries)] if new_entries else cur
+                for off, e in enumerate(new_entries):
+                    cur.insert(start + off, e)
+                if cur != list(self):
+                    _layout_ops.renormalise_aot_order(self, cur)
+                return
+            # Extended slice with step != 1 and matching length:
+            # replace each entry in place by remove + add at end + reorder.
+            # Simpler: replace via the existing single-entry path.
+            for i, v in zip(indices, values, strict=True):
+                _layout_ops.replace_aot_entry(self, i, v)
+            return
         if self._layout_root is None:
             assert isinstance(value, dict)
             list.__setitem__(self, index, _make_unattached_entry(value))
@@ -615,7 +713,7 @@ class AoT(list["Table"]):
             if t is value or t == value:
                 del self[i]
                 return
-        msg = "AoT.remove(x): x not in AoT"
+        msg = "list.remove(x): x not in list"
         raise ValueError(msg)
 
     @override
@@ -642,13 +740,27 @@ class AoT(list["Table"]):
 
     @override
     def __iadd__(self, other: Any) -> Self:  # type: ignore[override]
-        msg = "AoT.__iadd__ is deferred to a later phase"
-        raise NotImplementedError(msg)
+        self.extend(other)
+        return self
 
     @override
     def __imul__(self, n: SupportsIndex) -> Self:
-        msg = "AoT.__imul__ is deferred to a later phase"
-        raise NotImplementedError(msg)
+        from tomlrt import _layout_ops  # noqa: PLC0415
+
+        count = int(n)
+        if count <= 0:
+            self.clear()
+            return self
+        if count == 1 or self._layout_root is None:
+            return self
+        # Snapshot original entries then add count-1 deepcopies.
+        from copy import deepcopy  # noqa: PLC0415
+
+        originals = list(self)
+        for _ in range(count - 1):
+            for e in originals:
+                _layout_ops.add_aot_entry(self, deepcopy(dict(e)))
+        return self
 
 
 def _make_unattached_entry(body: object | None) -> Table:

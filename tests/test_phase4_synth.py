@@ -17,7 +17,7 @@ def _rt(doc: tomlrt.Document) -> str:
 def test_assign_plain_dict_creates_inline_table() -> None:
     doc = tomlrt.loads("")
     doc["obj"] = {"a": 1, "b": "two"}
-    assert _rt(doc) == 'obj = {a = 1, b = "two"}\n'
+    assert _rt(doc) == 'obj = { a = 1, b = "two" }\n'
     assert doc["obj"]["a"] == 1
     assert doc["obj"]["b"] == "two"
 
@@ -46,7 +46,7 @@ def test_replace_scalar_with_dict_swaps_value_in_place() -> None:
     doc["k"] = {"a": 1}
     out = _rt(doc)
     # Original EOL trivia is preserved (the slot is reused).
-    assert out == "k = {a = 1}  # trailing\n"
+    assert out == "k = { a = 1 }  # trailing\n"
 
 
 def test_replace_scalar_with_list_swaps_value_in_place() -> None:
@@ -58,32 +58,32 @@ def test_replace_scalar_with_list_swaps_value_in_place() -> None:
 def test_replace_inline_table_with_dict_swaps_value_in_place() -> None:
     doc = tomlrt.loads("k = {x = 1}\n")
     doc["k"] = {"y": 2, "z": 3}
-    assert _rt(doc) == "k = {y = 2, z = 3}\n"
+    assert _rt(doc) == "k = { y = 2, z = 3 }\n"
 
 
 def test_replace_inline_array_with_dict_swaps_value_in_place() -> None:
     doc = tomlrt.loads("k = [1, 2]\n")
     doc["k"] = {"a": 1}
-    assert _rt(doc) == "k = {a = 1}\n"
+    assert _rt(doc) == "k = { a = 1 }\n"
 
 
 def test_nested_dict_synthesises_to_nested_inline_tables() -> None:
     doc = tomlrt.loads("")
     doc["t"] = {"inner": {"x": 1, "y": 2}}
-    assert _rt(doc) == "t = {inner = {x = 1, y = 2}}\n"
+    assert _rt(doc) == "t = { inner = { x = 1, y = 2 } }\n"
     assert doc["t"]["inner"]["x"] == 1
 
 
 def test_list_of_dicts_round_trips() -> None:
     doc = tomlrt.loads("")
     doc["xs"] = [{"a": 1}, {"b": 2}]
-    assert _rt(doc) == "xs = [{a = 1}, {b = 2}]\n"
+    assert _rt(doc) == "xs = [{ a = 1 }, { b = 2 }]\n"
 
 
 def test_quoted_inline_keys_use_basic_strings() -> None:
     doc = tomlrt.loads("")
     doc["t"] = {"has space": 1, "ok-bare_K": 2}
-    assert _rt(doc) == 't = {"has space" = 1, ok-bare_K = 2}\n'
+    assert _rt(doc) == 't = { "has space" = 1, ok-bare_K = 2 }\n'
 
 
 def test_string_value_in_synth_uses_basic_string() -> None:
@@ -118,4 +118,4 @@ def test_dict_method_setitem_through_synth_for_inline_value() -> None:
     out = _rt(doc)
     assert "a = 1" in out
     assert "b = [1, 2, 3]" in out
-    assert 'c = {k = "v"}' in out
+    assert 'c = { k = "v" }' in out

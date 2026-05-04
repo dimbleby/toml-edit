@@ -467,7 +467,14 @@ class Container(dict[str, Any]):
 
     def _inline_setitem(self, key: str, value: Any) -> None:
         from tomlrt import _inline_ops  # noqa: PLC0415
+        from tomlrt._errors import TOMLError  # noqa: PLC0415
 
+        if isinstance(value, AoT):
+            msg = "Cannot store an array-of-tables inside an inline table"
+            raise TOMLError(msg)
+        if isinstance(value, Container) and not value._inline:  # noqa: SLF001
+            msg = "Cannot store a section-style table inside an inline-style table"
+            raise TOMLError(msg)
         if not _is_scalar(value) and not _is_synth_inline(value):
             msg = (
                 "live-attach of typed Container/Array/AoT into an inline "
