@@ -176,28 +176,64 @@ class AoT(list["Table"]):
 
     @override
     def extend(self, values: Any) -> None:
-        msg = "AoT.extend is deferred to a later phase"
-        raise NotImplementedError(msg)
+        for v in values:
+            self.append(v)
 
     @override
-    def insert(self, index: SupportsIndex, value: Table) -> None:
-        msg = "AoT.insert is deferred to a later phase"
-        raise NotImplementedError(msg)
+    def insert(self, index: SupportsIndex, value: Any) -> None:
+        from tomlrt import _layout_ops  # noqa: PLC0415
+
+        if self._layout_root is None:
+            assert isinstance(value, dict)
+            list.insert(self, index, _make_unattached_entry(value))
+            return
+        # Materialise as add() then renormalise into position.
+        new_entry = _layout_ops.add_aot_entry(self, value)
+        from tomlrt._container import Table  # noqa: PLC0415
+
+        assert isinstance(new_entry, Table)
+        # `add` appended; move into position via renormalise.
+        idx = int(index)
+        n = len(self)
+        if idx < 0:
+            idx = max(0, n + idx)
+        idx = min(idx, n - 1)
+        new_order: list[Table] = list(self)
+        new_order.pop()  # remove from tail
+        new_order.insert(idx, new_entry)
+        if new_order != list(self):
+            _layout_ops.renormalise_aot_order(self, new_order)
 
     @override
-    def remove(self, value: Table) -> None:
-        msg = "AoT.remove is deferred to a later phase"
-        raise NotImplementedError(msg)
+    def remove(self, value: Any) -> None:
+        for i, t in enumerate(self):
+            if t is value or t == value:
+                del self[i]
+                return
+        msg = "AoT.remove(x): x not in AoT"
+        raise ValueError(msg)
 
     @override
     def reverse(self) -> None:
-        msg = "AoT.reverse is deferred to Phase 5"
-        raise NotImplementedError(msg)
+        from tomlrt import _layout_ops  # noqa: PLC0415
+
+        if self._layout_root is None:
+            list.reverse(self)
+            return
+        new_order = list(reversed(self))
+        _layout_ops.renormalise_aot_order(self, new_order)
 
     @override
     def sort(self, *args: Any, **kwargs: Any) -> None:
-        msg = "AoT.sort is deferred to Phase 5"
-        raise NotImplementedError(msg)
+        from tomlrt import _layout_ops  # noqa: PLC0415
+
+        new_order = sorted(self, *args, **kwargs)
+        if self._layout_root is None:
+            list.clear(self)
+            for t in new_order:
+                list.append(self, t)
+            return
+        _layout_ops.renormalise_aot_order(self, new_order)
 
     @override
     def __iadd__(self, other: Any) -> Self:  # type: ignore[override]

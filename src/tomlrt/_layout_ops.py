@@ -598,11 +598,15 @@ def _insert_dotted_kv_before_descendants(c: Container, key: str, value: Value) -
     doc = layout_root
 
     if not c._refs:  # noqa: SLF001
+        # Container has no slots and no contributors at all — most
+        # likely a held view of a deleted subtree (Phase 3e
+        # PrivateRoot detach territory). Surface as NIE so callers
+        # can distinguish from internal-bug assertion failures.
         msg = (
-            "internal: implicit container has no descendant refs to anchor "
-            "structural insert"
+            "structural-only implicit container with no contributors — "
+            "likely a held view of a deleted subtree (Phase 3e detach)"
         )
-        raise AssertionError(msg)
+        raise NotImplementedError(msg)
     anchor_slot = c._refs[0].slot  # noqa: SLF001
 
     # Find host: nearest ancestor with a header, or the doc root.
@@ -1283,6 +1287,107 @@ def replace_aot_entry(aot: object, index: int, body: object) -> None:
     add_aot_entry(aot, body)
 
 
+def renormalise_aot_order(aot: object, new_logical_order: list[Any]) -> None:
+    """Re-order an attached AoT's entries to ``new_logical_order``.
+
+    Implements the locked-in "normalise on reorder" policy from the
+    plan: snapshot a stable splice anchor (the slot just before the
+    AoT's first owned slot in doc-stream); unlink every slot owned
+    by any of this AoT's entries; reinsert the entries in the new
+    order, each entry as a contiguous block, immediately after the
+    anchor.
+
+    ``new_logical_order`` must be a permutation of the AoT's current
+    entries (same set of `Table` objects, possibly reordered).
+    """
+    from tomlrt._array import AoT  # noqa: PLC0415
+
+    assert isinstance(aot, AoT)
+    if len(aot) <= 1:
+        # Reverse / sort on 0 or 1 elements is a no-op.
+        list.clear(aot)
+        for t in new_logical_order:
+            list.append(aot, t)
+        return
+    layout_root = aot._layout_root  # noqa: SLF001
+    assert layout_root is not None
+    doc = layout_root
+
+    # Collect every entry's owned slots, in current logical order.
+    per_entry_slots: list[list[Slot]] = []
+    for entry_table in list(aot):
+        e = entry_table._owner_aot_entry  # noqa: SLF001
+        assert e is not None
+        per_entry_slots.append(list(e.entry_slots))
+
+    # Earliest owned slot in doc-stream gives us the splice anchor.
+    # Walk the doc once, first hit wins. O(N_doc) but predictable
+    # and faster than the pairwise back-walk for typical cases.
+    owned_ids = {id(s) for slots in per_entry_slots for s in slots}
+    earliest_slot: Slot | None = None
+    cur = doc._head  # noqa: SLF001
+    while cur is not None:
+        if id(cur) in owned_ids:
+            earliest_slot = cur
+            break
+        cur = cur._next  # noqa: SLF001
+    assert earliest_slot is not None
+    anchor_prev = earliest_slot._prev  # noqa: SLF001
+
+    # Unlink every owned slot from the doc-stream linked list. We
+    # don't touch refs / index / dict storage — only the linked-list
+    # pointers — since the logical mapping doesn't change.
+    for slots in per_entry_slots:
+        for s in slots:
+            unlink_slot(s, doc)
+
+    # Build a per-entry-Table -> entry_slots map (the user-facing
+    # `Table`s in new_logical_order may be re-arrangements of the
+    # current ones; we need to re-attach via owner_aot_entry).
+    slot_blocks: dict[int, list[Slot]] = {
+        id(t): per_entry_slots[i] for i, t in enumerate(list(aot))
+    }
+
+    # Re-insert entries in new order, each as a contiguous block
+    # after `anchor_prev` (or at doc head if anchor_prev is None).
+    insert_after_slot = anchor_prev
+    for entry_table in new_logical_order:
+        block = slot_blocks[id(entry_table)]
+        for slot in block:
+            if insert_after_slot is None:
+                insert_before_head(slot, doc)
+            else:
+                insert_after(insert_after_slot, slot, doc)
+            insert_after_slot = slot
+
+    # Reflect the new order in the AoT's own list view.
+    list.clear(aot)
+    for t in new_logical_order:
+        list.append(aot, t)
+
+    # Resort _refs lists on every container in the AoT's parent chain.
+    # Each ancestor holds entry-header refs (one per entry, filed under
+    # the relevant path component); after splicing, those refs are out
+    # of doc-stream order. Sort by slot's new doc-stream position.
+    position: dict[int, int] = {}
+    cur = doc._head  # noqa: SLF001
+    idx = 0
+    while cur is not None:
+        position[id(cur)] = idx
+        idx += 1
+        cur = cur._next  # noqa: SLF001
+    chain: list[Container] = []
+    anc: Container | None = aot._parent  # noqa: SLF001
+    while anc is not None:
+        chain.append(anc)
+        anc = anc._parent  # noqa: SLF001
+    for c in chain:
+        c._refs.sort(key=lambda r: position[id(r.slot)])  # noqa: SLF001
+        for k, refs in c._index.items():  # noqa: SLF001
+            refs.sort(key=lambda r: position[id(r.slot)])
+            del k
+
+
 __all__ = [
     "add_aot_entry",
     "append_direct_kv",
@@ -1291,8 +1396,10 @@ __all__ = [
     "attach_section_at",
     "delete_key",
     "insert_after",
+    "insert_before",
     "insert_before_head",
     "remove_aot_entry",
+    "renormalise_aot_order",
     "replace_aot_entry",
     "unlink_slot",
 ]

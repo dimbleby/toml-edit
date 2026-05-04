@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-import pytest
-
 from tomlrt import dumps, loads
 from tomlrt._invariants import check
 from tomlrt._slots import KVSlot
@@ -82,12 +80,18 @@ def test_no_final_newline_on_anchor() -> None:
     )
 
 
-def test_structural_only_implicit_deferred() -> None:
+def test_structural_only_implicit_now_synthesises_dotted_kv() -> None:
     # `a` exists only via the descendant header [a.b]; no body
-    # contributors, so no anchor. Defer to Phase 4.
+    # contributors. Phase 4 now synthesises a top-level dotted KV
+    # `a.x = 2` immediately before `[a.b]`.
     doc = loads("[a.b]\ny = 1\n")
-    with pytest.raises(NotImplementedError, match="structural-only implicit"):
-        doc.table("a")["x"] = 2
+    doc.table("a")["x"] = 2
+    out = dumps(doc)
+    assert "a.x = 2" in out
+    # Round-trips correctly.
+    re_parsed = loads(out)
+    assert re_parsed.table("a")["x"] == 2
+    assert re_parsed.table("a").table("b")["y"] == 1
 
 
 def test_post_insert_delete_round_trips() -> None:
