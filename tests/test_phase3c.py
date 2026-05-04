@@ -188,19 +188,18 @@ def test_section_only_doc_top_level_insert_deferred() -> None:
     assert dumps(doc) == "new = 1\n\n[s]\nx = 1\n"
 
 
-def test_insert_into_implicit_table_deferred() -> None:
-    # `a` exists implicitly via a dotted top-level key; there is no
-    # `[a]` header, so inserting `y` under `a` would render as a
-    # top-level `y` (semantic mismatch). Defer to Phase 3d.
+def test_insert_into_implicit_table_now_works() -> None:
+    # `a` exists implicitly via a dotted top-level key; Phase 3d-4
+    # added support for dotted-KV insert under an implicit container.
     doc = loads("a.x = 1\n")
-    with pytest.raises(NotImplementedError):
-        doc.table("a")["y"] = 2
+    doc.table("a")["y"] = 2
+    assert dumps(doc) == "a.x = 1\na.y = 2\n"
 
 
-def test_insert_into_implicit_grandparent_deferred() -> None:
+def test_insert_into_implicit_grandparent_now_works() -> None:
     doc = loads("a.b.c = 1\n")
-    with pytest.raises(NotImplementedError):
-        doc.table("a").table("b")["d"] = 2
+    doc.table("a").table("b")["d"] = 2
+    assert dumps(doc) == "a.b.c = 1\na.b.d = 2\n"
 
 
 def test_insert_into_comment_only_doc_deferred() -> None:

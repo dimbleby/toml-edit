@@ -152,27 +152,24 @@ class Container(dict[str, Any]):
             return
         if key in self:
             current = dict.__getitem__(self, key)
+            # Fast-path: pure scalar → scalar (cheap, no synth alloc).
             if _is_scalar(current) and _is_scalar(value):
                 self._scalar_replace(key, value)
                 return
-            if _is_scalar(current) and _is_synth_inline(value):
-                # Scalar → inline-typed (dict / list) value: keep the
-                # existing KV slot, swap its `value` field, replace
-                # dict storage with the synthesised view.
-                self._inline_typed_replace(key, value)
-                return
+            # Single-direct-KV-slot current → any synth-able value
+            # (scalar or inline). The slot's `value` field is swapped
+            # in place; ordering, comments, key spelling are preserved.
             if (
-                isinstance(current, Container)
-                and current._inline  # noqa: SLF001
-                and _is_synth_inline(value)
-            ):
-                # Inline-table → inline-typed value: same as above.
+                _is_scalar(current)
+                or (isinstance(current, Container) and current._inline)  # noqa: SLF001
+                or isinstance(current, Array)
+            ) and (_is_scalar(value) or _is_synth_inline(value)):
                 self._inline_typed_replace(key, value)
                 return
-            if isinstance(current, Array) and _is_synth_inline(value):
-                self._inline_typed_replace(key, value)
-                return
-            msg = "non-scalar replacement arrives in Phase 3d"
+            msg = (
+                "non-scalar replacement (typed Container/AoT source, or "
+                "section / AoT current) is Phase 4"
+            )
             raise NotImplementedError(msg)
         # New direct-KV insert (Phase 3c / 3d / 4-partial).
         if _is_scalar(value):
@@ -194,11 +191,20 @@ class Container(dict[str, Any]):
             _layout_ops.append_direct_kv(self, key, cst)
             dict.__setitem__(self, key, decoded)
             return
-        msg = (
-            "Phase 3 only supports scalar / plain-dict / plain-list inserts; "
-            "Container / Array / AoT live-attach arrives in Phase 4"
+        # Fall-through: typed section Container / AoT or unknown type.
+        # Delegate to _synth_value so the user gets the right error
+        # (NotImplementedError for live-attach, TypeError for unknown).
+        _synth_value(
+            value,
+            layout_root=self._layout_root,
+            parent=self,
+            path=(*self._path, key),
+            owner=self._owner_aot_entry,
         )
-        raise NotImplementedError(msg)
+        # _synth_value always raises in this branch; the line below is
+        # only reached if it returns (defensive).
+        msg = "internal: unexpected fall-through in __setitem__"
+        raise AssertionError(msg)
 
     def _scalar_replace(self, key: str, value: Any) -> None:
         refs = self._index.get(key)
@@ -334,25 +340,34 @@ class Container(dict[str, Any]):
     def _inline_setitem(self, key: str, value: Any) -> None:
         from tomlrt import _inline_ops  # noqa: PLC0415
 
-        if not _is_scalar(value):
+        if not _is_scalar(value) and not _is_synth_inline(value):
             msg = (
-                "Phase 3b inline-table mutation only supports scalar values; "
-                "inline-typed and structural sources arrive in Phase 3c/3d"
+                "live-attach of typed Container/Array/AoT into an inline "
+                "table is Phase 4"
             )
             raise NotImplementedError(msg)
         if key in self and isinstance(dict.__getitem__(self, key), Container):
             # Replacing a dotted-prefix sub-table (e.g. `a` in
-            # `{a.b = 1}`) with a scalar would have to delete every
-            # `a.*` entry and add an `a = scalar` entry. That's a
-            # structural overwrite, deferred to a later phase.
+            # `{a.b = 1}`) would have to delete every `a.*` entry and
+            # add an `a = ...` entry. Structural overwrite, deferred.
             msg = (
-                "scalar overwrite of a dotted-inline sub-table is not yet "
-                "supported (Phase 3d structural overwrite)"
+                "overwrite of a dotted-inline sub-table is not yet "
+                "supported (structural overwrite, Phase 4)"
             )
             raise NotImplementedError(msg)
-        coerced = _coerce_scalar(value)
+        if _is_scalar(value):
+            cst: Value = _coerce_scalar(value)
+            decoded: object = value
+        else:
+            cst, decoded = _synth_value(
+                value,
+                layout_root=self._layout_root,
+                parent=self,
+                path=(*self._path, key),
+                owner=self._owner_aot_entry,
+            )
         if key in self:
-            ok = _inline_ops.replace_entry_value(self, key, coerced)
+            ok = _inline_ops.replace_entry_value(self, key, cst)
             if not ok:
                 msg = (
                     f"internal: key {key!r} present on inline view but no "
@@ -360,8 +375,8 @@ class Container(dict[str, Any]):
                 )
                 raise AssertionError(msg)
         else:
-            _inline_ops.append_entry(self, key, coerced)
-        dict.__setitem__(self, key, value)
+            _inline_ops.append_entry(self, key, cst)
+        dict.__setitem__(self, key, decoded)
 
     def _inline_delitem(self, key: str) -> None:
         from tomlrt import _inline_ops  # noqa: PLC0415
@@ -414,14 +429,14 @@ class Document(Container):
 
     def __init__(self, data: Mapping[str, Any] | None = None) -> None:
         super().__init__()
-        if data is not None:
-            msg = "Document(data=...) is not supported in Phase 2"
-            raise NotImplementedError(msg)
         self._head: Slot | None = None
         self._tail: Slot | None = None
         self._trailing: Trivia = Trivia()
         self._newline: str = "\n"
         self._layout_root = self
+        if data is not None:
+            for k, v in data.items():
+                self[k] = v
 
     def render(self) -> str:
         return render(self)
@@ -543,14 +558,32 @@ TomlInput = "Mapping[str, Any] | Document"
 
 
 def _is_synth_inline(v: object) -> bool:
-    """True iff ``v`` is a plain ``dict`` / ``list`` we can synthesise.
+    """True iff ``v`` is a value we can synthesise to an inline TOML value.
 
-    Excludes our own ``Container`` / ``Array`` / ``AoT`` subclasses,
-    which require live-attach semantics handled in Phase 4 proper.
+    Accepts:
+    - any ``Mapping`` (dict, MappingProxyType, …) — including our own
+      inline ``Container`` views (deep-copy semantics)
+    - ``list`` — including our own ``Array`` views (deep-copy semantics)
+    - inline ``Container`` and ``Array`` views from another document
+
+    Rejects everything else (tuple, bytes, sets, AoT, section
+    Container, …) so the caller can route to a stronger error.
     """
-    if isinstance(v, (Container, Array, AoT)):
+    from collections.abc import Mapping  # noqa: PLC0415
+
+    if isinstance(v, AoT):
         return False
-    return isinstance(v, (dict, list))
+    if isinstance(v, Container):
+        # Section containers need real live-attach; only inline ones
+        # round-trip through value-synthesis safely.
+        return v._inline  # noqa: SLF001
+    if isinstance(v, Array):
+        return True
+    if isinstance(v, Mapping):
+        return True
+    # `list` only — `tuple` is intentionally not accepted (TOML has no
+    # tuple, and accepting it would mask user typos).
+    return type(v) is list or (isinstance(v, list) and not isinstance(v, Array))
 
 
 def _make_keypart(name: str) -> KeyPart:
@@ -576,28 +609,36 @@ def _synth_value(
     decoded view is what gets stored in the parent dict (and is the
     object the user retrieves via ``[]``).
 
-    Plain ``dict`` → ``InlineTableValue`` + ``Table(_inline=True)``.
-    Plain ``list`` → ``ArrayValue`` + ``Array``.
-    Scalar → coerced ``Value`` + the original scalar.
-    Container / Array / AoT raise NIE (Phase 4 live-attach).
+    Plain ``dict`` / ``Mapping`` → ``InlineTableValue`` + inline ``Table``.
+    ``list`` / ``Array`` view → ``ArrayValue`` + ``Array``.
+    Section ``Container`` / ``AoT`` raise NIE (Phase 4 live-attach).
+    Anything else raises ``TypeError`` (mentioning the type name and
+    the prefix ``"Cannot convert"``).
     """
+    from collections.abc import Mapping  # noqa: PLC0415
+
     if _is_scalar(v):
         return _coerce_scalar(v), v
-    if isinstance(v, (Container, Array, AoT)):
-        msg = "live-attach of typed Container/Array/AoT is Phase 4"
+    if isinstance(v, AoT):
+        msg = "live-attach of AoT is Phase 4"
         raise NotImplementedError(msg)
-    if isinstance(v, dict):
+    if isinstance(v, Container) and not v._inline:  # noqa: SLF001
+        msg = "live-attach of section Container is Phase 4"
+        raise NotImplementedError(msg)
+    # Mappings (incl. inline Container) → inline table.
+    if isinstance(v, Mapping) or (isinstance(v, Container) and v._inline):  # noqa: SLF001
         return _synth_inline_table(
             v, layout_root=layout_root, parent=parent, path=path, owner=owner
         )
+    # Lists (incl. Array views) → inline array.
     if isinstance(v, list):
         return _synth_inline_array(v, layout_root=layout_root, owner=owner)
-    msg = f"cannot synthesise TOML value from {type(v).__name__}"
+    msg = f"Cannot convert {type(v).__name__} to a TOML value"
     raise TypeError(msg)
 
 
 def _synth_inline_table(
-    d: dict[Any, Any],
+    d: Mapping[Any, Any],
     *,
     layout_root: Document | None,
     parent: Container | None,
