@@ -127,8 +127,8 @@ class Container(dict[str, Any]):
         if key in self and self[key] is value:
             return
         if self._inline:
-            msg = "inline-table mutation arrives in Phase 3b"
-            raise NotImplementedError(msg)
+            self._inline_setitem(key, value)
+            return
         if key in self:
             current = dict.__getitem__(self, key)
             if _is_scalar(current) and _is_scalar(value):
@@ -151,6 +151,82 @@ class Container(dict[str, Any]):
                 return
         msg = "non-scalar mutation arrives in Phase 3b/3c/3d"
         raise NotImplementedError(msg)
+
+    @override
+    def __delitem__(self, key: str) -> None:
+        if self._inline:
+            self._inline_delitem(key)
+            return
+        msg = "section delete arrives in Phase 3d"
+        raise NotImplementedError(msg)
+
+    # ------------------------------------------------------------------
+    # Inline-table dispatch (Phase 3b)
+    # ------------------------------------------------------------------
+
+    def _inline_setitem(self, key: str, value: Any) -> None:
+        from tomlrt import _inline_ops  # noqa: PLC0415
+
+        if not _is_scalar(value):
+            msg = (
+                "Phase 3b inline-table mutation only supports scalar values; "
+                "inline-typed and structural sources arrive in Phase 3c/3d"
+            )
+            raise NotImplementedError(msg)
+        if key in self and isinstance(dict.__getitem__(self, key), Container):
+            # Replacing a dotted-prefix sub-table (e.g. `a` in
+            # `{a.b = 1}`) with a scalar would have to delete every
+            # `a.*` entry and add an `a = scalar` entry. That's a
+            # structural overwrite, deferred to a later phase.
+            msg = (
+                "scalar overwrite of a dotted-inline sub-table is not yet "
+                "supported (Phase 3d structural overwrite)"
+            )
+            raise NotImplementedError(msg)
+        coerced = _coerce_scalar(value)
+        if key in self:
+            ok = _inline_ops.replace_entry_value(self, key, coerced)
+            if not ok:
+                msg = (
+                    f"internal: key {key!r} present on inline view but no "
+                    "matching entry in the backing InlineTableValue"
+                )
+                raise AssertionError(msg)
+        else:
+            _inline_ops.append_entry(self, key, coerced)
+        dict.__setitem__(self, key, value)
+
+    def _inline_delitem(self, key: str) -> None:
+        from tomlrt import _inline_ops  # noqa: PLC0415
+
+        if key not in self:
+            raise KeyError(key)
+        ok = _inline_ops.delete_entry(self, key)
+        if not ok:
+            msg = (
+                f"internal: key {key!r} present on inline view but no "
+                "matching entry in the backing InlineTableValue"
+            )
+            raise AssertionError(msg)
+        dict.__delitem__(self, key)
+        # Clean up: a synthetic dotted-prefix sub-table that is now
+        # empty has no representation in the backing
+        # `InlineTableValue` either, so drop it from the parent's
+        # dict view as well — and propagate up the chain.
+        cur: Container | None = self
+        while (
+            cur is not None
+            and cur._value is None  # noqa: SLF001
+            and len(cur) == 0
+            and cur._parent is not None  # noqa: SLF001
+            and cur._parent._inline  # noqa: SLF001
+            and cur._path  # noqa: SLF001
+        ):
+            parent = cur._parent  # noqa: SLF001
+            my_key = cur._path[-1]  # noqa: SLF001
+            if my_key in parent:
+                dict.__delitem__(parent, my_key)
+            cur = parent
 
 
 class Table(Container):
