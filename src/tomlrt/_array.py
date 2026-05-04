@@ -227,11 +227,31 @@ class Array(list[Any]):
         style = self._style()
         # If appending into an empty array, any inner-bracket padding
         # held in final_trivia is the prospective leading for the new
-        # item — adopt it (without clearing final_trivia) so `[ ]` →
-        # `[ 1 ]` rather than collapsing to either side.
+        # item.
+        # - For pure whitespace (e.g. `[ ]`), adopt without clearing
+        #   so both `[ ` and ` ]` survive: → `[ 1 ]`.
+        # - For multiline structural content (e.g. `[\n\t# hi\n]`),
+        #   adopt + clear, and stitch on a synthesised indent so the
+        #   new item sits below the comment at the indent level the
+        #   user established for it.
         adopted_leading: Any | None = None
         if not items and self._value.final_trivia.pieces:
-            adopted_leading = _clone_trivia(self._value.final_trivia)
+            ft = self._value.final_trivia
+            if _trivia_has_newline(ft):
+                from tomlrt._trivia import (  # noqa: PLC0415
+                    NewlineNode,
+                    Trivia,
+                    WhitespaceNode,
+                )
+
+                indent = _indent_from_final_trivia(ft)
+                pieces = list(ft.pieces)
+                if indent and pieces and isinstance(pieces[-1], NewlineNode):
+                    pieces.append(WhitespaceNode(text=indent))
+                adopted_leading = Trivia(pieces)
+                self._value.final_trivia = Trivia()
+            else:
+                adopted_leading = _clone_trivia(ft)
         new_item = _new_item(
             cst,
             leading_first=not items,
@@ -312,11 +332,12 @@ class Array(list[Any]):
         if i == 0 and items:
             # Inheriting position 0's leading: the new item adopts
             # the prior items[0].leading (which carries any post-`[`
-            # comment), and the displaced item gets a fresh internal
-            # leading.
+            # comment block + indent). The displaced item keeps the
+            # trailing-indent portion of that leading so its column
+            # position is preserved.
             adopted_leading = items[0].leading
             displaced = items[0]
-            displaced.leading = _internal_leading(style)
+            displaced.leading = _trailing_indent_of(adopted_leading)
             new_item = _new_item(
                 cst, leading_first=True, style=style, leading=adopted_leading
             )
@@ -591,6 +612,49 @@ def _clone_trivia(trivia: Any) -> Any:
     from tomlrt._trivia import Trivia  # noqa: PLC0415
 
     return Trivia(list(trivia.pieces))
+
+
+def _indent_from_final_trivia(ft: Any) -> str:
+    """Extract a logical indent from `final_trivia` pieces.
+
+    Returns the first whitespace block that immediately follows a
+    newline, or "" if none. Used by `Array.append` to indent a new
+    first item to match an existing comment block.
+    """
+    from tomlrt._trivia import NewlineNode, WhitespaceNode  # noqa: PLC0415
+
+    pieces = ft.pieces
+    for i, p in enumerate(pieces):
+        if (
+            isinstance(p, NewlineNode)
+            and i + 1 < len(pieces)
+            and isinstance(pieces[i + 1], WhitespaceNode)
+        ):
+            return str(pieces[i + 1].text)
+    return ""
+
+
+def _trailing_indent_of(leading: Any) -> Any:
+    """Return Trivia containing the whitespace pieces after the last newline.
+
+    Used by Array.insert(0, ...) so the displaced (formerly first)
+    item keeps its column-position indent after a fresh first item
+    is inserted ahead of it.
+    """
+    from tomlrt._trivia import NewlineNode, Trivia, WhitespaceNode  # noqa: PLC0415
+
+    pieces = leading.pieces
+    last_nl = -1
+    for j, p in enumerate(pieces):
+        if isinstance(p, NewlineNode):
+            last_nl = j
+    indent_pieces = []
+    for p in pieces[last_nl + 1 :]:
+        if isinstance(p, WhitespaceNode):
+            indent_pieces.append(p)
+        else:
+            break
+    return Trivia(list(indent_pieces))
 
 
 def _internal_leading(_style: _ArrayStyle) -> Any:
