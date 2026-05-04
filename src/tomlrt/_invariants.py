@@ -278,6 +278,13 @@ def _enumerate_containers(
     out: dict[tuple[tuple[str, ...], int | None], Container] = {}
 
     def visit(c: Container) -> None:
+        if c._inline:  # noqa: SLF001
+            # Inline-value containers do not participate in slot-stream
+            # caches; they are validated separately by `_check_inline`.
+            # Their `_path` may collide with section-stream containers
+            # (e.g. a `dict` inside a top-level array has `_path=()`),
+            # so do NOT register them in the cross-stream map.
+            return
         owner = c._owner_aot_entry  # noqa: SLF001
         out[(c._path, id(owner) if owner is not None else None)] = c  # noqa: SLF001
         for v in c.values():

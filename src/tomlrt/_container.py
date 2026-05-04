@@ -20,12 +20,17 @@ else:
 
 from tomlrt._render import render
 from tomlrt._slots import KVSlot
-from tomlrt._trivia import Trivia
+from tomlrt._trivia import Trivia, WhitespaceNode
 from tomlrt._values import (
+    ArrayItem,
+    ArrayValue,
     BoolValue,
     DateTimeValue,
     FloatValue,
+    InlineTableEntry,
+    InlineTableValue,
     IntegerValue,
+    KeyPart,
     StringValue,
 )
 
@@ -35,7 +40,9 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
     from tomlrt._slots import AoTEntry, Slot, SlotRef
-    from tomlrt._values import InlineTableValue
+    from tomlrt._values import (
+        Value,
+    )
 
 
 class Container(dict[str, Any]):
@@ -146,36 +153,95 @@ class Container(dict[str, Any]):
         if key in self:
             current = dict.__getitem__(self, key)
             if _is_scalar(current) and _is_scalar(value):
-                refs = self._index.get(key)
-                if not refs:
-                    msg = (
-                        f"internal: key {key!r} present in dict but missing from _index"
-                    )
-                    raise AssertionError(msg)
-                primary = refs[0]
-                slot = primary.slot
-                if not isinstance(slot, KVSlot) or len(slot.key) != 1:
-                    msg = (
-                        "Phase 3a only supports scalar replacement of "
-                        "a direct, non-dotted KV"
-                    )
-                    raise NotImplementedError(msg)
-                slot.value = _coerce_scalar(value)
-                dict.__setitem__(self, key, value)
+                self._scalar_replace(key, value)
+                return
+            if _is_scalar(current) and _is_synth_inline(value):
+                # Scalar → inline-typed (dict / list) value: keep the
+                # existing KV slot, swap its `value` field, replace
+                # dict storage with the synthesised view.
+                self._inline_typed_replace(key, value)
+                return
+            if (
+                isinstance(current, Container)
+                and current._inline  # noqa: SLF001
+                and _is_synth_inline(value)
+            ):
+                # Inline-table → inline-typed value: same as above.
+                self._inline_typed_replace(key, value)
+                return
+            if isinstance(current, Array) and _is_synth_inline(value):
+                self._inline_typed_replace(key, value)
                 return
             msg = "non-scalar replacement arrives in Phase 3d"
             raise NotImplementedError(msg)
-        # New direct-KV insert (Phase 3c).
-        if not _is_scalar(value):
+        # New direct-KV insert (Phase 3c / 3d / 4-partial).
+        if _is_scalar(value):
+            from tomlrt import _layout_ops  # noqa: PLC0415
+
+            _layout_ops.append_direct_kv(self, key, _coerce_scalar(value))
+            dict.__setitem__(self, key, value)
+            return
+        if _is_synth_inline(value):
+            from tomlrt import _layout_ops  # noqa: PLC0415
+
+            cst, decoded = _synth_value(
+                value,
+                layout_root=self._layout_root,
+                parent=self,
+                path=(*self._path, key),
+                owner=self._owner_aot_entry,
+            )
+            _layout_ops.append_direct_kv(self, key, cst)
+            dict.__setitem__(self, key, decoded)
+            return
+        msg = (
+            "Phase 3 only supports scalar / plain-dict / plain-list inserts; "
+            "Container / Array / AoT live-attach arrives in Phase 4"
+        )
+        raise NotImplementedError(msg)
+
+    def _scalar_replace(self, key: str, value: Any) -> None:
+        refs = self._index.get(key)
+        if not refs:
+            msg = f"internal: key {key!r} present in dict but missing from _index"
+            raise AssertionError(msg)
+        primary = refs[0]
+        slot = primary.slot
+        if not isinstance(slot, KVSlot):
+            msg = "internal: scalar replace expects KVSlot"
+            raise AssertionError(msg)  # noqa: TRY004
+        slot.value = _coerce_scalar(value)
+        dict.__setitem__(self, key, value)
+
+    def _inline_typed_replace(self, key: str, value: Any) -> None:
+        """Swap an existing direct-KV slot's value to a synthesised inline value.
+
+        Works for any existing scalar / inline-table / inline-array
+        binding bound by a single direct-KV slot. Dotted KV slots are
+        also fine: the new value is just an inline value at the same
+        leaf position.
+        """
+        refs = self._index.get(key)
+        if not refs or len(refs) != 1:
             msg = (
-                "Phase 3c only supports scalar inserts; inline / structural "
-                "sources arrive in Phase 3d/4"
+                "structural overwrite (multiple contributing refs) is "
+                "deferred to Phase 4"
             )
             raise NotImplementedError(msg)
-        from tomlrt import _layout_ops  # noqa: PLC0415
-
-        _layout_ops.append_direct_kv(self, key, _coerce_scalar(value))
-        dict.__setitem__(self, key, value)
+        primary = refs[0]
+        slot = primary.slot
+        if not isinstance(slot, KVSlot):
+            msg = "structural overwrite of header-bound binding is deferred to Phase 4"
+            raise NotImplementedError(msg)
+        cst, decoded = _synth_value(
+            value,
+            layout_root=self._layout_root,
+            parent=self,
+            path=(*self._path, key),
+            owner=self._owner_aot_entry,
+        )
+        slot.value = cst
+        dict.__setitem__(self, key, decoded)
 
     @override
     def __delitem__(self, key: str) -> None:
@@ -469,6 +535,142 @@ def _dt_kind(v: object) -> Any:
 from tomlrt._array import AoT, Array  # noqa: E402
 
 TomlInput = "Mapping[str, Any] | Document"
+
+
+# ---------------------------------------------------------------------------
+# Plain-Python value synthesis (Phase 4-partial — plain dict/list only).
+# ---------------------------------------------------------------------------
+
+
+def _is_synth_inline(v: object) -> bool:
+    """True iff ``v`` is a plain ``dict`` / ``list`` we can synthesise.
+
+    Excludes our own ``Container`` / ``Array`` / ``AoT`` subclasses,
+    which require live-attach semantics handled in Phase 4 proper.
+    """
+    if isinstance(v, (Container, Array, AoT)):
+        return False
+    return isinstance(v, (dict, list))
+
+
+def _make_keypart(name: str) -> KeyPart:
+    """Build a `KeyPart` for a synthesised key, choosing bare vs basic."""
+    import re  # noqa: PLC0415
+
+    if re.match(r"\A[A-Za-z0-9_\-]+\Z", name):
+        return KeyPart(raw=name, value=name, kind="bare")
+    return KeyPart(raw=_basic_string_lexeme(name), value=name, kind="basic")
+
+
+def _synth_value(
+    v: object,
+    *,
+    layout_root: Document | None,
+    parent: Container | None,
+    path: tuple[str, ...],
+    owner: AoTEntry | None,
+) -> tuple[Value, object]:
+    """Synthesise a (CST value, decoded view) pair from ``v``.
+
+    The CST value goes into the host slot's ``value`` field; the
+    decoded view is what gets stored in the parent dict (and is the
+    object the user retrieves via ``[]``).
+
+    Plain ``dict`` → ``InlineTableValue`` + ``Table(_inline=True)``.
+    Plain ``list`` → ``ArrayValue`` + ``Array``.
+    Scalar → coerced ``Value`` + the original scalar.
+    Container / Array / AoT raise NIE (Phase 4 live-attach).
+    """
+    if _is_scalar(v):
+        return _coerce_scalar(v), v
+    if isinstance(v, (Container, Array, AoT)):
+        msg = "live-attach of typed Container/Array/AoT is Phase 4"
+        raise NotImplementedError(msg)
+    if isinstance(v, dict):
+        return _synth_inline_table(
+            v, layout_root=layout_root, parent=parent, path=path, owner=owner
+        )
+    if isinstance(v, list):
+        return _synth_inline_array(v, layout_root=layout_root, owner=owner)
+    msg = f"cannot synthesise TOML value from {type(v).__name__}"
+    raise TypeError(msg)
+
+
+def _synth_inline_table(
+    d: dict[Any, Any],
+    *,
+    layout_root: Document | None,
+    parent: Container | None,
+    path: tuple[str, ...],
+    owner: AoTEntry | None,
+) -> tuple[InlineTableValue, Table]:
+    val = InlineTableValue()
+    table = Table()
+    table._layout_root = layout_root  # noqa: SLF001
+    table._path = path  # noqa: SLF001
+    table._parent = parent  # noqa: SLF001
+    table._inline = True  # noqa: SLF001
+    table._owner_aot_entry = owner  # noqa: SLF001
+    table._value = val  # noqa: SLF001
+
+    items = list(d.items())
+    for i, (k, sub) in enumerate(items):
+        if not isinstance(k, str):
+            msg = f"inline-table key must be str, got {type(k).__name__}"
+            raise TypeError(msg)
+        sub_cst, sub_dec = _synth_value(
+            sub,
+            layout_root=layout_root,
+            parent=table,
+            path=(*path, k),
+            owner=owner,
+        )
+        is_last = i == len(items) - 1
+        entry = InlineTableEntry(
+            leading=Trivia([WhitespaceNode(text=" ")]) if i > 0 else Trivia(),
+            key_parts=[_make_keypart(k)],
+            key_seps=[],
+            pre_eq=" ",
+            post_eq=" ",
+            value=sub_cst,
+            trailing=Trivia(),
+            has_comma=not is_last,
+            post_comma_trivia=Trivia(),
+        )
+        val.entries.append(entry)
+        dict.__setitem__(table, k, sub_dec)
+    return val, table
+
+
+def _synth_inline_array(
+    items: list[Any],
+    *,
+    layout_root: Document | None,
+    owner: AoTEntry | None,
+) -> tuple[ArrayValue, Array]:
+    val = ArrayValue()
+    arr = Array()
+    arr._value = val  # noqa: SLF001
+
+    for i, sub in enumerate(items):
+        sub_cst, sub_dec = _synth_value(
+            sub,
+            layout_root=layout_root,
+            parent=None,
+            path=(),
+            owner=owner,
+        )
+        is_last = i == len(items) - 1
+        item = ArrayItem(
+            leading=Trivia([WhitespaceNode(text=" ")]) if i > 0 else Trivia(),
+            value=sub_cst,
+            trailing=Trivia(),
+            has_comma=not is_last,
+            post_comma_trivia=Trivia(),
+        )
+        val.items.append(item)
+        list.append(arr, sub_dec)
+    return val, arr
 
 
 __all__ = ["AoT", "Array", "Container", "Document", "Table", "TomlInput"]
