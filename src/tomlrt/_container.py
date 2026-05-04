@@ -602,8 +602,15 @@ class Document(Container):
         self._newline: str = "\n"
         self._layout_root = self
         if data is not None:
+            import warnings  # noqa: PLC0415
+
+            warnings.warn(
+                "Document(data=...) is deprecated; build documents incrementally.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             for k, v in data.items():
-                self[k] = v
+                self[k] = _coerce_for_document_init(v)
 
     def render(self) -> str:
         return render(self)
@@ -735,6 +742,28 @@ def _is_scalar(v: object) -> bool:
     if isinstance(v, (int, float, str)):
         return True
     return isinstance(v, (datetime, date, time))
+
+
+def _coerce_for_document_init(v: Any) -> Any:
+    """Pick a sensible structural shape for ``Document(data=...)`` values.
+
+    * Mapping → section ``Table.section`` (recursively coerced).
+    * List of mappings (non-empty) → ``AoT`` of section tables.
+    * Anything else passes through unchanged.
+    """
+    if isinstance(v, AoT):
+        return v
+    if isinstance(v, Container):
+        return v
+    if isinstance(v, Mapping):
+        return Table.section(
+            {k: _coerce_for_document_init(sub) for k, sub in v.items()}
+        )
+    if isinstance(v, list) and v and all(isinstance(x, Mapping) for x in v):
+        return AoT(
+            [{k: _coerce_for_document_init(sub) for k, sub in m.items()} for m in v]
+        )
+    return v
 
 
 def _coerce_scalar(
