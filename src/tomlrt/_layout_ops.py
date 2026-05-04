@@ -1056,6 +1056,61 @@ def _splice_at_end(slot: Slot, doc: Document) -> None:
         insert_after(anchor, slot, doc)
 
 
+def _maybe_demote_synthetic_empty_header(parent: Container) -> None:
+    """Drop ``parent``'s header if it is synthetic and has no direct KV body.
+
+    Used after attaching a child header under ``parent``: if ``parent``
+    was synthesised as an empty placeholder (e.g.
+    ``doc["tool"] = Table.section({})``) and the new child gives it a
+    dotted-implicit anchor (``[tool.poetry]``), the placeholder header
+    is redundant and is removed.
+    """
+    from tomlrt._slots import KVSlot, StructuralHeaderSlot  # noqa: PLC0415
+
+    hdr_ref = parent._header_ref  # noqa: SLF001
+    if hdr_ref is None:
+        return
+    header = hdr_ref.slot
+    assert isinstance(header, StructuralHeaderSlot)
+    if not header.synthetic or header.kind != "table":
+        return
+    # The header's physical body is the doc-stream span from the slot
+    # after the header up to (but not including) the next structural
+    # header or EOF.  Walk it; if any KVSlot lives there, keep the
+    # header.
+    s = header._next  # noqa: SLF001
+    while s is not None and not isinstance(s, StructuralHeaderSlot):
+        if isinstance(s, KVSlot):
+            return
+        s = s._next  # noqa: SLF001
+    layout_root = parent._layout_root  # noqa: SLF001
+    from tomlrt._container import Document as _Document  # noqa: PLC0415
+
+    assert isinstance(layout_root, _Document)
+    doc = layout_root
+    # Remove the header from the doc stream and from all caches.
+    unlink_slot(header, doc, strip_new_head_leading=True)
+    parent._header_ref = None  # noqa: SLF001
+    parent._refs = [r for r in parent._refs if r is not hdr_ref]  # noqa: SLF001
+    # Also clear it from any prefix container's _refs / _index.
+    grand: Container | None = parent._parent  # noqa: SLF001
+    while grand is not None:
+        kept = [r for r in grand._refs if r.slot is not header]  # noqa: SLF001
+        if len(kept) != len(grand._refs):  # noqa: SLF001
+            grand._refs = kept  # noqa: SLF001
+            new_index: dict[str, list[SlotRef]] = {}
+            for r in kept:
+                if r.local_key is not None:
+                    new_index.setdefault(r.local_key, []).append(r)
+            grand._index = new_index  # noqa: SLF001
+        grand = grand._parent  # noqa: SLF001
+    # Owner aot-entry, if any, also drops it.
+    owner = header.owner_aot_entry
+    if owner is not None:
+        with contextlib.suppress(ValueError):
+            owner.entry_slots.remove(header)
+
+
 def _split_leading_structural(leading: Trivia) -> tuple[Trivia, Trivia]:
     """Split a leading-trivia stream into (structural-prefix, comment-remainder).
 
@@ -1225,6 +1280,14 @@ def add_aot_entry(aot: object, body: object, *, rehome: object | None = None) ->
 
     # Append the new entry to the AoT view list.
     list.append(aot, entry_table)
+
+    # If this is the very first entry of the AoT and the parent was
+    # an empty synthetic placeholder section (e.g.
+    # `doc["tool"] = Table.section({}); doc["tool"]["list"] = AoT(...)`),
+    # the parent's header is now redundant — the dotted-implicit
+    # anchor lives entirely in `[[tool.list]]`.
+    if ordinal == 0:
+        _maybe_demote_synthetic_empty_header(parent)
 
     # Populate body.
     for k, v in body_items:
@@ -1525,6 +1588,8 @@ def attach_section_at(
         anc._refs.append(anc_ref)  # noqa: SLF001
         anc._index.setdefault(comp, []).append(anc_ref)  # noqa: SLF001
 
+    _maybe_demote_synthetic_empty_header(parent)
+
     for k, v in pending:
         if not (_is_scalar(v) or _is_synth_inline(v)):
             section[k] = v
@@ -1607,6 +1672,8 @@ def attach_section(parent: Container, key: str, source: object | None = None) ->
     parent._refs.append(parent_ref)  # noqa: SLF001
     parent._index.setdefault(key, []).append(parent_ref)  # noqa: SLF001
     dict.__setitem__(parent, key, section)
+
+    _maybe_demote_synthetic_empty_header(parent)
 
     for k, v in pending:
         if not (_is_scalar(v) or _is_synth_inline(v)):

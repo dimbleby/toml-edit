@@ -582,12 +582,67 @@ class Container(dict[str, Any]):
         Intermediate sections are created as needed via `ensure_table`.
         Returns the live view stored at the leaf.
         """
+        from tomlrt._array import AoT  # noqa: PLC0415
+
         parts = _validate_path(path)
         if self._inline and len(parts) > 1:
             from tomlrt._errors import TOMLError  # noqa: PLC0415
 
             msg = "cannot install dotted path inside an inline-style table"
             raise TOMLError(msg)
+        # If the value is a section-flavoured Table or an AoT, route
+        # straight to the multi-component attach path so intermediate
+        # path components stay implicit (no [tool] header for
+        # `install("tool.poetry", Table.section())`).
+        is_section = (
+            isinstance(value, Table)
+            and value._layout_root is None  # noqa: SLF001
+            and not value._inline  # noqa: SLF001
+        )
+        is_aot = isinstance(value, AoT) and value._layout_root is None  # noqa: SLF001
+        if (is_section or is_aot) and len(parts) > 1 and self._layout_root is not None:
+            # Walk existing prefix; whatever's left is created with
+            # implicit intermediates plus the final explicit binding.
+            cur: Container = self
+            i = 0
+            while i < len(parts) - 1:
+                p = parts[i]
+                if p not in cur:
+                    break
+                nxt = dict.__getitem__(cur, p)
+                if not isinstance(nxt, Container) or nxt._inline:  # noqa: SLF001
+                    break
+                cur = nxt
+                i += 1
+            # Overwrite-existing path: leaf already present, fall through
+            # to direct __setitem__ on the deepest existing container.
+            if i == len(parts) - 1:
+                cur[parts[-1]] = value
+                return cur[parts[-1]]
+            from tomlrt import _layout_ops  # noqa: PLC0415
+
+            if is_aot:
+                # Multi-component AoT install: build implicit chain via
+                # ensure_table on the prefix-of-leaf, then bind the AoT.
+                # We do this by going through attach_section_at-style
+                # implicit chain construction, but for AoT we still need
+                # a per-entry header; easiest path is to bind the AoT at
+                # the deepest existing container under the missing tail.
+                # Walk implicit intermediates and let __setitem__ handle
+                # the final binding (which routes through attach_empty_aot
+                # / add_aot_entry).
+                for p in parts[i : len(parts) - 1]:
+                    implicit = Table()
+                    implicit._layout_root = cur._layout_root  # noqa: SLF001
+                    implicit._path = (*cur._path, p)  # noqa: SLF001
+                    implicit._parent = cur  # noqa: SLF001
+                    implicit._owner_aot_entry = cur._owner_aot_entry  # noqa: SLF001
+                    dict.__setitem__(cur, p, implicit)
+                    cur = implicit
+                cur[parts[-1]] = value
+                return cur[parts[-1]]
+            sub = parts[i:]
+            return _layout_ops.attach_section_at(cur, sub, value)
         host = self if len(parts) == 1 else self.ensure_table(parts[:-1])
         host[parts[-1]] = value
         return host[parts[-1]]
@@ -615,8 +670,10 @@ class Container(dict[str, Any]):
                 break
             nxt = dict.__getitem__(cur, p)
             if not isinstance(nxt, Container) or nxt._inline:  # noqa: SLF001
-                msg = f"cannot descend into {p!r}: not a section table"
-                raise TypeError(msg)
+                from tomlrt._errors import TOMLError  # noqa: PLC0415
+
+                msg = f"existing value at {p!r} is not a section table"
+                raise TOMLError(msg)
             cur = nxt
             i += 1
         if i == len(parts):
@@ -655,9 +712,6 @@ class Container(dict[str, Any]):
             msg = f"key {key!r} not in table"
             raise KeyError(msg)
         cur = dict.__getitem__(self, key)
-        if isinstance(cur, Container) and not cur._inline:  # noqa: SLF001
-            assert isinstance(cur, Table)
-            return cur
         if not (isinstance(cur, Container) and cur._inline):  # noqa: SLF001
             msg = f"{key!r} is not an inline table"
             raise TOMLError(msg)
@@ -686,8 +740,6 @@ class Container(dict[str, Any]):
             msg = f"key {key!r} not in table"
             raise KeyError(msg)
         cur = dict.__getitem__(self, key)
-        if isinstance(cur, AoT):
-            return cur
         if not isinstance(cur, Array):
             msg = f"{key!r} is not an array"
             raise TOMLError(msg)
