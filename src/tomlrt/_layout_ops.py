@@ -1252,31 +1252,7 @@ def clone_aot_entry(aot: object, src_entry_table: object) -> object:
     # Preflight: validate every unsupported shape BEFORE allocating
     # or splicing anything. Otherwise raising mid-clone leaves the
     # document partially mutated.
-    src_slots = list(src_entry.entry_slots)
-    if not src_slots or not isinstance(src_slots[0], StructuralHeaderSlot):
-        msg = "Source entry has no header slot"
-        raise RuntimeError(msg)
-    for s in src_slots[1:]:
-        if not isinstance(s, KVSlot):
-            msg = (
-                "AoT.__imul__ for entries with nested sub-sections "
-                "is not yet implemented"
-            )
-            raise NotImplementedError(msg)
-        if len(s.key_parts) != 1:
-            msg = "AoT.__imul__ for entries with dotted KVs is not yet implemented"
-            raise NotImplementedError(msg)
-        key = s.key_parts[0].value
-        if key not in src_entry_table:
-            msg = f"Source entry has slot {key!r} but no decoded value"
-            raise RuntimeError(msg)
-        src_decoded = src_entry_table[key]
-        if isinstance(src_decoded, (dict, list)):
-            msg = (
-                "AoT.__imul__ for entries with inline-array / inline-table "
-                "values is not yet implemented"
-            )
-            raise NotImplementedError(msg)
+    src_slots = _validate_clonable_aot_entry(src_entry, src_entry_table)
 
     ordinal = len(aot)
     new_entry = AoTEntry(path=path, ordinal=ordinal)
@@ -1348,6 +1324,44 @@ def clone_aot_entry(aot: object, src_entry_table: object) -> object:
     return entry_table
 
 
+def _validate_clonable_aot_entry(
+    src_entry: AoTEntry, src_entry_table: object
+) -> list[Slot]:
+    """Validate the source entry can be cloned; return its slot list.
+
+    Pure validation — no mutation. Raises NotImplementedError for
+    shapes the cloner does not yet support, RuntimeError for
+    invariant violations. Shared between `clone_aot_entry` and
+    `check_clone_aot_entry` so the two cannot drift.
+    """
+    src_slots = list(src_entry.entry_slots)
+    if not src_slots or not isinstance(src_slots[0], StructuralHeaderSlot):
+        msg = "Source entry has no header slot"
+        raise RuntimeError(msg)
+    for s in src_slots[1:]:
+        if not isinstance(s, KVSlot):
+            msg = (
+                "AoT.__imul__ for entries with nested sub-sections "
+                "is not yet implemented"
+            )
+            raise NotImplementedError(msg)
+        if len(s.key_parts) != 1:
+            msg = "AoT.__imul__ for entries with dotted KVs is not yet implemented"
+            raise NotImplementedError(msg)
+        key = s.key_parts[0].value
+        if key not in src_entry_table:  # type: ignore[operator]
+            msg = f"Source entry has slot {key!r} but no decoded value"
+            raise RuntimeError(msg)
+        src_decoded = src_entry_table[key]  # type: ignore[index]
+        if isinstance(src_decoded, (dict, list)):
+            msg = (
+                "AoT.__imul__ for entries with inline-array / inline-table "
+                "values is not yet implemented"
+            )
+            raise NotImplementedError(msg)
+    return src_slots
+
+
 def check_clone_aot_entry(aot: object, src_entry_table: object) -> None:
     """Raise NotImplementedError/RuntimeError if `clone_aot_entry` would.
 
@@ -1371,31 +1385,7 @@ def check_clone_aot_entry(aot: object, src_entry_table: object) -> None:
     if src_entry is None:
         msg = "Source entry has no owning AoTEntry"
         raise RuntimeError(msg)
-    src_slots = list(src_entry.entry_slots)
-    if not src_slots or not isinstance(src_slots[0], StructuralHeaderSlot):
-        msg = "Source entry has no header slot"
-        raise RuntimeError(msg)
-    for s in src_slots[1:]:
-        if not isinstance(s, KVSlot):
-            msg = (
-                "AoT.__imul__ for entries with nested sub-sections "
-                "is not yet implemented"
-            )
-            raise NotImplementedError(msg)
-        if len(s.key_parts) != 1:
-            msg = "AoT.__imul__ for entries with dotted KVs is not yet implemented"
-            raise NotImplementedError(msg)
-        key = s.key_parts[0].value
-        if key not in src_entry_table:
-            msg = f"Source entry has slot {key!r} but no decoded value"
-            raise RuntimeError(msg)
-        src_decoded = src_entry_table[key]
-        if isinstance(src_decoded, (dict, list)):
-            msg = (
-                "AoT.__imul__ for entries with inline-array / inline-table "
-                "values is not yet implemented"
-            )
-            raise NotImplementedError(msg)
+    _validate_clonable_aot_entry(src_entry, src_entry_table)
 
 
 def attach_section_at(

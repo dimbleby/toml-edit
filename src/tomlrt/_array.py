@@ -853,7 +853,12 @@ def _flip_to_internal(
                 pieces.insert(last_nl + 1, WhitespaceNode(text=indent))
                 item.post_comma_trivia = Trivia(pieces)
             elif last_nl < 0 and indent:
-                pieces.append(NewlineNode(text="\n"))
+                nl_text = "\n"
+                for p in style.inter_separator.pieces:
+                    if isinstance(p, NewlineNode):
+                        nl_text = p.text
+                        break
+                pieces.append(NewlineNode(text=nl_text))
                 pieces.append(WhitespaceNode(text=indent))
                 item.post_comma_trivia = Trivia(pieces)
         return
