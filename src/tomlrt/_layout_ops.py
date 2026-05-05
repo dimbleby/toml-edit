@@ -986,109 +986,6 @@ def _synthesise_header_then_insert_kv_at_doc_tail(
         owner.entry_slots.append(header_slot)
         owner.entry_slots.append(new_kv)
 
-
-def _insert_dotted_kv_before_descendants(c: Container, key: str, value: Value) -> None:
-    """Insert a dotted KV into a structural-only implicit container.
-
-    Targets implicit-headerless ``c`` with only descendant-header
-    contributors (no body anchor). Locates ``c``'s first
-    contributor in doc-stream order (the topmost descendant header
-    binding ref), and splices a new dotted KV ``host_path.key``
-    immediately *before* that header, where ``host_path`` is the
-    nearest header-bearing ancestor (or the doc root for top-level
-    implicits).
-
-    Pre-conditions (checked by caller):
-
-    * ``c._path`` is non-empty
-    * ``c._header_ref is None``
-    * ``c._body_tail is None``
-    * ``c._refs`` is non-empty (there is at least one descendant
-      binding ref to use as the "before" anchor)
-    """
-    layout_root = c._layout_root  # noqa: SLF001
-    assert layout_root is not None
-    doc = layout_root
-
-    if not c._refs:  # noqa: SLF001
-        # Container has no slots and no contributors at all — most
-        # likely a held view of a deleted subtree. Surface as NIE so
-        # callers can distinguish from internal-bug assertion failures.
-        msg = (
-            "structural-only implicit container with no contributors — "
-            "likely a held view of a deleted subtree"
-        )
-        raise NotImplementedError(msg)
-    anchor_slot = c._refs[0].slot  # noqa: SLF001
-
-    # Find host: nearest ancestor with a header, or the doc root.
-    host: Container = c
-    while host._parent is not None and host._header_ref is None:  # noqa: SLF001
-        host = host._parent  # noqa: SLF001
-
-    chain: list[Container] = []
-    cur: Container | None = c
-    while cur is not host:
-        assert cur is not None
-        chain.append(cur)
-        cur = cur._parent  # noqa: SLF001
-    chain.append(host)
-    chain.reverse()
-
-    local_keys = [*c._path[len(host._path) :], key]  # noqa: SLF001
-    assert len(local_keys) == len(chain)
-
-    owner = c._owner_aot_entry  # noqa: SLF001
-    for anc in chain:
-        assert anc._owner_aot_entry is owner  # noqa: SLF001
-
-    keypath = (*c._path[len(host._path) :], key)  # noqa: SLF001
-    parts = [_make_keypart(k) for k in keypath]
-    seps = ["."] * (len(parts) - 1)
-    new_slot = KVSlot(
-        leading=Trivia(),
-        host_path=host._path,  # noqa: SLF001
-        key_parts=parts,
-        key_seps=seps,
-        pre_eq=" ",
-        post_eq=" ",
-        value=value,
-        eol=EolTrivia(
-            trailing_ws=None,
-            comment=None,
-            newline=NewlineNode(text=doc._newline),  # noqa: SLF001
-        ),
-        owner_aot_entry=owner,
-    )
-
-    insert_before(anchor_slot, new_slot, doc)
-
-    # File refs on every chain ancestor at the position just before
-    # the anchor's ref.
-    for i, anc in enumerate(chain):
-        new_ref = SlotRef(slot=new_slot, container=anc, local_key=local_keys[i])
-        anchor_idx = _find_ref_index_by_slot(anc, anchor_slot)
-        anc._refs.insert(anchor_idx, new_ref)  # noqa: SLF001
-        anc._index[local_keys[i]] = [  # noqa: SLF001
-            r
-            for r in anc._refs  # noqa: SLF001
-            if r.local_key == local_keys[i]
-        ]
-        # Update _body_tail on the immediate target container only:
-        # the new slot is now the deepest container's only body
-        # contributor.
-        if anc is c:
-            anc._body_tail = new_slot  # noqa: SLF001
-
-    if owner is not None:
-        try:
-            anchor_idx = owner.entry_slots.index(anchor_slot)
-        except ValueError:
-            owner.entry_slots.append(new_slot)
-        else:
-            owner.entry_slots.insert(anchor_idx, new_slot)
-
-
 def _append_kv_in_aot_entry(c: Container, key: str, value: Value) -> None:
     """Append a direct KV in an AoT-entry root container's body.
 
@@ -2225,13 +2122,6 @@ def _populate_entry_views(
                 owner=body_owner,
             )
             dict.__setitem__(cur, leaf_key, decoded)
-
-
-def _walk_path(table: Container, path: tuple[str, ...]) -> Container:
-    cur: Any = table
-    for comp in path:
-        cur = dict.__getitem__(cur, comp)
-    return cur  # type: ignore[no-any-return]
 
 
 def _validate_clonable_aot_entry(

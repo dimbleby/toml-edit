@@ -16,8 +16,20 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override
 
+from tomlrt._trivia import CommentNode, NewlineNode, Trivia, WhitespaceNode
+from tomlrt._values import (
+    ArrayItem,
+    ArrayValue,
+    InlineTableValue,
+)
+
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
+
+    from tomlrt._values import (
+        InlineTableEntry,
+        Value,
+    )
 
     if sys.version_info >= (3, 11):
         from typing import Self
@@ -26,7 +38,6 @@ if TYPE_CHECKING:
 
     from tomlrt._array_comments import ArrayEolView, ArrayLeadingView
     from tomlrt._container import Container, Document, Table
-    from tomlrt._values import ArrayValue
 
 
 class Array(list[Any]):
@@ -49,19 +60,12 @@ class Array(list[Any]):
         until assigned into a document (``doc[k] = arr``).
         """
         super().__init__()
-        from tomlrt._values import ArrayValue  # noqa: PLC0415
 
         self._value: ArrayValue | None = ArrayValue()
         self._multiline: bool = multiline
         self._attached: bool = False
         if items is None:
             if multiline:
-                from tomlrt._trivia import (  # noqa: PLC0415
-                    NewlineNode,
-                    Trivia,
-                    WhitespaceNode,
-                )
-
                 self._value.final_trivia = Trivia(
                     [NewlineNode(text="\n"), WhitespaceNode(text=indent)]
                 )
@@ -73,12 +77,6 @@ class Array(list[Any]):
         for v in arr:
             list.append(self, v)
         if multiline and val.items:
-            from tomlrt._trivia import (  # noqa: PLC0415
-                NewlineNode,
-                Trivia,
-                WhitespaceNode,
-            )
-
             style = _ArrayStyle(
                 is_multiline=True,
                 inter_separator=Trivia(
@@ -98,11 +96,6 @@ class Array(list[Any]):
             # Empty multiline factory: park the prospective leading
             # for the first append in final_trivia, matching how an
             # empty multiline array parses (`[\n    ]`).
-            from tomlrt._trivia import (  # noqa: PLC0415
-                NewlineNode,
-                Trivia,
-                WhitespaceNode,
-            )
 
             val.final_trivia = Trivia(
                 [NewlineNode(text="\n"), WhitespaceNode(text=indent)]
@@ -205,11 +198,6 @@ class Array(list[Any]):
         Returns ``self`` for chaining.
         """
         from tomlrt._errors import TOMLError  # noqa: PLC0415
-        from tomlrt._trivia import (  # noqa: PLC0415
-            NewlineNode,
-            Trivia,
-            WhitespaceNode,
-        )
 
         ind = "    " if indent is None else indent
         if self._value is None:
@@ -299,12 +287,6 @@ class Array(list[Any]):
         if not items and self._value.final_trivia.pieces:
             ft = self._value.final_trivia
             if _trivia_has_newline(ft):
-                from tomlrt._trivia import (  # noqa: PLC0415
-                    NewlineNode,
-                    Trivia,
-                    WhitespaceNode,
-                )
-
                 indent = _indent_from_final_trivia(ft)
                 pieces = list(ft.pieces)
                 # If the final_trivia is just a bare newline (no
@@ -373,7 +355,6 @@ class Array(list[Any]):
         decoded = list.pop(self, i)
         items = self._value.items
         style = self._style()
-        from tomlrt._trivia import CommentNode  # noqa: PLC0415
 
         trailing_has_comment = any(
             isinstance(p, CommentNode) for p in items[i].trailing.pieces
@@ -432,12 +413,6 @@ class Array(list[Any]):
             # EOL-of-`[` style — the whole thing stays at position
             # 0 and apply_comments must not re-emit it onto the
             # displaced item.
-            from tomlrt._trivia import (  # noqa: PLC0415
-                CommentNode,
-                NewlineNode,
-                Trivia,
-                WhitespaceNode,
-            )
 
             old_leading_pieces = list(items[0].leading.pieces)
             displaced = items[0]
@@ -733,7 +708,6 @@ class _ArrayStyle:
 
 
 def _detect_style(value: ArrayValue | None, *, multiline_flag: bool) -> _ArrayStyle:
-    from tomlrt._trivia import NewlineNode, Trivia, WhitespaceNode  # noqa: PLC0415
 
     if value is None:
         return _ArrayStyle(
@@ -838,21 +812,15 @@ def _detect_style(value: ArrayValue | None, *, multiline_flag: bool) -> _ArraySt
     )
 
 
-def _trivia_has_newline(trivia: Any) -> bool:
-    from tomlrt._trivia import NewlineNode  # noqa: PLC0415
-
+def _trivia_has_newline(trivia: Trivia) -> bool:
     return any(isinstance(p, NewlineNode) for p in trivia.pieces)
 
 
-def _clone_trivia(trivia: Any) -> Any:
-    from tomlrt._trivia import Trivia  # noqa: PLC0415
-
+def _clone_trivia(trivia: Trivia) -> Trivia:
     return Trivia(list(trivia.pieces))
 
 
-def _has_ws_after_last_newline(trivia: Any) -> bool:
-    from tomlrt._trivia import NewlineNode, WhitespaceNode  # noqa: PLC0415
-
+def _has_ws_after_last_newline(trivia: Trivia) -> bool:
     pieces = trivia.pieces
     last_nl = -1
     for i, p in enumerate(pieces):
@@ -863,9 +831,7 @@ def _has_ws_after_last_newline(trivia: Any) -> bool:
     return last_nl + 1 < len(pieces) and isinstance(pieces[last_nl + 1], WhitespaceNode)
 
 
-def _has_ws_after_newline(trivia: Any) -> bool:
-    from tomlrt._trivia import NewlineNode, WhitespaceNode  # noqa: PLC0415
-
+def _has_ws_after_newline(trivia: Trivia) -> bool:
     pieces = trivia.pieces
     for i, p in enumerate(pieces):
         if (
@@ -877,9 +843,7 @@ def _has_ws_after_newline(trivia: Any) -> bool:
     return False
 
 
-def _first_indent_after_newline(trivia: Any) -> str:
-    from tomlrt._trivia import NewlineNode, WhitespaceNode  # noqa: PLC0415
-
+def _first_indent_after_newline(trivia: Trivia) -> str:
     pieces = trivia.pieces
     for i, p in enumerate(pieces):
         if (
@@ -891,7 +855,7 @@ def _first_indent_after_newline(trivia: Any) -> str:
     return ""
 
 
-def _indent_from_final_trivia(ft: Any) -> str:
+def _indent_from_final_trivia(ft: Trivia) -> str:
     """Extract a logical indent from `final_trivia` pieces.
 
     Prefers the indent of the last comment line (so a varied-indent
@@ -899,12 +863,6 @@ def _indent_from_final_trivia(ft: Any) -> str:
     the *most recent* commented line). Falls back to the indent of
     the last whitespace-after-newline block, then to "".
     """
-    from tomlrt._trivia import (  # noqa: PLC0415
-        CommentNode,
-        NewlineNode,
-        WhitespaceNode,
-    )
-
     pieces = ft.pieces
     last_comment_indent: str | None = None
     last_ws_after_nl: str | None = None
@@ -926,36 +884,32 @@ def _indent_from_final_trivia(ft: Any) -> str:
     return last_ws_after_nl or ""
 
 
-def _internal_leading(_style: _ArrayStyle) -> Any:
-    from tomlrt._trivia import Trivia  # noqa: PLC0415
-
-    return Trivia()  # internal items get blank leading; separator is in
-    # the prior item's post_comma_trivia.
+def _internal_leading(_style: _ArrayStyle) -> Trivia:
+    # Internal items get blank leading; separator lives in the prior
+    # item's post_comma_trivia.
+    return Trivia()
 
 
 def _new_item(
-    cst: Any,
+    cst: Value,
     *,
     leading_first: bool,
     style: _ArrayStyle,
-    leading: Any | None = None,
-) -> Any:
-    from tomlrt._trivia import Trivia  # noqa: PLC0415
-    from tomlrt._values import ArrayItem  # noqa: PLC0415
-
+    leading: Trivia | None = None,
+) -> ArrayItem:
     if leading is None:
         leading = Trivia() if leading_first else _internal_leading(style)
     return ArrayItem(
         leading=leading,
         value=cst,
         trailing=Trivia(),
-        has_comma=False,  # caller will normalise via _flip_*.
+        has_comma=False,
         post_comma_trivia=Trivia(),
     )
 
 
 def _flip_to_internal(
-    item: Any, style: _ArrayStyle, value: ArrayValue | None = None
+    item: ArrayItem, style: _ArrayStyle, value: ArrayValue | None = None
 ) -> None:
     """Make ``item`` look like an internal (non-last) item.
 
@@ -971,13 +925,6 @@ def _flip_to_internal(
     indent so the next item lands at the right column. Otherwise fall
     back to the style's full inter-separator template.
     """
-    from tomlrt._trivia import (  # noqa: PLC0415
-        CommentNode,
-        NewlineNode,
-        Trivia,
-        WhitespaceNode,
-    )
-
     has_comment = any(isinstance(p, CommentNode) for p in item.trailing.pieces)
     if (
         value is not None
@@ -1013,29 +960,23 @@ def _flip_to_internal(
     item.post_comma_trivia = _clone_trivia(style.inter_separator)
 
 
-def _flip_to_terminal(item: Any, style: _ArrayStyle) -> None:
+def _flip_to_terminal(item: ArrayItem, style: _ArrayStyle) -> None:
     """Make ``item`` look like the terminal (last) item per style."""
     item.has_comma = style.trailing_comma
     item.post_comma_trivia = (
-        _clone_trivia(style.trailing_post) if style.trailing_comma else _trivia_empty()
+        _clone_trivia(style.trailing_post) if style.trailing_comma else Trivia()
     )
 
 
-def _trivia_empty() -> Any:
-    from tomlrt._trivia import Trivia  # noqa: PLC0415
-
+def _trivia_empty() -> Trivia:
     return Trivia()
 
 
-def _trivia_has_comment(trivia: Any) -> bool:
-    from tomlrt._trivia import CommentNode  # noqa: PLC0415
-
+def _trivia_has_comment(trivia: Trivia) -> bool:
     return any(isinstance(p, CommentNode) for p in trivia.pieces)
 
 
-def _value_has_any_comment(val: Any) -> bool:
-    from tomlrt._values import ArrayValue, InlineTableValue  # noqa: PLC0415
-
+def _value_has_any_comment(val: Value) -> bool:
     if isinstance(val, ArrayValue):
         if _trivia_has_comment(val.final_trivia):
             return True
@@ -1047,7 +988,7 @@ def _value_has_any_comment(val: Any) -> bool:
     return False
 
 
-def _item_has_any_comment(item: Any) -> bool:
+def _item_has_any_comment(item: ArrayItem) -> bool:
     if (
         _trivia_has_comment(item.leading)
         or _trivia_has_comment(item.trailing)
@@ -1057,7 +998,7 @@ def _item_has_any_comment(item: Any) -> bool:
     return _value_has_any_comment(item.value)
 
 
-def _entry_has_any_comment(entry: Any) -> bool:
+def _entry_has_any_comment(entry: InlineTableEntry) -> bool:
     if _trivia_has_comment(entry.leading) or _trivia_has_comment(entry.trailing):
         return True
     if _trivia_has_comment(entry.post_comma_trivia):
@@ -1066,7 +1007,7 @@ def _entry_has_any_comment(entry: Any) -> bool:
 
 
 def _renormalise_commas(
-    items: list[Any], style: _ArrayStyle, value: ArrayValue | None = None
+    items: list[ArrayItem], style: _ArrayStyle, value: ArrayValue | None = None
 ) -> None:
     """Reset has_comma + post_comma_trivia across ``items`` per style."""
     if not items:
@@ -1076,15 +1017,13 @@ def _renormalise_commas(
     _flip_to_terminal(items[-1], style)
 
 
-def _normalise_for_renormalise(items: list[Any], bracket_leading: Any) -> None:
+def _normalise_for_renormalise(items: list[ArrayItem], bracket_leading: Trivia) -> None:
     """Prepare ``items`` for `_renormalise_commas` after a reorder.
 
     Strips per-item ``leading`` (so the bracket-leading isn't double-
     counted on whichever item now sits at index 0) and re-applies the
     captured ``bracket_leading`` to the new ``items[0]``.
     """
-    from tomlrt._trivia import Trivia  # noqa: PLC0415
-
     if not items:
         return
     for it in items:
@@ -1092,7 +1031,7 @@ def _normalise_for_renormalise(items: list[Any], bracket_leading: Any) -> None:
     items[0].leading = bracket_leading
 
 
-def _clone_item(item: Any) -> Any:
+def _clone_item(item: ArrayItem) -> ArrayItem:
     from copy import deepcopy  # noqa: PLC0415
 
     return deepcopy(item)
