@@ -30,7 +30,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
-from tomlrt._trivia import CommentNode, Trivia, WhitespaceNode
+from tomlrt._trivia import CommentNode, Trivia, WhitespaceNode, clone_trivia
 from tomlrt._values import InlineTableEntry, KeyPart
 
 if TYPE_CHECKING:
@@ -119,10 +119,6 @@ def _ws(text: str) -> Trivia:
     return Trivia(pieces=[WhitespaceNode(text=text)])
 
 
-def _clone_trivia(trivia: Trivia) -> Trivia:
-    return Trivia(pieces=list(trivia.pieces))
-
-
 # ---------------------------------------------------------------------------
 # Public ops
 # ---------------------------------------------------------------------------
@@ -179,10 +175,10 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
     if not iv.entries:
         # Empty {} → mirror the original inner padding (whatever was
         # parsed into final_trivia: "" for `{}`, " " for `{ }`, etc.).
-        bracket_pad = _clone_trivia(iv.final_trivia) if iv.final_trivia.pieces else None
+        bracket_pad = clone_trivia(iv.final_trivia) if iv.final_trivia.pieces else None
         if bracket_pad is not None:
             new_entry.leading = bracket_pad
-            new_entry.trailing = _clone_trivia(bracket_pad)
+            new_entry.trailing = clone_trivia(bracket_pad)
             iv.final_trivia = Trivia()
         iv.entries.append(new_entry)
         return
@@ -208,10 +204,10 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
         # layout, not to the inserted entry.
         if _is_ws_only(last.post_comma_trivia):
             new_entry.trailing = last.post_comma_trivia
-            last.post_comma_trivia = _clone_trivia(inter_sep)
+            last.post_comma_trivia = clone_trivia(inter_sep)
         else:
-            new_entry.leading = _clone_trivia(inter_sep)
-            new_entry.trailing = _clone_trivia(inter_sep)
+            new_entry.leading = clone_trivia(inter_sep)
+            new_entry.trailing = clone_trivia(inter_sep)
     elif _is_ws_only(last.trailing):
         # No comma yet — promote `last`: take its (whitespace-only)
         # trailing as the new closing space for the inserted entry and
@@ -219,13 +215,13 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
         new_entry.trailing = last.trailing if last.trailing.pieces else Trivia()
         last.trailing = Trivia()
         last.has_comma = True
-        last.post_comma_trivia = _clone_trivia(inter_sep)
+        last.post_comma_trivia = clone_trivia(inter_sep)
     else:
         # `last.trailing` carries a comment / newline (TOML 1.1
         # multiline). Don't migrate — leave it where the user put it
         # and append a comma + new entry with default spacing.
         last.has_comma = True
-        last.post_comma_trivia = _clone_trivia(inter_sep)
+        last.post_comma_trivia = clone_trivia(inter_sep)
         new_entry.trailing = _ws(" ")
     if keep_trailing_comma:
         # Preserve a trailing-comma policy: the new tail also carries

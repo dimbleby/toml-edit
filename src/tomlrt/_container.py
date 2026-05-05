@@ -40,10 +40,10 @@ from tomlrt._errors import TOMLError
 from tomlrt._render import render
 from tomlrt._slots import KVSlot, StructuralHeaderSlot
 from tomlrt._trivia import (
-    CommentNode,
     NewlineNode,
     Trivia,
     WhitespaceNode,
+    trivia_has_comment,
 )
 from tomlrt._values import (
     ArrayItem,
@@ -1223,8 +1223,6 @@ class Document(Container):
         return loads(self.render())
 
 
-def _trivia_has_comment(t: Trivia) -> bool:
-    return any(isinstance(p, CommentNode) for p in t.pieces)
 
 
 def _inline_value_has_inner_comments(v: object) -> bool:
@@ -1235,13 +1233,13 @@ def _inline_value_has_inner_comments(v: object) -> bool:
     """
     if not isinstance(v, InlineTableValue):
         return False
-    if _trivia_has_comment(v.final_trivia):
+    if trivia_has_comment(v.final_trivia):
         return True
     for e in v.entries:
         if (
-            _trivia_has_comment(e.leading)
-            or _trivia_has_comment(e.trailing)
-            or _trivia_has_comment(e.post_comma_trivia)
+            trivia_has_comment(e.leading)
+            or trivia_has_comment(e.trailing)
+            or trivia_has_comment(e.post_comma_trivia)
         ):
             return True
     return False
@@ -1256,13 +1254,13 @@ def _array_value_has_outer_comments(v: object) -> bool:
     """
     if not isinstance(v, ArrayValue):
         return False
-    if _trivia_has_comment(v.final_trivia):
+    if trivia_has_comment(v.final_trivia):
         return True
     for it in v.items:
         if (
-            _trivia_has_comment(it.leading)
-            or _trivia_has_comment(it.trailing)
-            or _trivia_has_comment(it.post_comma_trivia)
+            trivia_has_comment(it.leading)
+            or trivia_has_comment(it.trailing)
+            or trivia_has_comment(it.post_comma_trivia)
         ):
             return True
     return False
