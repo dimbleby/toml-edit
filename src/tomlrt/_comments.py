@@ -31,6 +31,7 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override
 
+from tomlrt._errors import TOMLError
 from tomlrt._slots import StructuralHeaderSlot
 from tomlrt._trivia import (
     CommentNode,
@@ -51,8 +52,6 @@ if TYPE_CHECKING:
 
 def _validate_comment_text(text: str) -> None:
     """Reject a comment value that would not round-trip via the parser."""
-    from tomlrt._errors import TOMLError  # noqa: PLC0415
-
     if "\n" in text or "\r" in text:
         msg = "comment must be single-line"
         raise TOMLError(msg)
@@ -370,8 +369,6 @@ def _header_slot(c: Container) -> StructuralHeaderSlot | None:
     Returns None if this container has no own header (document root /
     purely-implicit container).
     """
-    from tomlrt._errors import TOMLError  # noqa: PLC0415
-
     if c._inline:  # noqa: SLF001
         msg = "header comment API is not available on inline tables"
         raise TOMLError(msg)
@@ -384,8 +381,6 @@ def _header_slot(c: Container) -> StructuralHeaderSlot | None:
 
 
 def _header_comment_get(c: Container) -> str | None:
-    from tomlrt._errors import TOMLError  # noqa: PLC0415
-
     h = _header_slot(c)
     if h is None:
         msg = "container has no header to attach a comment to"
@@ -397,8 +392,6 @@ def _header_comment_get(c: Container) -> str | None:
 
 
 def _header_comment_set(c: Container, value: str | None) -> None:
-    from tomlrt._errors import TOMLError  # noqa: PLC0415
-
     h = _header_slot(c)
     if h is None:
         msg = "container has no header to attach a comment to"
@@ -436,8 +429,6 @@ def _header_comment_set(c: Container, value: str | None) -> None:
 
 
 def _header_leading_get(c: Container) -> tuple[str, ...]:
-    from tomlrt._errors import TOMLError  # noqa: PLC0415
-
     h = _header_slot(c)
     if h is None:
         msg = "container has no header to attach leading comments to"
@@ -447,8 +438,6 @@ def _header_leading_get(c: Container) -> tuple[str, ...]:
 
 
 def _header_leading_set(c: Container, value: tuple[str, ...]) -> None:
-    from tomlrt._errors import TOMLError  # noqa: PLC0415
-
     h = _header_slot(c)
     if h is None:
         msg = "container has no header to attach leading comments to"
@@ -483,8 +472,6 @@ def _header_leading_set(c: Container, value: tuple[str, ...]) -> None:
 
 
 def _validate_comment_seq(value: tuple[str, ...], name: str) -> tuple[str, ...]:
-    from tomlrt._errors import TOMLError  # noqa: PLC0415
-
     v: object = value
     if isinstance(v, str):
         msg = f"{name} must be an iterable of comment strings"
@@ -595,8 +582,6 @@ def _doc_epilogue_get(doc: Document) -> tuple[str, ...]:
 
 
 def _doc_epilogue_set(doc: Document, value: tuple[str, ...]) -> None:
-    from tomlrt._errors import TOMLError  # noqa: PLC0415
-
     comments = _validate_comment_seq(value, "epilogue")
     head = doc._head  # noqa: SLF001
     if head is None and comments:

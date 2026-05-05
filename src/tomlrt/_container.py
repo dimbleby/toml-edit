@@ -10,8 +10,11 @@ dict from there.
 
 from __future__ import annotations
 
+import math
+import re
 import sys
 from collections.abc import Mapping
+from datetime import date, datetime, time
 from typing import TYPE_CHECKING, Any
 
 if sys.version_info >= (3, 12):
@@ -19,6 +22,7 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override
 
+from tomlrt._errors import TOMLError
 from tomlrt._render import render
 from tomlrt._slots import KVSlot
 from tomlrt._trivia import CommentNode, Trivia, WhitespaceNode
@@ -91,8 +95,6 @@ class Container(dict[str, Any]):
         from tomlrt._comments import EolCommentView  # noqa: PLC0415
 
         if self._inline:
-            from tomlrt._errors import TOMLError  # noqa: PLC0415
-
             msg = "comment API is not available on inline tables"
             raise TOMLError(msg)
         return EolCommentView(self)
@@ -103,8 +105,6 @@ class Container(dict[str, Any]):
         from tomlrt._comments import LeadingCommentView  # noqa: PLC0415
 
         if self._inline:
-            from tomlrt._errors import TOMLError  # noqa: PLC0415
-
             msg = "comment API is not available on inline tables"
             raise TOMLError(msg)
         return LeadingCommentView(self)
@@ -656,7 +656,6 @@ class Container(dict[str, Any]):
 
     def _inline_setitem(self, key: str, value: Any) -> None:
         from tomlrt import _inline_ops  # noqa: PLC0415
-        from tomlrt._errors import TOMLError  # noqa: PLC0415
 
         if isinstance(value, AoT):
             msg = "Cannot store an array-of-tables inside an inline table"
@@ -744,8 +743,6 @@ class Container(dict[str, Any]):
 
         parts = _validate_path(path)
         if self._inline and len(parts) > 1:
-            from tomlrt._errors import TOMLError  # noqa: PLC0415
-
             msg = "cannot install dotted path into an inline-style table"
             raise TOMLError(msg)
         # If the value is a section-flavoured Table or an AoT, route
@@ -771,8 +768,6 @@ class Container(dict[str, Any]):
                 from tomlrt._array import AoT as _AoT  # noqa: PLC0415
 
                 if isinstance(nxt, _AoT):
-                    from tomlrt._errors import TOMLError  # noqa: PLC0415
-
                     msg = (
                         f"cannot install through array-of-tables at {p!r}: "
                         "no addressable target inside an AoT"
@@ -844,8 +839,6 @@ class Container(dict[str, Any]):
         """
         parts = _validate_path(path)
         if self._inline:
-            from tomlrt._errors import TOMLError  # noqa: PLC0415
-
             msg = "cannot create section table inside an inline-style table"
             raise TOMLError(msg)
         cur: Container = self
@@ -858,16 +851,12 @@ class Container(dict[str, Any]):
             from tomlrt._array import AoT  # noqa: PLC0415
 
             if isinstance(nxt, AoT):
-                from tomlrt._errors import TOMLError  # noqa: PLC0415
-
                 msg = (
                     f"cannot ensure_table through array-of-tables at {p!r}: "
                     "no addressable target inside an AoT"
                 )
                 raise TOMLError(msg)
             if not isinstance(nxt, Container) or nxt._inline:  # noqa: SLF001
-                from tomlrt._errors import TOMLError  # noqa: PLC0415
-
                 msg = (
                     f"existing value at {p!r} is not section-backed "
                     "(is an inline table or non-table value)"
@@ -902,8 +891,6 @@ class Container(dict[str, Any]):
         inline-style table. If the value is already a section table,
         returns it unchanged.
         """
-        from tomlrt._errors import TOMLError  # noqa: PLC0415
-
         if self._inline:
             msg = "inline-table promotion is not supported on inline tables"
             raise TOMLError(msg)
@@ -963,7 +950,6 @@ class Container(dict[str, Any]):
         with non-inline-table elements.
         """
         from tomlrt._array import AoT, Array  # noqa: PLC0415
-        from tomlrt._errors import TOMLError  # noqa: PLC0415
 
         if self._inline:
             msg = "array-of-tables promotion is not supported on inline tables"
@@ -1482,8 +1468,6 @@ def _validate_path(path: object) -> list[str]:
     Raises ``TypeError`` for the wrong outer type, and ``TOMLError``
     for empty paths or paths with empty segments.
     """
-    from tomlrt._errors import TOMLError  # noqa: PLC0415
-
     if isinstance(path, str):
         if path == "":
             msg = "key path must not be empty"
@@ -1530,8 +1514,6 @@ def _to_python(v: Any) -> Any:
 
 def _is_scalar(v: object) -> bool:
     """True iff ``v`` is a TOML scalar (and not an array / table)."""
-    from datetime import date, datetime, time  # noqa: PLC0415
-
     # `bool` is an `int` subclass — explicit allow keeps the semantics
     # in this gate clear.
     if isinstance(v, bool):
@@ -1567,8 +1549,6 @@ def _coerce_scalar(
     v: object,
 ) -> StringValue | IntegerValue | FloatValue | BoolValue | DateTimeValue:
     """Coerce a Python scalar to a fresh `Value` with a default lexeme."""
-    from datetime import date, datetime, time  # noqa: PLC0415
-
     if isinstance(v, bool):
         return BoolValue(lexeme="true" if v else "false", value=v)
     if isinstance(v, int):
@@ -1588,8 +1568,6 @@ def _coerce_scalar(
 
 
 def _float_lexeme(v: float) -> str:
-    import math  # noqa: PLC0415
-
     if math.isnan(v):
         return "nan"
     if math.isinf(v):
@@ -1660,8 +1638,6 @@ def _is_synth_inline(v: object) -> bool:
     Rejects everything else (tuple, bytes, sets, AoT, section
     Container, …) so the caller can route to a stronger error.
     """
-    from collections.abc import Mapping  # noqa: PLC0415
-
     if isinstance(v, AoT):
         return False
     if isinstance(v, Container):
@@ -1679,8 +1655,6 @@ def _is_synth_inline(v: object) -> bool:
 
 def _make_keypart(name: str) -> KeyPart:
     """Build a `KeyPart` for a synthesised key, choosing bare vs basic."""
-    import re  # noqa: PLC0415
-
     if re.match(r"\A[A-Za-z0-9_\-]+\Z", name):
         return KeyPart(raw=name, value=name, kind="bare")
     return KeyPart(raw=_basic_string_lexeme(name), value=name, kind="basic")
@@ -1706,8 +1680,6 @@ def _synth_value(
     Anything else raises ``TypeError`` (mentioning the type name and
     the prefix ``"Cannot convert"``).
     """
-    from collections.abc import Mapping  # noqa: PLC0415
-
     if _is_scalar(v):
         return _coerce_scalar(v), v
     if isinstance(v, AoT):

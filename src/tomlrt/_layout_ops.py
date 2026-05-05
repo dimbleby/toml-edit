@@ -29,7 +29,9 @@ Design notes:
 from __future__ import annotations
 
 import contextlib
+import copy
 import re
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Literal
 
 from tomlrt._slots import AoTEntry, KVSlot, SlotRef, StructuralHeaderSlot
@@ -39,7 +41,7 @@ from tomlrt._values import KeyPart
 HeaderKind = Literal["table", "aot-entry"]
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable
 
     from tomlrt._array import AoT
     from tomlrt._container import Container, Document
@@ -1951,8 +1953,6 @@ def _clone_entry_slots(
     for ``entry`` back-pointers on aot-entry headers and for the
     ``entry_slots`` membership list.
     """
-    import copy  # noqa: PLC0415
-
     cloned: list[Slot] = []
     for s in src_slots:
         c: Slot = copy.deepcopy(s)
@@ -2396,8 +2396,6 @@ def attach_section(parent: Container, key: str, source: object | None = None) ->
 
 def _items_for_synth(source: object) -> list[tuple[Any, Any]]:
     """Iterate items of a Mapping/dict/Container source as (key, value)."""
-    from collections.abc import Mapping  # noqa: PLC0415
-
     if isinstance(source, Mapping):
         return list(source.items())
     msg = f"cannot iterate items from {type(source).__name__}"

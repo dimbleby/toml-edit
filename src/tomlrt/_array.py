@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import operator
 import sys
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, SupportsIndex, overload
 
 if sys.version_info >= (3, 12):
@@ -16,6 +17,7 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override
 
+from tomlrt._errors import TOMLError
 from tomlrt._trivia import CommentNode, NewlineNode, Trivia, WhitespaceNode
 from tomlrt._values import (
     ArrayItem,
@@ -24,7 +26,7 @@ from tomlrt._values import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping
+    from collections.abc import Iterable
 
     from tomlrt._values import (
         InlineTableEntry,
@@ -197,8 +199,6 @@ class Array(list[Any]):
 
         Returns ``self`` for chaining.
         """
-        from tomlrt._errors import TOMLError  # noqa: PLC0415
-
         ind = "    " if indent is None else indent
         if self._value is None:
             self._multiline = multiline
@@ -263,8 +263,6 @@ class Array(list[Any]):
 
     @override
     def append(self, value: Any) -> None:
-        from tomlrt._errors import TOMLError  # noqa: PLC0415
-
         if isinstance(value, AoT):
             msg = "Cannot store an array-of-tables inside an inline array"
             raise TOMLError(msg)
@@ -1198,8 +1196,6 @@ class AoT(list["Table"]):
                 raise ValueError(msg)
             # Validate every assigned value is a Mapping/Table BEFORE
             # mutating the AoT (atomicity preflight).
-            from collections.abc import Mapping  # noqa: PLC0415
-
             typed_values: list[Mapping[str, Any]] = []
             for v in values:
                 if not isinstance(v, Mapping):
@@ -1232,8 +1228,6 @@ class AoT(list["Table"]):
             for i, v in zip(indices, typed_values, strict=True):
                 self._replace_entry_attached(i, v)
             return
-        from collections.abc import Mapping  # noqa: PLC0415
-
         assert isinstance(value, Mapping)
         if self._layout_root is None:
             assert isinstance(value, dict)
