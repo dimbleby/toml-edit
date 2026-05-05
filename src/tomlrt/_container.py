@@ -904,6 +904,18 @@ class Container(dict[str, Any]):
                 new_header.leading = saved_leading
             if saved_eol is not None:
                 new_header.eol = saved_eol
+            # Seam: ensure a blank line separates the parent's direct
+            # entries from the promoted child header. promote_inline
+            # turns a KV (originally inline, no separator) into a
+            # section header (deserves visual separation).
+            if self._body_tail is not None and new_header._prev is self._body_tail:  # noqa: SLF001
+                from tomlrt import _layout_ops as _lop  # noqa: PLC0415
+                from tomlrt._trivia import NewlineNode as _NewlineNode  # noqa: PLC0415
+
+                if not _lop._leading_has_blank_line(new_header.leading):  # noqa: SLF001
+                    layout_root = self._layout_root
+                    nl = layout_root._newline if layout_root else "\n"  # noqa: SLF001
+                    new_header.leading.pieces.insert(0, _NewlineNode(text=nl))
         return result
 
     def promote_array(self, key: str) -> AoT:
@@ -947,10 +959,48 @@ class Container(dict[str, Any]):
                     )
                     raise TOMLError(msg)
         snapshot = cur.to_list()
+        # Capture the original KV slot's leading + eol so we can carry
+        # them onto the first new ``[[..]]`` header and the last
+        # entry's tail.
+        from tomlrt._comments import _direct_kv_slot  # noqa: PLC0415
+
+        old_slot = _direct_kv_slot(self, key)
+        saved_leading = old_slot.leading if old_slot is not None else None
+        saved_eol = old_slot.eol if old_slot is not None else None
         del self[key]
         self[key] = AoT(snapshot)
         result = dict.__getitem__(self, key)
         assert isinstance(result, AoT)
+        # Apply saved leading to the first entry's header; saved eol
+        # to the last entry's last slot.
+        if saved_leading is not None and len(result) > 0:
+            from tomlrt._slots import StructuralHeaderSlot  # noqa: PLC0415
+
+            first_entry = result[0]
+            entry_record = first_entry._owner_aot_entry  # noqa: SLF001
+            if entry_record is not None and entry_record.entry_slots:
+                first_slot = entry_record.entry_slots[0]
+                if isinstance(first_slot, StructuralHeaderSlot):
+                    # Prepend saved leading pieces in front of any
+                    # leading already on the header (e.g. blank-line
+                    # separator from `_build_section_leading`).
+                    first_slot.leading.pieces = [
+                        *saved_leading.pieces,
+                        *first_slot.leading.pieces,
+                    ]
+        if saved_eol is not None and len(result) > 0:
+            from tomlrt._slots import KVSlot, StructuralHeaderSlot  # noqa: PLC0415
+
+            last_entry = result[-1]
+            entry_record = last_entry._owner_aot_entry  # noqa: SLF001
+            if entry_record is not None and entry_record.entry_slots:
+                last_slot = entry_record.entry_slots[-1]
+                if isinstance(last_slot, (KVSlot, StructuralHeaderSlot)) and (
+                    saved_eol.comment is not None and last_slot.eol.comment is None
+                ):
+                    last_slot.eol.comment = saved_eol.comment
+                    if saved_eol.trailing_ws is not None:
+                        last_slot.eol.trailing_ws = saved_eol.trailing_ws
         return result
 
 
