@@ -1666,7 +1666,10 @@ def test_aot_replace_in_compact_doc_preserves_compact_style() -> None:
 
 
 def test_aot_replace_in_compact_ooo_doc_preserves_compact_style() -> None:
-    """Same regression, surfaced via genuinely out-of-order AoT entries."""
+    """Per-entry replace is targeted: it touches `xs[0]`'s body and
+    nothing else. Interleaved doc layout is preserved verbatim around
+    the replacement — no side-effect renormalisation of the AoT.
+    """
     src = td("""
         [[xs]]
         a=1
@@ -1678,10 +1681,10 @@ def test_aot_replace_in_compact_ooo_doc_preserves_compact_style() -> None:
     doc = tomlrt.loads(src)
     doc["xs"][0] = {"k": 9}
     assert tomlrt.dumps(doc) == td("""
-        [other]
-        b=2
         [[xs]]
         k = 9
+        [other]
+        b=2
         [[xs]]
         c=3
         """)

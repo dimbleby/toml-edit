@@ -2587,7 +2587,8 @@ def remove_aot_entry(aot: object, index: int) -> object:
     doc = layout_root
     e = entry_table._owner_aot_entry  # noqa: SLF001
     assert e is not None
-    owned = set(e.entry_slots)
+    owned_ordered: list[Slot] = list(e.entry_slots)
+    owned: set[Slot] = set(owned_ordered)
     # Also collect slots owned by any nested AoT entries reachable
     # from this entry's subtree (e.g. promoted [[arr.xs]] entries):
     # those have their own AoTEntry with its own entry_slots, not in
@@ -2601,7 +2602,10 @@ def remove_aot_entry(aot: object, index: int) -> object:
                 for nested_entry_table in v:
                     ne = nested_entry_table._owner_aot_entry  # noqa: SLF001
                     if ne is not None:
-                        owned.update(ne.entry_slots)
+                        for s in ne.entry_slots:
+                            if s not in owned:
+                                owned.add(s)
+                                owned_ordered.append(s)
                     _collect_nested_aot_slots(nested_entry_table)
             elif isinstance(v, ContainerType) and not v._inline:  # noqa: SLF001
                 _collect_nested_aot_slots(v)
@@ -2618,8 +2622,16 @@ def remove_aot_entry(aot: object, index: int) -> object:
     # Scrub refs from every still-live container, walking from the doc.
     _scrub_refs_to_owned_slots(doc, owned)
 
-    # Unlink owned slots from the doc-stream linked list.
-    for slot in list(owned):
+    # Unlink owned slots from the doc-stream linked list, walking
+    # ``owned_ordered`` in reverse so the parent entry's leftmost
+    # slot (its ``[[a]]`` header) is unlinked LAST. Iterating
+    # ``set(owned)`` directly is hash-order-dependent and may pick
+    # the head of the entry block first, briefly promoting an
+    # in-block successor to be the new doc head and stripping its
+    # leading — corrupting trivia on slots that user-held views will
+    # need later (e.g. nested ``[a.sub]`` headers in cleared AoT
+    # entries).
+    for slot in reversed(owned_ordered):
         unlink_slot(slot, doc)
 
     # Pop entry from the AoT logical list.
