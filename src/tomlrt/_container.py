@@ -1526,40 +1526,14 @@ def _live_attach_inline_table(
     ``(value, t)`` so the caller stores ``t`` itself (preserving
     user-visible identity) in the parent dict.
     """
-    val = InlineTableValue()
-    t._layout_root = layout_root  # noqa: SLF001
-    t._path = path  # noqa: SLF001
-    t._parent = parent  # noqa: SLF001
-    t._inline = True  # noqa: SLF001
-    t._owner_aot_entry = owner  # noqa: SLF001
-    t._value = val  # noqa: SLF001
-
-    items = list(t.items())
-    for i, (k, sub) in enumerate(items):
-        sub_cst, sub_dec = _synth_value(
-            sub,
-            layout_root=layout_root,
-            parent=t,
-            path=(*path, k),
-            owner=owner,
-        )
-        is_last = i == len(items) - 1
-        entry = InlineTableEntry(
-            leading=Trivia([WhitespaceNode(text=" ")]),
-            key_parts=[make_keypart(k)],
-            key_seps=[],
-            pre_eq=" ",
-            post_eq=" ",
-            value=sub_cst,
-            trailing=Trivia(),
-            has_comma=not is_last,
-            post_comma_trivia=Trivia(),
-        )
-        val.entries.append(entry)
-        dict.__setitem__(t, k, sub_dec)
-    if items:
-        val.final_trivia = Trivia([WhitespaceNode(text=" ")])
-    return val, t
+    return _populate_inline_table(
+        t,
+        list(t.items()),
+        layout_root=layout_root,
+        parent=parent,
+        path=path,
+        owner=owner,
+    )
 
 
 def _live_attach_array(a: Array) -> tuple[ArrayValue, Array]:
@@ -1581,8 +1555,35 @@ def _synth_inline_table(
     path: tuple[str, ...],
     owner: AoTEntry | None,
 ) -> tuple[InlineTableValue, Table]:
+    return _populate_inline_table(
+        Table(),
+        list(d.items()),
+        layout_root=layout_root,
+        parent=parent,
+        path=path,
+        owner=owner,
+    )
+
+
+def _populate_inline_table(
+    table: Table | Container,
+    items: list[tuple[Any, Any]],
+    *,
+    layout_root: Document | None,
+    parent: Container | None,
+    path: tuple[str, ...],
+    owner: AoTEntry | None,
+) -> tuple[InlineTableValue, Any]:
+    """Wire ``table`` as an inline view and populate its entries.
+
+    Shared body of :func:`_live_attach_inline_table` (reuses the
+    user's ``Table.inline()`` instance) and :func:`_synth_inline_table`
+    (allocates a fresh ``Table``). Both flavours produce the same
+    ``InlineTableValue`` shape: each entry is laid out as
+    ``" k = v"`` with comma-then-space separators except after the
+    last entry, and a single trailing space when non-empty.
+    """
     val = InlineTableValue()
-    table = Table()
     table._layout_root = layout_root  # noqa: SLF001
     table._path = path  # noqa: SLF001
     table._parent = parent  # noqa: SLF001
@@ -1590,7 +1591,6 @@ def _synth_inline_table(
     table._owner_aot_entry = owner  # noqa: SLF001
     table._value = val  # noqa: SLF001
 
-    items = list(d.items())
     for i, (k, sub) in enumerate(items):
         if not isinstance(k, str):
             msg = f"inline-table key must be str, got {type(k).__name__}"
