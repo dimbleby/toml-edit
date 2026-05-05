@@ -1512,26 +1512,36 @@ def clone_aot_entry_from(aot: AoT, src_entry: AoTEntry) -> Table:
     )
 
 
-def _clone_aot_entry_impl(
+def _install_cloned_aot_entry(
     aot: AoT,
-    src_entry: AoTEntry,
+    src_slots: list[Slot],
+    src_prefix: tuple[str, ...],
     *,
-    src_layout_root: Document | None,
-    dst_path: tuple[str, ...] | None,
+    target_path: tuple[str, ...],
+    rewrite_separator: bool,
 ) -> Table:
+    """Common installer for appending a cloned aot-entry to ``aot``.
+
+    Deep-clones ``src_slots`` (head_kind="aot-entry"), wires a fresh
+    entry container, splices the entry's slots after the AoT's last
+    slot (or at doc end), files the parent binding ref, and populates
+    child views.
+
+    ``rewrite_separator``: if True, the source's structural leading
+    is replaced with destination-style preamble (entry 0) or the
+    AoT's existing inter-entry separator (entry > 0). If False
+    (cross-doc / cross-key clone of an existing AoT entry past the
+    first), keep the source's leading verbatim so the original
+    inter-entry separator survives.
+    """
     from tomlrt._container import Table  # noqa: PLC0415
 
     parent = aot._parent  # noqa: SLF001
     layout_root = aot._layout_root  # noqa: SLF001
-    path = aot._path  # noqa: SLF001
-    if layout_root is None or parent is None or not path:
-        msg = "AoT.clone_entry requires the AoT to be attached to a document"
+    if layout_root is None or parent is None or not target_path:
+        msg = "AoT entry install requires the AoT to be attached to a document"
         raise RuntimeError(msg)
     doc = layout_root
-    target_path = dst_path if dst_path is not None else path
-
-    src_slots = _validate_clonable_aot_entry(src_entry)
-    src_prefix = src_entry.path
 
     ordinal = len(aot)
     new_entry = AoTEntry(path=target_path, ordinal=ordinal)
@@ -1548,25 +1558,15 @@ def _clone_aot_entry_impl(
     head = cloned_slots[0]
     assert isinstance(head, StructuralHeaderSlot)
     cloned_header: StructuralHeaderSlot = head
-    same_aot_clone = target_path == src_entry.path and src_layout_root is doc
     if ordinal == 0:
-        # Strip any structural prefix from the source's first header
-        # (it was the source's file preamble or inter-entry separator,
-        # neither relevant in the destination doc) and re-prepend the
-        # destination's own structural lead-in.
         _structural, remainder = _split_leading_structural(cloned_header.leading)
         sep = _build_section_leading(doc)
         cloned_header.leading = Trivia([*sep.pieces, *remainder.pieces])
-    elif same_aot_clone:
-        # __imul__ / "append-from-self": use destination's existing
-        # inter-entry separator style so the duplicate is laid out the
-        # same way as the originals.
+    elif rewrite_separator:
         _structural, remainder = _split_leading_structural(cloned_header.leading)
         sep = _aot_separator(aot, doc)
         cloned_header.leading = Trivia([*sep.pieces, *remainder.pieces])
-    # Cross-doc / cross-key clone: keep the source's leading verbatim
-    # so the original inter-entry separator (and any pre-header
-    # comment block) survives unchanged.
+    # else: keep source leading verbatim (cross-doc / cross-key).
 
     entry_table = Table()
     _wire_section_container(
@@ -1605,6 +1605,27 @@ def _clone_aot_entry_impl(
 
     list.append(aot, entry_table)
     return entry_table
+
+
+def _clone_aot_entry_impl(
+    aot: AoT,
+    src_entry: AoTEntry,
+    *,
+    src_layout_root: Document | None,
+    dst_path: tuple[str, ...] | None,
+) -> Table:
+    layout_root = aot._layout_root  # noqa: SLF001
+    path = aot._path  # noqa: SLF001
+    target_path = dst_path if dst_path is not None else path
+    src_slots = _validate_clonable_aot_entry(src_entry)
+    same_aot_clone = target_path == src_entry.path and src_layout_root is layout_root
+    return _install_cloned_aot_entry(
+        aot,
+        src_slots,
+        src_entry.path,
+        target_path=target_path,
+        rewrite_separator=same_aot_clone,
+    )
 
 
 def _install_cloned_section(
@@ -1739,16 +1760,6 @@ def clone_table_as_aot_entry(
     section path to ``aot._path``. Preserves per-slot leading / EOL
     / lexeme bytes (so per-section comments survive).
     """
-    from tomlrt._container import Table  # noqa: PLC0415
-
-    parent = aot._parent  # noqa: SLF001
-    layout_root = aot._layout_root  # noqa: SLF001
-    path = aot._path  # noqa: SLF001
-    if layout_root is None or parent is None or not path:
-        msg = "AoT.clone_table requires the AoT to be attached to a document"
-        raise RuntimeError(msg)
-    doc = layout_root
-
     src_slots = _gather_section_slots(src_table)
     if not isinstance(src_slots[0], StructuralHeaderSlot):
         msg = "Source section's first owned slot is not a header"
@@ -1756,62 +1767,13 @@ def clone_table_as_aot_entry(
     if src_slots[0].kind != "table":
         msg = "clone_table_as_aot_entry: source must be a standard section"
         raise RuntimeError(msg)
-    src_prefix = src_table._path  # noqa: SLF001
-
-    ordinal = len(aot)
-    new_entry = AoTEntry(path=path, ordinal=ordinal)
-
-    cloned_slots = _clone_entry_slots(
+    return _install_cloned_aot_entry(
+        aot,
         src_slots,
-        new_entry=new_entry,
-        body_owner=new_entry,
-        src_prefix=src_prefix,
-        target_prefix=path,
-        head_kind="aot-entry",
+        src_table._path,  # noqa: SLF001
+        target_path=aot._path,  # noqa: SLF001
+        rewrite_separator=True,
     )
-
-    head = cloned_slots[0]
-    assert isinstance(head, StructuralHeaderSlot)
-    cloned_header: StructuralHeaderSlot = head
-    sep = _build_section_leading(doc) if ordinal == 0 else _aot_separator(aot, doc)
-    _structural, remainder = _split_leading_structural(cloned_header.leading)
-    cloned_header.leading = Trivia([*sep.pieces, *remainder.pieces])
-
-    entry_table = Table()
-    _wire_section_container(
-        entry_table,
-        doc=doc,
-        path=path,
-        parent=parent,
-        owner=new_entry,
-        header=cloned_header,
-    )
-
-    anchor = _last_aot_slot(aot)
-    if anchor is None:
-        _splice_at_end(cloned_header, doc)
-    else:
-        _ensure_terminator(anchor, doc)
-        insert_after(anchor, cloned_header, doc)
-    prev: Slot = cloned_header
-    for s in cloned_slots[1:]:
-        _ensure_terminator(prev, doc)
-        insert_after(prev, s, doc)
-        prev = s
-
-    parent_ref = SlotRef(slot=cloned_header, container=parent, local_key=path[-1])
-    _file_ref_at_tail(parent, parent_ref)
-
-    _populate_entry_views(
-        entry_table=entry_table,
-        cloned_slots=cloned_slots[1:],
-        target_prefix=path,
-        body_owner=new_entry,
-        doc=doc,
-    )
-
-    list.append(aot, entry_table)
-    return entry_table
 
 
 def clone_section_as_section(
