@@ -427,11 +427,27 @@ def delete_key(c: Container, key: str) -> None:
     subtree_aots: list[AoT] = []
     _collect_subtree(val, subtree_containers, subtree_aots, _add_ref)
 
-    # 3. Scrub ancestor chain only — subtree containers will be
-    # detached as a unit (their refs preserved against an orphan doc).
-    chain: list[Container] = []
-    cur: Container | None = c
-    while cur is not None:
+    # 3. Scrub ancestor chain — but only ancestors that may actually
+    # hold a ref to an owned slot. For each owned slot, ref-bearing
+    # depths are:
+    #
+    #   KVSlot              : [len(host_path), len(host_path)+len(key_parts)-1]
+    #   StructuralHeaderSlot: [0, len(path)-1] (plus own_ref at len(path))
+    #
+    # An ancestor at depth d < c_depth holds a ref iff some owned slot
+    # bottoms out at a depth ``≤ d`` — equivalently, iff ``d ≥ min`` where
+    # ``min`` is the minimum bottom-depth across all owned slots. Walking
+    # ``c._parent`` until that bound covers the doc-root scan only when
+    # truly necessary; for the common leaf-KV delete, ``min`` is
+    # ``c_depth`` and no ancestor is touched.
+    chain: list[Container] = [c]
+    min_ancestor_depth = len(c._path)  # noqa: SLF001
+    for s in owned_slots:
+        d = len(s.host_path) if isinstance(s, KVSlot) else 0
+        if d < min_ancestor_depth:
+            min_ancestor_depth = d
+    cur = c._parent  # noqa: SLF001
+    while cur is not None and len(cur._path) >= min_ancestor_depth:  # noqa: SLF001
         chain.append(cur)
         cur = cur._parent  # noqa: SLF001
 
@@ -634,7 +650,7 @@ def _aot_sibling_kvs(c: Container) -> list[KVSlot]:
     if not isinstance(aot, AoT):
         return []
     found_self = False
-    for entry_table in reversed(list(aot)):
+    for entry_table in reversed(aot):
         if entry_table is c:
             found_self = True
             continue
@@ -2309,15 +2325,19 @@ def _items_for_synth(source: Mapping[str, Any] | Container) -> list[tuple[str, o
 
 
 def _last_aot_slot(aot: AoT) -> Slot | None:
-    """Return the last doc-stream slot owned by any entry of ``aot``."""
-    last: Slot | None = None
-    for entry_table in aot:
+    """Return the last doc-stream slot owned by any entry of ``aot``.
+
+    AoT entries are stored in document order and each entry's
+    `entry_slots` list is also in document order, so the answer is
+    the last slot of the last entry that has any slots. Walks
+    backwards to keep this O(1) in the common case.
+    """
+    for entry_table in reversed(aot):
         e = entry_table._owner_aot_entry  # noqa: SLF001
-        if e is None:
+        if e is None or not e.entry_slots:
             continue
-        for s in e.entry_slots:
-            last = s
-    return last
+        return e.entry_slots[-1]
+    return None
 
 
 def _scrub_refs_to_owned_slots(c: Container, owned: set[Slot]) -> None:
