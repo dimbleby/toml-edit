@@ -39,7 +39,7 @@ def test_kv_append_to_uniformly_spaced_section_adds_blank() -> None:
         """)
 
 
-def test_kv_append_to_mixed_layout_does_not_add_blank() -> None:
+def test_kv_append_to_mixed_layout_matches_last_gap() -> None:
     doc = tomlrt.loads(
         td("""
         a = 1
@@ -54,6 +54,7 @@ def test_kv_append_to_mixed_layout_does_not_add_blank() -> None:
         b = 2
 
         c = 3
+
         d = 4
         """)
 

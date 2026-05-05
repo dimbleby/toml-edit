@@ -598,10 +598,16 @@ def _surviving_aot_entries(doc: Document, candidates: set[int]) -> set[int]:
 # ---------------------------------------------------------------------------
 
 
-def _collect_direct_kvs(c: Container) -> list[KVSlot]:
+def _last_direct_kv(c: Container) -> KVSlot | None:
+    """Return the most-recent direct KV slot of ``c`` in doc-stream order.
+
+    Walks ``c._refs`` from the end so the typical "append after a KV
+    body" case is O(1) — the last ref is usually the target. Bounded
+    by the count of trailing non-KV refs (sub-section headers /
+    dotted descendants), not by container size.
+    """
     same_owner = c._owner_aot_entry  # noqa: SLF001
-    out: list[KVSlot] = []
-    for ref in c._refs:  # noqa: SLF001
+    for ref in reversed(c._refs):  # noqa: SLF001
         s = ref.slot
         if (
             isinstance(s, KVSlot)
@@ -609,8 +615,8 @@ def _collect_direct_kvs(c: Container) -> list[KVSlot]:
             and len(s.key_parts) == 1
             and s.owner_aot_entry is same_owner
         ):
-            out.append(s)
-    return out
+            return s
+    return None
 
 
 def _extract_indent(leading: Trivia) -> str:
@@ -629,26 +635,26 @@ def _extract_indent(leading: Trivia) -> str:
     return text
 
 
-def _aot_sibling_kvs(c: Container) -> list[KVSlot]:
-    """Return the previous sibling entry's direct KVs.
+def _aot_sibling_last_kv(c: Container) -> KVSlot | None:
+    """Return the last direct KV of the most recent prior AoT sibling.
 
-    If ``c`` is an AoT entry root, return the direct KVs of the most
-    recent prior sibling entry that has any (else empty).
+    Used to inherit indent when ``c`` is an AoT entry root with no
+    direct KVs of its own yet.
     """
     from tomlrt._array import AoT  # noqa: PLC0415
 
     owner = c._owner_aot_entry  # noqa: SLF001
     if owner is None:
-        return []
+        return None
     parent = c._parent  # noqa: SLF001
     if parent is None:
-        return []
+        return None
     key = c._path[-1] if c._path else None  # noqa: SLF001
     if key is None or key not in parent:
-        return []
+        return None
     aot = dict.__getitem__(parent, key)
     if not isinstance(aot, AoT):
-        return []
+        return None
     found_self = False
     for entry_table in reversed(aot):
         if entry_table is c:
@@ -656,10 +662,10 @@ def _aot_sibling_kvs(c: Container) -> list[KVSlot]:
             continue
         if not found_self:
             continue
-        sibs = _collect_direct_kvs(entry_table)
-        if sibs:
-            return sibs
-    return []
+        sib = _last_direct_kv(entry_table)
+        if sib is not None:
+            return sib
+    return None
 
 
 def _leading_has_blank_line(leading: Trivia) -> bool:
@@ -680,26 +686,39 @@ def _leading_has_blank_line(leading: Trivia) -> bool:
     return False
 
 
-def _kv_leading_from_prior(
-    kvs: list[KVSlot], doc: Document, *, fallback_indent: str = ""
-) -> Trivia:
-    """Build leading trivia for a new KV slot from prior siblings.
+def _peer_separator(prev_leading: Trivia | None, doc: Document) -> Trivia:
+    """Mirror a peer's blank-gap when emitting a new structural sibling.
 
-    Inherits indent from ``kvs[-1]``; adds a blank line iff every
-    prior gap between siblings already has one. With no prior siblings,
-    falls back to a bare ``fallback_indent`` (or empty trivia).
+    Returns a single-newline ``Trivia`` (one blank line of separation)
+    iff ``prev_leading`` itself contains a blank line, or when there
+    is no peer to mirror (the conventional default for the first
+    sibling of its kind). Otherwise returns empty ``Trivia``.
+
+    This is the shared "match the last peer" rule used by KV append,
+    section-header insertion, and AoT-entry append; each caller wraps
+    it with kind-specific peer lookup and any extra decoration (e.g.
+    KV indent).
     """
-    if not kvs:
+    if prev_leading is None or _leading_has_blank_line(prev_leading):
+        return Trivia([NewlineNode(text=doc._newline)])  # noqa: SLF001
+    return Trivia()
+
+
+def _kv_leading_after(
+    prev: KVSlot | None, doc: Document, fallback_indent: str = ""
+) -> Trivia:
+    """Build leading trivia for a new KV slot following ``prev``.
+
+    Inherits indent from ``prev`` and mirrors its blank-gap so the
+    new KV continues the user's most recent spacing convention. With
+    no prior sibling, falls back to a bare ``fallback_indent``.
+    """
+    if prev is None:
         if fallback_indent:
             return Trivia([WhitespaceNode(text=fallback_indent)])
         return Trivia()
-    indent_text = _extract_indent(kvs[-1].leading)
-    add_blank = len(kvs) >= 2 and all(
-        _leading_has_blank_line(kv.leading) for kv in kvs[1:]
-    )
-    pieces: list[TriviaPiece] = []
-    if add_blank:
-        pieces.append(NewlineNode(text=doc._newline))  # noqa: SLF001
+    pieces: list[TriviaPiece] = list(_peer_separator(prev.leading, doc).pieces)
+    indent_text = _extract_indent(prev.leading)
     if indent_text:
         pieces.append(WhitespaceNode(text=indent_text))
     return Trivia(pieces)
@@ -709,37 +728,36 @@ def _kv_separator_leading(c: Container, doc: Document) -> Trivia:
     """Pick leading trivia for a new direct-KV slot in container ``c``.
 
     For an AoT entry with no own KVs yet, falls back to inheriting
-    indent (only) from the previous sibling entry's KVs.
+    indent (only) from the previous sibling entry's last KV.
     """
-    kvs = _collect_direct_kvs(c)
-    if kvs:
-        return _kv_leading_from_prior(kvs, doc)
-    sibling_kvs = _aot_sibling_kvs(c)
-    fallback = _extract_indent(sibling_kvs[-1].leading) if sibling_kvs else ""
-    return _kv_leading_from_prior([], doc, fallback_indent=fallback)
+    last = _last_direct_kv(c)
+    if last is not None:
+        return _kv_leading_after(last, doc)
+    sibling = _aot_sibling_last_kv(c)
+    fallback = _extract_indent(sibling.leading) if sibling is not None else ""
+    return _kv_leading_after(None, doc, fallback_indent=fallback)
 
 
-def _collect_host_kvs(host: Container) -> list[KVSlot]:
-    """All KV slots whose ``host_path`` matches ``host._path`` (any keypath length)."""
+def _last_host_kv(host: Container) -> KVSlot | None:
+    """Last KV slot whose ``host_path`` matches ``host._path`` (any keypath length).
+
+    Walks ``host._refs`` from the end so the typical case is O(1).
+    """
     same_owner = host._owner_aot_entry  # noqa: SLF001
-    seen: set[int] = set()
-    out: list[KVSlot] = []
-    for ref in host._refs:  # noqa: SLF001
+    for ref in reversed(host._refs):  # noqa: SLF001
         s = ref.slot
         if (
             isinstance(s, KVSlot)
             and s.host_path == host._path  # noqa: SLF001
             and s.owner_aot_entry is same_owner
-            and id(s) not in seen
         ):
-            seen.add(id(s))
-            out.append(s)
-    return out
+            return s
+    return None
 
 
 def _host_kv_separator_leading(host: Container, doc: Document) -> Trivia:
     """Pick leading trivia for a new dotted-KV slot whose host is ``host``."""
-    return _kv_leading_from_prior(_collect_host_kvs(host), doc)
+    return _kv_leading_after(_last_host_kv(host), doc)
 
 
 def _new_kv_slot(
@@ -1131,11 +1149,20 @@ def _ensure_leading_blank_line(slot: Slot, doc: Document) -> None:
     pieces.insert(0, NewlineNode(text=doc._newline))  # noqa: SLF001
 
 
-def _find_ref_index_by_slot(c: Container, slot: Slot) -> int:  # pragma: no cover
+def _find_ref_index_by_slot(c: Container, slot: Slot) -> int:
+    """Locate ``slot``'s ref in ``c._refs``, walking from the end.
+
+    Callers pass body-tail / anchor slots that sit near the end of
+    ``c._refs`` (any trailing entries are sub-section / dotted-
+    descendant refs, of which there are typically few). Walking
+    from the end keeps the typical case O(K) for small K, instead
+    of O(N) for a forward scan over a long body.
+    """
     refs = c._refs  # noqa: SLF001
-    for i, r in enumerate(refs):
-        if r.slot is slot:
-            return i
+    n = len(refs)
+    for j in range(n - 1, -1, -1):
+        if refs[j].slot is slot:
+            return j
     msg = "internal: anchor slot not found in c._refs"
     raise AssertionError(msg)
 
@@ -1341,13 +1368,11 @@ def _split_leading_structural(leading: Trivia) -> tuple[Trivia, Trivia]:
 def _build_section_leading(doc: Document) -> Trivia:
     """Trivia for a fresh section header.
 
-    Empty doc → no leading; non-empty → match the existing
-    structural-header separator convention (compact-style with no
-    blanks → no leading; otherwise one blank line of separation).
-
-    The convention is sampled from the most recent header in the
-    doc; for uniformly-styled documents (the overwhelming majority)
-    this is identical to inspecting every header.
+    Empty doc → no leading; non-empty → mirror the most recent
+    structural-header's blank-gap. The first header in the doc is
+    treated as having an "implicit blank" peer (its own leading is
+    the file preamble, not a separator), so subsequent headers get
+    one blank line by default.
     """
     if doc._head is None:  # noqa: SLF001
         return Trivia()
@@ -1360,17 +1385,14 @@ def _build_section_leading(doc: Document) -> Trivia:
         cur = cur._prev  # noqa: SLF001
     if last_header is None:
         return Trivia([NewlineNode(text=doc._newline)])  # noqa: SLF001
-    # First header's leading is the file preamble, not a separator.
-    is_first = True
     p: Slot | None = last_header._prev  # noqa: SLF001
     while p is not None:
         if isinstance(p, StructuralHeaderSlot):
-            is_first = False
-            break
+            return _peer_separator(last_header.leading, doc)
         p = p._prev  # noqa: SLF001
-    if is_first or _leading_has_blank_line(last_header.leading):
-        return Trivia([NewlineNode(text=doc._newline)])  # noqa: SLF001
-    return Trivia()
+    # last_header is the first header in the doc; its leading is the
+    # preamble, not a peer separator. Treat as no-peer.
+    return _peer_separator(None, doc)
 
 
 def attach_empty_aot(parent: Container, key: str, source_aot: AoT) -> AoT:
@@ -1393,19 +1415,15 @@ def attach_empty_aot(parent: Container, key: str, source_aot: AoT) -> AoT:
 def _aot_separator(aot: AoT, doc: Document) -> Trivia:
     """Pick the leading-trivia for a newly-appended AoT entry header.
 
-    Inspects the most recent entry header to learn the user's
-    separator convention; for uniformly-styled AoTs (the common
-    case) this is identical to inspecting every prior entry.
+    Mirrors the most recent entry's blank-gap; for the first entry
+    (or an empty/zero-slot last entry), defaults to one blank line.
     """
-    nl = doc._newline  # noqa: SLF001
     if len(aot) <= 1:
-        return Trivia([NewlineNode(text=nl)])
+        return _peer_separator(None, doc)
     last_entry = aot[-1]._owner_aot_entry  # noqa: SLF001
     if last_entry is None or not last_entry.entry_slots:
-        return Trivia([NewlineNode(text=nl)])
-    if _leading_has_blank_line(last_entry.entry_slots[0].leading):
-        return Trivia([NewlineNode(text=nl)])
-    return Trivia()
+        return _peer_separator(None, doc)
+    return _peer_separator(last_entry.entry_slots[0].leading, doc)
 
 
 def add_aot_entry(
