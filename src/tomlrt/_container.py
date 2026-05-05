@@ -15,7 +15,7 @@ import re
 import sys
 from collections.abc import Mapping
 from datetime import date, datetime, time
-from typing import TYPE_CHECKING, Any, TypeGuard
+from typing import TYPE_CHECKING, Any, TypeGuard, TypeVar
 
 if sys.version_info >= (3, 12):
     from typing import Self, override
@@ -69,6 +69,9 @@ if TYPE_CHECKING:
         DateLikeKind,
         Value,
     )
+
+
+_T = TypeVar("_T")
 
 
 class Container(dict[str, Any]):
@@ -174,60 +177,44 @@ class Container(dict[str, Any]):
         ``key`` may be a single name, a dotted-string path, or a
         sequence of names.
         """
-        v = self.entry(key)
-        if not isinstance(v, Table):
-            msg = f"value at {key!r} is {type(v).__name__}, not a Table"
-            raise TypeError(msg)
-        return v
+        return self._typed_entry(key, Table, "a Table")
 
     def array(self, key: str | Sequence[str]) -> Array:
         """Return the value at ``key`` typed as an `Array`."""
-        v = self.entry(key)
-        if not isinstance(v, Array):
-            msg = f"value at {key!r} is {type(v).__name__}, not an Array"
-            raise TypeError(msg)
-        return v
+        return self._typed_entry(key, Array, "an Array")
 
     def aot(self, key: str | Sequence[str]) -> AoT:
         """Return the value at ``key`` typed as an array-of-tables (`AoT`)."""
-        v = self.entry(key)
-        if not isinstance(v, AoT):
-            msg = f"value at {key!r} is {type(v).__name__}, not an AoT"
-            raise TypeError(msg)
-        return v
+        return self._typed_entry(key, AoT, "an AoT")
 
     def get_table(self, key: str | Sequence[str], default: Any = None) -> Any:
         """Like `table(key)` but returns ``default`` if the key is missing."""
-        try:
-            v = self.entry(key)
-        except KeyError:
-            return default
-        if not isinstance(v, Table):
-            msg = f"value at {key!r} is {type(v).__name__}, not a Table"
-            raise TypeError(msg)
-        return v
+        return self._typed_entry_or(key, Table, "a Table", default)
 
     def get_array(self, key: str | Sequence[str], default: Any = None) -> Any:
         """Like `array(key)` but returns ``default`` if the key is missing."""
-        try:
-            v = self.entry(key)
-        except KeyError:
-            return default
-        if not isinstance(v, Array):
-            msg = f"value at {key!r} is {type(v).__name__}, not an Array"
-            raise TypeError(msg)
-        return v
+        return self._typed_entry_or(key, Array, "an Array", default)
 
     def get_aot(self, key: str | Sequence[str], default: Any = None) -> Any:
         """Like `aot(key)` but returns ``default`` if the key is missing."""
-        try:
-            v = self.entry(key)
-        except KeyError:
-            return default
-        if not isinstance(v, AoT):
-            msg = f"value at {key!r} is {type(v).__name__}, not an AoT"
+        return self._typed_entry_or(key, AoT, "an AoT", default)
+
+    def _typed_entry(
+        self, key: str | Sequence[str], cls: type[_T], label: str
+    ) -> _T:
+        v = self.entry(key)
+        if not isinstance(v, cls):
+            msg = f"value at {key!r} is {type(v).__name__}, not {label}"
             raise TypeError(msg)
         return v
+
+    def _typed_entry_or(
+        self, key: str | Sequence[str], cls: type[_T], label: str, default: Any
+    ) -> _T | Any:
+        try:
+            return self._typed_entry(key, cls, label)
+        except KeyError:
+            return default
 
     def entry(self, path: str | Sequence[str]) -> Any:
         """Resolve a (possibly dotted) path; raises ``KeyError`` if missing.
