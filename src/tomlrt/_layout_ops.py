@@ -615,6 +615,29 @@ def _host_kv_separator_leading(host: Container, doc: Document) -> Trivia:
     return _kv_leading_from_prior(_collect_host_kvs(host), doc)
 
 
+def _new_kv_slot(
+    c: Container,
+    key: str,
+    value: Value,
+    doc: Document,
+    owner: AoTEntry | None,
+    *,
+    leading: Trivia,
+) -> KVSlot:
+    """Synthesise a fresh single-keypart KV slot under ``c``."""
+    return KVSlot(
+        leading=leading,
+        host_path=c._path,  # noqa: SLF001
+        key_parts=[make_keypart(key)],
+        key_seps=[],
+        pre_eq=" ",
+        post_eq=" ",
+        value=value,
+        eol=_default_eol(doc),
+        owner_aot_entry=owner,
+    )
+
+
 def _build_kv_slot(c: Container, key: str, value: Value, doc: Document) -> KVSlot:
     """Synthesise a new ``KVSlot`` carrying default trivia + style."""
     # Promote a header without final newline: e.g. user parsed `a = 1`
@@ -628,17 +651,13 @@ def _build_kv_slot(c: Container, key: str, value: Value, doc: Document) -> KVSlo
     if anchor_slot is not None:
         _ensure_terminator(anchor_slot, doc)
 
-    kp = make_keypart(key)
-    return KVSlot(
+    return _new_kv_slot(
+        c,
+        key,
+        value,
+        doc,
+        owner=c._owner_aot_entry,  # noqa: SLF001
         leading=_kv_separator_leading(c, doc),
-        host_path=c._path,  # noqa: SLF001
-        key_parts=[kp],
-        key_seps=[],
-        pre_eq=" ",
-        post_eq=" ",
-        value=value,
-        eol=_default_eol(doc),
-        owner_aot_entry=c._owner_aot_entry,  # noqa: SLF001
     )
 
 
@@ -827,17 +846,7 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
         ]
 
     # Insert the KV directly after the synthetic header.
-    new_kv = KVSlot(
-        leading=Trivia(),
-        host_path=c._path,  # noqa: SLF001
-        key_parts=[make_keypart(key)],
-        key_seps=[],
-        pre_eq=" ",
-        post_eq=" ",
-        value=value,
-        eol=_default_eol(doc),
-        owner_aot_entry=owner,
-    )
+    new_kv = _new_kv_slot(c, key, value, doc, owner, leading=Trivia())
     insert_after(header_slot, new_kv, doc)
     kv_ref = SlotRef(slot=new_kv, container=c, local_key=key)
     # KV ref sits right after the own-header ref in c._refs.
@@ -936,17 +945,7 @@ def _synthesise_header_then_insert_kv_at_doc_tail(
             anc._refs.append(binding_ref)  # noqa: SLF001
             anc._index.setdefault(local_key, []).append(binding_ref)  # noqa: SLF001
 
-    new_kv = KVSlot(
-        leading=Trivia(),
-        host_path=c._path,  # noqa: SLF001
-        key_parts=[make_keypart(key)],
-        key_seps=[],
-        pre_eq=" ",
-        post_eq=" ",
-        value=value,
-        eol=_default_eol(doc),
-        owner_aot_entry=owner,
-    )
+    new_kv = _new_kv_slot(c, key, value, doc, owner, leading=Trivia())
     insert_after(header_slot, new_kv, doc)
     kv_ref = SlotRef(slot=new_kv, container=c, local_key=key)
     c._refs.append(kv_ref)  # noqa: SLF001
