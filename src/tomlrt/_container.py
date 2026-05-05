@@ -381,13 +381,20 @@ class Container(dict[str, Any]):
 
             # If `value` is already attached to a different LIVE doc,
             # the contract is to clone — the user's existing reference
-            # must keep working at its original location. Detached
-            # values (orphan / private root) are rehomed in place,
-            # preserving Python identity.
+            # must keep working at its original location. Route
+            # through clone_aot which preserves per-entry trivia +
+            # nested sub-sections (the to_list() snapshot path drops
+            # both).
             src_root = value._layout_root  # noqa: SLF001
-            if src_root is not None and not src_root._is_private:  # noqa: SLF001
-                snapshot = value.to_list()
-                value = AoT(snapshot)
+            if (
+                src_root is not None
+                and not src_root._is_private  # noqa: SLF001
+                and self._layout_root is not None
+            ):
+                if key in self:
+                    del self[key]
+                _layout_ops.clone_aot(self, key, value)
+                return
             # Snapshot existing entry tables (preserving identity);
             # rehome the AoT object as empty; then reattach each
             # entry table in place so user references survive.
@@ -410,6 +417,19 @@ class Container(dict[str, Any]):
             # Already-attached Table (live doc): clone via snapshot.
             # Detached/private: rehome in place.
             src_root = value._layout_root  # noqa: SLF001
+            # AoT-entry source assigned as a standard table: route via
+            # entry-cloner with head_kind="table" so trivia survives
+            # and the head normalises from [[..]] to [..].
+            if (
+                src_root is not None
+                and not src_root._is_private  # noqa: SLF001
+                and value._owner_aot_entry is not None  # noqa: SLF001
+                and self._layout_root is not None
+            ):
+                if key in self:
+                    del self[key]
+                _layout_ops.clone_aot_entry_as_table(self, key, value)
+                return
             if src_root is not None and not src_root._is_private:  # noqa: SLF001
                 value = Table.section(value.to_dict())
             elif src_root is not None and src_root._is_private:  # noqa: SLF001
@@ -662,7 +682,7 @@ class Container(dict[str, Any]):
             and value._layout_root is None  # noqa: SLF001
             and not value._inline  # noqa: SLF001
         )
-        is_aot = isinstance(value, AoT) and value._layout_root is None  # noqa: SLF001
+        is_aot = isinstance(value, AoT)
         if (is_section or is_aot) and len(parts) > 1 and self._layout_root is not None:
             # Walk existing prefix; whatever's left is created with
             # implicit intermediates plus the final explicit binding.

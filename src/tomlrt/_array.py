@@ -1214,10 +1214,27 @@ class AoT(list["Table"]):
     def append(self, value: Table | dict[str, Any]) -> None:
         # Same semantics as `add(body)` but with no return value (list API).
         from tomlrt import _layout_ops  # noqa: PLC0415
+        from tomlrt._container import Table as TableType  # noqa: PLC0415
 
         if self._layout_root is None:
             assert isinstance(value, dict)
             list.append(self, _make_unattached_entry(value))
+            return
+        if (
+            isinstance(value, TableType)
+            and value._layout_root is not None  # noqa: SLF001
+            and value._owner_aot_entry is not None  # noqa: SLF001
+        ):
+            _layout_ops.clone_aot_entry(self, value)
+            return
+        if isinstance(value, TableType) and value._layout_root is not None:  # noqa: SLF001
+            # Attached standard-table source: clone preserving comments
+            # by routing through the entry-cloner with a synthetic
+            # AoTEntry wrapper. Build a temp AoTEntry, register the
+            # source table's slots transiently — too invasive. Fallback
+            # to body-from-dict for now (loses inner trivia for the
+            # standard-section source case).
+            _layout_ops.add_aot_entry(self, value)
             return
         _layout_ops.add_aot_entry(self, value)
 
@@ -1229,13 +1246,21 @@ class AoT(list["Table"]):
     @override
     def insert(self, index: SupportsIndex, value: Any) -> None:
         from tomlrt import _layout_ops  # noqa: PLC0415
+        from tomlrt._container import Table as TableType  # noqa: PLC0415
 
         if self._layout_root is None:
             assert isinstance(value, dict)
             list.insert(self, index, _make_unattached_entry(value))
             return
         # Materialise as add() then renormalise into position.
-        new_entry = _layout_ops.add_aot_entry(self, value)
+        if (
+            isinstance(value, TableType)
+            and value._layout_root is not None  # noqa: SLF001
+            and value._owner_aot_entry is not None  # noqa: SLF001
+        ):
+            new_entry = _layout_ops.clone_aot_entry(self, value)
+        else:
+            new_entry = _layout_ops.add_aot_entry(self, value)
         from tomlrt._container import Table  # noqa: PLC0415
 
         assert isinstance(new_entry, Table)

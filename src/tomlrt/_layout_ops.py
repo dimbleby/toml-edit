@@ -1309,7 +1309,12 @@ def add_aot_entry(aot: object, body: object, *, rehome: object | None = None) ->
     return entry_table
 
 
-def clone_aot_entry(aot: object, src_entry_table: object) -> object:
+def clone_aot_entry(
+    aot: object,
+    src_entry_table: object,
+    *,
+    dst_path: tuple[str, ...] | None = None,
+) -> object:
     """Append a deep CST clone of ``src_entry_table`` to ``aot``.
 
     Preserves the source entry's per-slot leading / EOL / lexeme bytes
@@ -1318,12 +1323,16 @@ def clone_aot_entry(aot: object, src_entry_table: object) -> object:
     ``_aot_separator`` policy for "next entry", but any post-structural
     comment block on the source header is retained.
 
+    Supports source entries that include nested ``[a.sub]`` headers
+    and their KVSlots. ``dst_path`` (defaults to ``aot._path``) lets
+    callers rebase the entry under a different key — both the
+    entry header path and any nested sub-section paths are rewritten
+    so e.g. ``[a.sub]`` becomes ``[b.sub]`` when cloning into ``b``.
+
     Returns the new ``Table`` view.
     """
-    import copy  # noqa: PLC0415
-
     from tomlrt._array import AoT  # noqa: PLC0415
-    from tomlrt._container import Table  # noqa: PLC0415
+    from tomlrt._container import Container, Table  # noqa: PLC0415
 
     assert isinstance(aot, AoT)
     assert isinstance(src_entry_table, Table)
@@ -1334,56 +1343,61 @@ def clone_aot_entry(aot: object, src_entry_table: object) -> object:
         msg = "AoT.clone_entry requires the AoT to be attached to a document"
         raise RuntimeError(msg)
     doc = layout_root
+    target_path = dst_path if dst_path is not None else path
 
     src_entry = src_entry_table._owner_aot_entry  # noqa: SLF001
     if src_entry is None:
         msg = "Source entry has no owning AoTEntry"
         raise RuntimeError(msg)
 
-    # Preflight: validate every unsupported shape BEFORE allocating
-    # or splicing anything. Otherwise raising mid-clone leaves the
-    # document partially mutated.
     src_slots = _validate_clonable_aot_entry(src_entry, src_entry_table)
+    src_prefix = src_entry.path
 
     ordinal = len(aot)
-    new_entry = AoTEntry(path=path, ordinal=ordinal)
+    new_entry = AoTEntry(path=target_path, ordinal=ordinal)
 
-    # Deep-clone slots one at a time, then rebind owner_aot_entry /
-    # entry to the new entry. Reset linked-list pointers — they get
-    # set during splicing below.
-    cloned_slots: list[Slot] = []
-    for s in src_slots:
-        c: Slot = copy.deepcopy(s)
-        c._prev = None  # noqa: SLF001
-        c._next = None  # noqa: SLF001
-        if isinstance(c, (KVSlot, StructuralHeaderSlot)):
-            c.owner_aot_entry = new_entry
-        if isinstance(c, StructuralHeaderSlot) and c.entry is not None:
-            c.entry = new_entry
-        cloned_slots.append(c)
-        new_entry.entry_slots.append(c)
+    cloned_slots = _clone_entry_slots(
+        src_slots,
+        new_entry=new_entry,
+        src_prefix=src_prefix,
+        target_prefix=target_path,
+        head_kind="aot-entry",
+    )
 
-    # Header leading: keep any post-structural comment block from the
-    # source, replace structural prefix with the standard inter-entry
-    # separator.
     head = cloned_slots[0]
     assert isinstance(head, StructuralHeaderSlot)
     cloned_header: StructuralHeaderSlot = head
-    _structural, remainder = _split_leading_structural(cloned_header.leading)
-    sep = _aot_separator(aot, doc)
-    cloned_header.leading = Trivia([*sep.pieces, *remainder.pieces])
+    same_aot_clone = (
+        target_path == src_entry.path and src_entry_table._layout_root is doc  # noqa: SLF001
+    )
+    if ordinal == 0:
+        # Strip any structural prefix from the source's first header
+        # (it was the source's file preamble or inter-entry separator,
+        # neither relevant in the destination doc) and re-prepend the
+        # destination's own structural lead-in.
+        _structural, remainder = _split_leading_structural(cloned_header.leading)
+        sep = _build_section_leading(doc)
+        cloned_header.leading = Trivia([*sep.pieces, *remainder.pieces])
+    elif same_aot_clone:
+        # __imul__ / "append-from-self": use destination's existing
+        # inter-entry separator style so the duplicate is laid out the
+        # same way as the originals.
+        _structural, remainder = _split_leading_structural(cloned_header.leading)
+        sep = _aot_separator(aot, doc)
+        cloned_header.leading = Trivia([*sep.pieces, *remainder.pieces])
+    # Cross-doc / cross-key clone: keep the source's leading verbatim
+    # so the original inter-entry separator (and any pre-header
+    # comment block) survives unchanged.
 
-    # Build the new entry's Table view.
     entry_table = Table()
     entry_table._layout_root = doc  # noqa: SLF001
-    entry_table._path = path  # noqa: SLF001
+    entry_table._path = target_path  # noqa: SLF001
     entry_table._parent = parent  # noqa: SLF001
     entry_table._owner_aot_entry = new_entry  # noqa: SLF001
     own_header_ref = SlotRef(slot=cloned_header, container=entry_table, local_key=None)
     entry_table._refs.append(own_header_ref)  # noqa: SLF001
     entry_table._header_ref = own_header_ref  # noqa: SLF001
 
-    # Splice cloned slots after the last existing AoT-owned slot.
     anchor = _last_aot_slot(aot)
     if anchor is None:
         _splice_at_end(cloned_header, doc)
@@ -1396,27 +1410,313 @@ def clone_aot_entry(aot: object, src_entry_table: object) -> object:
         insert_after(prev, s, doc)
         prev = s
 
-    # File parent-chain ref for the new header.
-    parent_ref = SlotRef(slot=cloned_header, container=parent, local_key=path[-1])
+    parent_ref = SlotRef(
+        slot=cloned_header, container=parent, local_key=target_path[-1]
+    )
     parent._refs.append(parent_ref)  # noqa: SLF001
-    parent._index.setdefault(path[-1], []).append(parent_ref)  # noqa: SLF001
+    parent._index.setdefault(target_path[-1], []).append(parent_ref)  # noqa: SLF001
 
-    # Build refs + dict cache for direct KVs in the cloned body.
-    # All preconditions checked in preflight above.
-    for s in cloned_slots[1:]:
-        assert isinstance(s, KVSlot)
-        key = s.key_parts[0].value
-        kv_ref = SlotRef(slot=s, container=entry_table, local_key=key)
-        entry_table._refs.append(kv_ref)  # noqa: SLF001
-        entry_table._index.setdefault(key, []).append(kv_ref)  # noqa: SLF001
-        dict.__setitem__(entry_table, key, src_entry_table[key])
+    _populate_entry_views(
+        entry_table=entry_table,
+        cloned_slots=cloned_slots[1:],
+        src_entry_table=src_entry_table,
+        src_prefix=src_prefix,
+        target_prefix=target_path,
+        new_entry=new_entry,
+        doc=doc,
+    )
 
     list.append(aot, entry_table)
+    _ = Container  # keep import used for typing
     return entry_table
 
 
+def clone_aot_entry_as_table(
+    parent: Container,
+    key: str,
+    src_entry_table: object,
+) -> object:
+    """Install an AoT entry under ``parent[key]`` as a standard ``[key]`` table.
+
+    Used by ``parent[key] = some_aot_entry`` and ``install`` paths.
+    Deep-clones the source entry's slots, rewriting the head from
+    ``[[..]]`` to ``[..]``, rebasing all paths from the source's
+    AoT prefix to ``parent._path + (key,)``.
+    """
+    from tomlrt._container import Container as ContainerType  # noqa: PLC0415
+    from tomlrt._container import Table  # noqa: PLC0415
+
+    assert isinstance(parent, ContainerType)
+    assert isinstance(src_entry_table, Table)
+    layout_root = parent._layout_root  # noqa: SLF001
+    if layout_root is None:
+        msg = "clone_aot_entry_as_table requires parent attached to a document"
+        raise RuntimeError(msg)
+    doc = layout_root
+    target_path = (*parent._path, key)  # noqa: SLF001
+
+    src_entry = src_entry_table._owner_aot_entry  # noqa: SLF001
+    if src_entry is None:
+        msg = "Source entry has no owning AoTEntry"
+        raise RuntimeError(msg)
+    src_slots = _validate_clonable_aot_entry(src_entry, src_entry_table)
+    src_prefix = src_entry.path
+
+    cloned_slots = _clone_entry_slots(
+        src_slots,
+        new_entry=None,
+        src_prefix=src_prefix,
+        target_prefix=target_path,
+        head_kind="table",
+    )
+
+    head = cloned_slots[0]
+    assert isinstance(head, StructuralHeaderSlot)
+    cloned_header: StructuralHeaderSlot = head
+    cloned_header.leading = _build_section_leading(doc)
+
+    section = Table.section()
+    section._layout_root = doc  # noqa: SLF001
+    section._path = target_path  # noqa: SLF001
+    section._parent = parent  # noqa: SLF001
+    section._owner_aot_entry = parent._owner_aot_entry  # noqa: SLF001
+    own_ref = SlotRef(slot=cloned_header, container=section, local_key=None)
+    section._refs.append(own_ref)  # noqa: SLF001
+    section._header_ref = own_ref  # noqa: SLF001
+
+    _splice_at_end(cloned_header, doc)
+    prev: Slot = cloned_header
+    for s in cloned_slots[1:]:
+        _ensure_terminator(prev, doc)
+        insert_after(prev, s, doc)
+        prev = s
+
+    parent_ref = SlotRef(slot=cloned_header, container=parent, local_key=key)
+    parent._refs.append(parent_ref)  # noqa: SLF001
+    parent._index.setdefault(key, []).append(parent_ref)  # noqa: SLF001
+
+    _populate_entry_views(
+        entry_table=section,
+        cloned_slots=cloned_slots[1:],
+        src_entry_table=src_entry_table,
+        src_prefix=src_prefix,
+        target_prefix=target_path,
+        new_entry=None,
+        doc=doc,
+    )
+
+    dict.__setitem__(parent, key, section)
+    return section
+
+
+def clone_aot(
+    parent: Container,
+    key: str,
+    src_aot: object,
+) -> object:
+    """Install ``src_aot`` (an attached AoT) under ``parent[key]``.
+
+    Each entry is deep-cloned with path-rebasing so any nested
+    sub-sections stay logically inside the new key.
+    """
+    from tomlrt._array import AoT  # noqa: PLC0415
+    from tomlrt._container import Container as ContainerType  # noqa: PLC0415
+
+    assert isinstance(parent, ContainerType)
+    assert isinstance(src_aot, AoT)
+    layout_root = parent._layout_root  # noqa: SLF001
+    assert layout_root is not None
+    target_path = (*parent._path, key)  # noqa: SLF001
+
+    new_aot = AoT()
+    new_aot._layout_root = layout_root  # noqa: SLF001
+    new_aot._path = target_path  # noqa: SLF001
+    new_aot._parent = parent  # noqa: SLF001
+
+    parent_index_present = key in parent._index  # noqa: SLF001
+    if not parent_index_present:
+        # No physical primary yet (empty AoT placeholder).
+        pass
+    dict.__setitem__(parent, key, new_aot)
+    for src_entry_table in list(src_aot):
+        clone_aot_entry(new_aot, src_entry_table, dst_path=target_path)
+    return new_aot
+
+
+def _clone_entry_slots(
+    src_slots: list[Slot],
+    *,
+    new_entry: AoTEntry | None,
+    src_prefix: tuple[str, ...],
+    target_prefix: tuple[str, ...],
+    head_kind: str,
+) -> list[Slot]:
+    """Deep-clone an entry's slot list with path/owner rebasing.
+
+    The first slot must be the entry header. ``new_entry`` is
+    written to every slot's ``owner_aot_entry`` (None means: clear
+    the back-pointer, used by the standard-table install path).
+    The first slot's ``kind`` is set to ``head_kind`` and its
+    ``entry`` reset accordingly.
+    """
+    import copy  # noqa: PLC0415
+
+    cloned: list[Slot] = []
+    for s in src_slots:
+        c: Slot = copy.deepcopy(s)
+        c._prev = None  # noqa: SLF001
+        c._next = None  # noqa: SLF001
+        if isinstance(c, KVSlot):
+            c.owner_aot_entry = new_entry
+            c.host_path = _rebase_path(c.host_path, src_prefix, target_prefix)
+        elif isinstance(c, StructuralHeaderSlot):
+            c.owner_aot_entry = new_entry
+            c.path = _rebase_path(c.path, src_prefix, target_prefix)
+            c.key_parts = _build_header_keyparts(c.path)
+            c.key_seps = ["."] * (len(c.key_parts) - 1)
+            c.entry = new_entry if c.kind == "aot-entry" else None
+        cloned.append(c)
+        if new_entry is not None:
+            new_entry.entry_slots.append(c)
+
+    head = cloned[0]
+    assert isinstance(head, StructuralHeaderSlot)
+    head.kind = head_kind  # type: ignore[assignment]
+    if head_kind == "aot-entry":
+        head.entry = new_entry
+    else:
+        head.entry = None
+    return cloned
+
+
+def _rebase_path(
+    p: tuple[str, ...],
+    src_prefix: tuple[str, ...],
+    target_prefix: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Replace a leading ``src_prefix`` in ``p`` with ``target_prefix``."""
+    if src_prefix == target_prefix:
+        return p
+    if p[: len(src_prefix)] == src_prefix:
+        return target_prefix + p[len(src_prefix) :]
+    return p
+
+
+def _populate_entry_views(
+    *,
+    entry_table: Container,
+    cloned_slots: list[Slot],
+    src_entry_table: Container,
+    src_prefix: tuple[str, ...],
+    target_prefix: tuple[str, ...],
+    new_entry: AoTEntry | None,
+    doc: Document,
+) -> None:
+    """Walk cloned non-header slots, building child Container views.
+
+    Mirrors the parser's slot-builder for an entry: KV slots file
+    refs into their host container; sub-section headers create child
+    Containers under the entry root and file own-header refs +
+    parent-binding refs.
+    """
+    from tomlrt._container import Table  # noqa: PLC0415
+
+    # path -> Container for every container in the entry sub-tree.
+    containers: dict[tuple[str, ...], Container] = {target_prefix: entry_table}
+
+    def _ensure_container(path: tuple[str, ...]) -> Container:
+        if path in containers:
+            return containers[path]
+        # Build implicit chain from entry_table down to `path`.
+        cur: Container = entry_table
+        cur_path = target_prefix
+        for comp in path[len(target_prefix) :]:
+            cur_path = (*cur_path, comp)
+            if cur_path in containers:
+                cur = containers[cur_path]
+                continue
+            child = Table()
+            child._layout_root = doc  # noqa: SLF001
+            child._path = cur_path  # noqa: SLF001
+            child._parent = cur  # noqa: SLF001
+            child._owner_aot_entry = new_entry  # noqa: SLF001
+            containers[cur_path] = child
+            dict.__setitem__(cur, comp, child)
+            cur = child
+        return cur
+
+    for s in cloned_slots:
+        if isinstance(s, StructuralHeaderSlot):
+            assert s.kind == "table"
+            container = _ensure_container(s.path)
+            own_ref = SlotRef(slot=s, container=container, local_key=None)
+            container._refs.append(own_ref)  # noqa: SLF001
+            container._header_ref = own_ref  # noqa: SLF001
+            # Parent binding ref.
+            if s.path == target_prefix:
+                continue
+            local = s.path[-1]
+            parent_path = s.path[:-1]
+            parent_view = _ensure_container(parent_path)
+            binding = SlotRef(slot=s, container=parent_view, local_key=local)
+            parent_view._refs.append(binding)  # noqa: SLF001
+            parent_view._index.setdefault(local, []).append(binding)  # noqa: SLF001
+            continue
+        assert isinstance(s, KVSlot)
+        host = _ensure_container(s.host_path)
+        # Use src_entry_table to look up the decoded value.
+        src_host_path = _rebase_path(s.host_path, target_prefix, src_prefix)
+        src_host = _walk_path(src_entry_table, src_host_path[len(src_prefix) :])
+        if len(s.key_parts) == 1:
+            key = s.key_parts[0].value
+            kv_ref = SlotRef(slot=s, container=host, local_key=key)
+            host._refs.append(kv_ref)  # noqa: SLF001
+            host._index.setdefault(key, []).append(kv_ref)  # noqa: SLF001
+            dict.__setitem__(host, key, src_host[key])
+        else:
+            # Dotted KV under host (e.g. `b.c = 1` under [a]).
+            # File ref into each container along the dotted prefix.
+            cur = host
+            for j, kp in enumerate(s.key_parts[:-1]):
+                comp = kp.value
+                ref = SlotRef(slot=s, container=cur, local_key=comp)
+                cur._refs.append(ref)  # noqa: SLF001
+                cur._index.setdefault(comp, []).append(ref)  # noqa: SLF001
+                if comp not in cur:
+                    sub = Table()
+                    sub._layout_root = doc  # noqa: SLF001
+                    sub._path = (*cur._path, comp)  # noqa: SLF001
+                    sub._parent = cur  # noqa: SLF001
+                    sub._owner_aot_entry = new_entry  # noqa: SLF001
+                    containers[sub._path] = sub  # noqa: SLF001
+                    dict.__setitem__(cur, comp, sub)
+                nxt = dict.__getitem__(cur, comp)
+                if not isinstance(nxt, Table):
+                    msg = "internal: dotted KV traversal hit non-Table"
+                    raise AssertionError(msg)  # noqa: TRY004
+                cur = nxt
+                _ = j
+            leaf_key = s.key_parts[-1].value
+            kv_ref = SlotRef(slot=s, container=cur, local_key=leaf_key)
+            cur._refs.append(kv_ref)  # noqa: SLF001
+            cur._index.setdefault(leaf_key, []).append(kv_ref)  # noqa: SLF001
+            # Decoded value: walk src_host along inner key parts.
+            decoded_walk = src_host
+            for kp in s.key_parts[:-1]:
+                decoded_walk = decoded_walk[kp.value]
+            dict.__setitem__(cur, leaf_key, decoded_walk[leaf_key])
+
+
+def _walk_path(table: Container, path: tuple[str, ...]) -> Container:
+    cur: Any = table
+    for comp in path:
+        cur = dict.__getitem__(cur, comp)
+    return cur  # type: ignore[no-any-return]
+
+
 def _validate_clonable_aot_entry(
-    src_entry: AoTEntry, src_entry_table: object
+    src_entry: AoTEntry,
+    src_entry_table: object,  # noqa: ARG001
 ) -> list[Slot]:
     """Validate the source entry can be cloned; return its slot list.
 
@@ -1430,26 +1730,14 @@ def _validate_clonable_aot_entry(
         msg = "Source entry has no header slot"
         raise RuntimeError(msg)
     for s in src_slots[1:]:
+        if isinstance(s, StructuralHeaderSlot):
+            if s.kind != "table":
+                msg = "AoT clone for nested non-table headers is not yet implemented"
+                raise NotImplementedError(msg)
+            continue
         if not isinstance(s, KVSlot):
-            msg = (
-                "AoT.__imul__ for entries with nested sub-sections "
-                "is not yet implemented"
-            )
-            raise NotImplementedError(msg)
-        if len(s.key_parts) != 1:
-            msg = "AoT.__imul__ for entries with dotted KVs is not yet implemented"
-            raise NotImplementedError(msg)
-        key = s.key_parts[0].value
-        if key not in src_entry_table:  # type: ignore[operator]
-            msg = f"Source entry has slot {key!r} but no decoded value"
-            raise RuntimeError(msg)
-        src_decoded = src_entry_table[key]  # type: ignore[index]
-        if isinstance(src_decoded, (dict, list)):
-            msg = (
-                "AoT.__imul__ for entries with inline-array / inline-table "
-                "values is not yet implemented"
-            )
-            raise NotImplementedError(msg)
+            msg = "AoT clone: unexpected slot type"
+            raise AssertionError(msg)  # noqa: TRY004
     return src_slots
 
 
