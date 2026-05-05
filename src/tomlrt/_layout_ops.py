@@ -1674,17 +1674,22 @@ def _clone_entry_slots(
     src_prefix: tuple[str, ...],
     target_prefix: tuple[str, ...],
     head_kind: str,
+    has_header: bool = True,
 ) -> list[Slot]:
     """Deep-clone an entry's slot list with path/owner rebasing.
 
-    The first slot must be the entry header. ``body_owner`` is
-    written to every slot's ``owner_aot_entry`` (so cloning into a
-    table that itself sits under another AoT entry keeps physical
-    ownership coherent). ``new_entry`` is the AoTEntry the cloned
-    slots are *logically* owned by — used only for ``entry``
-    back-pointers on aot-entry headers and for the ``entry_slots``
-    membership list. The first slot's ``kind`` is set to
-    ``head_kind`` and its ``entry`` reset accordingly.
+    When ``has_header`` is True (default), the first slot must be the
+    entry header and its ``kind`` is set to ``head_kind``. When
+    False, the slot list is treated as body-only — useful for
+    in-place body replacement that keeps the destination's existing
+    header.
+
+    ``body_owner`` is written to every slot's ``owner_aot_entry`` (so
+    cloning into a table that itself sits under another AoT entry
+    keeps physical ownership coherent). ``new_entry`` is the
+    AoTEntry the cloned slots are *logically* owned by — used only
+    for ``entry`` back-pointers on aot-entry headers and for the
+    ``entry_slots`` membership list.
     """
     import copy  # noqa: PLC0415
 
@@ -1706,6 +1711,8 @@ def _clone_entry_slots(
         if new_entry is not None:
             new_entry.entry_slots.append(c)
 
+    if not has_header or not cloned:
+        return cloned
     head = cloned[0]
     assert isinstance(head, StructuralHeaderSlot)
     head.kind = head_kind  # type: ignore[assignment]
@@ -2253,6 +2260,109 @@ def remove_aot_entry(aot: object, index: int) -> object:
         parent._index.pop(last_key, None)  # noqa: SLF001
 
     return snapshot
+
+
+def replace_aot_entry_with_clone(
+    aot: object,
+    index: int,
+    src_entry_table: object,
+) -> None:
+    """Replace ``aot[index]`` with a deep clone of ``src_entry_table``.
+
+    Preserves the *destination* entry header's leading trivia (and
+    therefore any pre-header comment block above the original
+    ``[[..]]`` line) while replacing the entry's body with a clone
+    of the source entry's slots — preserving the source's per-KV
+    leading / EOL / lexeme trivia.
+
+    Both entries must be attached AoT-entry tables.
+    """
+    from tomlrt._array import AoT  # noqa: PLC0415
+    from tomlrt._container import Table  # noqa: PLC0415
+
+    assert isinstance(aot, AoT)
+    assert isinstance(src_entry_table, Table)
+    n = len(aot)
+    if not -n <= index < n:
+        msg = f"AoT index {index} out of range (len {n})"
+        raise IndexError(msg)
+    if index < 0:
+        index += n
+
+    layout_root = aot._layout_root  # noqa: SLF001
+    path = aot._path  # noqa: SLF001
+    if layout_root is None or not path:
+        msg = "replace_aot_entry_with_clone requires the AoT to be attached"
+        raise RuntimeError(msg)
+    doc = layout_root
+
+    dst_entry_table = aot[index]
+    if dst_entry_table is src_entry_table:
+        return
+
+    dst_entry = dst_entry_table._owner_aot_entry  # noqa: SLF001
+    src_entry = src_entry_table._owner_aot_entry  # noqa: SLF001
+    if dst_entry is None or src_entry is None:
+        msg = "replace_aot_entry_with_clone needs AoT-entry tables on both sides"
+        raise RuntimeError(msg)
+
+    src_slots = _validate_clonable_aot_entry(src_entry, src_entry_table)
+    src_prefix = src_entry.path
+
+    # Save the destination header (we keep it in place, only its body
+    # changes). The header's leading carries any pre-header comment
+    # block — that's the trivia the test pins.
+    dst_header = dst_entry.entry_slots[0]
+    assert isinstance(dst_header, StructuralHeaderSlot)
+
+    # Pre-clone source body before any destructive cleanup, so a clone
+    # failure can't leave the destination half-emptied. Also covers
+    # the source-inside-destination case (e.g. self-nested clone).
+    cloned_body = (
+        _clone_entry_slots(
+            src_slots[1:],
+            new_entry=dst_entry,
+            body_owner=dst_entry,
+            src_prefix=src_prefix,
+            target_prefix=path,
+            head_kind="table",  # unused (no header in this list)
+            has_header=False,
+        )
+        if len(src_slots) > 1
+        else []
+    )
+    # _clone_entry_slots appended the cloned slots to dst_entry's
+    # entry_slots prematurely; we splice them in below, so back them
+    # out for now to keep ownership state consistent during clear().
+    if cloned_body:
+        dst_entry.entry_slots = dst_entry.entry_slots[: -len(cloned_body)]
+
+    # Reuse the structural-delete path to tear down the destination's
+    # body: orphans held sub-sections / AoTs into a PrivateRoot,
+    # unlinks all body slots from the doc, recomputes tails, and
+    # cleans up nested AoTEntry membership. The destination header
+    # stays in place because it is not a dict-storage entry.
+    dst_entry_table.clear()
+    # After clear(), dst_entry.entry_slots should be [dst_header].
+    assert dst_entry.entry_slots == [dst_header]
+
+    # Splice cloned body slots into the doc immediately after the
+    # destination header.
+    prev: Slot = dst_header
+    for s in cloned_body:
+        _ensure_terminator(prev, doc)
+        insert_after(prev, s, doc)
+        prev = s
+        dst_entry.entry_slots.append(s)
+
+    # Rebuild views / dict storage from the cloned body.
+    _populate_entry_views(
+        entry_table=dst_entry_table,
+        cloned_slots=cloned_body,
+        target_prefix=path,
+        body_owner=dst_entry,
+        doc=doc,
+    )
 
 
 def replace_aot_entry(aot: object, index: int, body: object) -> None:

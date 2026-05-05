@@ -1208,6 +1208,15 @@ class AoT(list["Table"]):
             assert isinstance(value, dict)
             list.__setitem__(self, index, _make_unattached_entry(value))
             return
+        from tomlrt._container import Table as _TableType  # noqa: PLC0415
+
+        if (
+            isinstance(value, _TableType)
+            and value._layout_root is not None  # noqa: SLF001
+            and value._owner_aot_entry is not None  # noqa: SLF001
+        ):
+            _layout_ops.replace_aot_entry_with_clone(self, index, value)
+            return
         _layout_ops.replace_aot_entry(self, index, value)
 
     @override
