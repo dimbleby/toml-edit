@@ -249,17 +249,16 @@ class Array(list[Any]):
         _renormalise_commas(items, style, self._value)
         return self
 
-    def _synth_cst(self, value: Any) -> Any:
+    def _synth_cst(self, value: object) -> tuple[Value, object]:
         from tomlrt._container import _synth_value  # noqa: PLC0415
 
-        cst, decoded = _synth_value(
+        return _synth_value(
             value,
             layout_root=self._layout_root(),
             parent=None,
             path=(),
             owner=self._owner_aot(),
         )
-        return cst, decoded
 
     @override
     def append(self, value: Any) -> None:
@@ -281,7 +280,7 @@ class Array(list[Any]):
         #   adopt + clear, and stitch on a synthesised indent so the
         #   new item sits below the comment at the indent level the
         #   user established for it.
-        adopted_leading: Any | None = None
+        adopted_leading: Trivia | None = None
         if not items and self._value.final_trivia.pieces:
             ft = self._value.final_trivia
             if _trivia_has_newline(ft):
@@ -695,9 +694,9 @@ class _ArrayStyle:
         self,
         *,
         is_multiline: bool,
-        inter_separator: Any,  # Trivia
+        inter_separator: Trivia,
         trailing_comma: bool,
-        trailing_post: Any,  # Trivia
+        trailing_post: Trivia,
     ) -> None:
         self.is_multiline = is_multiline
         self.inter_separator = inter_separator
