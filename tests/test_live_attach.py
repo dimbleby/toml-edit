@@ -724,3 +724,29 @@ v = 1
 """
     doc = tomlrt.loads(src)
     assert tomlrt.dumps(doc) == src
+
+
+def test_held_view_after_delete_does_not_corrupt_doc() -> None:
+    # Held views survive delete via a private orphan root with live
+    # mutation. Mutating the orphan must not affect the live document.
+    doc = tomlrt.loads("[a]\nx = 1\n[b]\ny = 2\n")
+    held = doc.table("a")
+    del doc["a"]
+    assert "a" not in doc
+    assert tomlrt.dumps(doc) == "[b]\ny = 2\n"
+    held["new"] = 99
+    assert tomlrt.dumps(doc) == "[b]\ny = 2\n"
+    assert held["new"] == 99
+
+
+def test_held_deleted_section_view_has_clean_orphan_state() -> None:
+    # Defence-in-depth: held view is internally consistent after
+    # delete (it is detached into a private orphan root, so the held
+    # view's refs/header still resolve — but against the orphan).
+    doc = tomlrt.loads("[a]\nx = 1\n[b]\ny = 2\n")
+    held = doc.table("a")
+    del doc["a"]
+    assert held._layout_root is not doc  # noqa: SLF001
+    assert held._layout_root is not None  # noqa: SLF001
+    assert held._layout_root._is_private  # noqa: SLF001
+    assert held["x"] == 1

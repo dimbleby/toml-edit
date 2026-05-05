@@ -2052,3 +2052,215 @@ def test_del_loop_leaves_doc_empty() -> None:
         del doc[k]
     assert dict(doc) == {}
     assert tomlrt.dumps(doc) == ""
+
+
+def test_inline_append_does_not_steal_eol_comment_in_multiline() -> None:
+    # TOML 1.1 multiline inline table with an inline comment on the
+    # last entry's line. The comment must stay attached to `a`, not
+    # migrate to the appended entry.
+    src = "obj = { a = 1 # eol-on-a\n  }\n"
+    doc = tomlrt.loads(src)
+    obj = doc.table("obj")
+    obj["b"] = 2
+    out = tomlrt.dumps(doc)
+    assert out.index("# eol-on-a") < out.index("b = 2")
+    assert tomlrt.loads(out).table("obj").to_dict() == {"a": 1, "b": 2}
+
+
+def test_inline_delete_dotted_prefix_removes_all_subentries() -> None:
+    doc = tomlrt.loads("obj = { a.b = 1, a.c = 2, d = 3 }\n")
+    obj = doc.table("obj")
+    del obj["a"]
+    assert "a" not in obj
+    assert obj["d"] == 3
+    assert tomlrt.loads(tomlrt.dumps(doc)).table("obj").to_dict() == {"d": 3}
+
+
+def test_inline_delete_dotted_leaf_cleans_empty_prefix_container() -> None:
+    doc = tomlrt.loads("obj = { a.b = 1 }\n")
+    obj = doc.table("obj")
+    inner_a = obj.table("a")
+    del inner_a["b"]
+    # Synthetic prefix container `a` is now empty and has no entry in
+    # the backing InlineTableValue; outer dict view should drop it.
+    assert "a" not in obj
+    assert tomlrt.loads(tomlrt.dumps(doc)).table("obj").to_dict() == {}
+
+
+def test_insert_into_comment_only_doc_migrates_preamble() -> None:
+    # Slotless doc with preamble trivia: inserting migrates the
+    # comment block onto the new slot's leading so it stays visually
+    # at the top of the file.
+    doc = tomlrt.loads("# preamble\n")
+    doc["a"] = 1
+    assert tomlrt.dumps(doc) == "# preamble\n\na = 1\n"
+    assert tomlrt.loads(tomlrt.dumps(doc)).preamble == ("preamble",)
+
+
+def test_aot_entry_body_insert_now_works() -> None:
+    doc = tomlrt.loads("[[arr]]\nx = 1\n")
+    doc.aot("arr")[0]["y"] = 2
+    assert tomlrt.dumps(doc) == "[[arr]]\nx = 1\ny = 2\n"
+
+
+def test_delete_only_kv_in_section_then_reinsert() -> None:
+    # Body emptied then refilled: the section header survives and
+    # the new KV lands inside it.
+    src = td("""
+        [s]
+        only = 1
+    """)
+    doc = tomlrt.loads(src)
+    del doc.table("s")["only"]
+    assert tomlrt.dumps(doc) == "[s]\n"
+    doc.table("s")["fresh"] = 99
+    assert tomlrt.dumps(doc) == td("""
+        [s]
+        fresh = 99
+    """)
+
+
+def test_insert_into_implicit_table() -> None:
+    # `a` exists implicitly via a dotted top-level key; dotted-KV
+    # insert under an implicit container.
+    doc = tomlrt.loads("a.x = 1\n")
+    doc.table("a")["y"] = 2
+    assert tomlrt.dumps(doc) == "a.x = 1\na.y = 2\n"
+
+
+def test_insert_into_implicit_grandparent() -> None:
+    doc = tomlrt.loads("a.b.c = 1\n")
+    doc.table("a").table("b")["d"] = 2
+    assert tomlrt.dumps(doc) == "a.b.c = 1\na.b.d = 2\n"
+
+
+def test_delete_only_subsection_keeps_implicit_parent() -> None:
+    # `a` is implicit (no [a] header). Deleting its only [a.b]
+    # leaves `a` reachable as an empty implicit table — Python-dict
+    # semantics: `del` removes only the named key.
+    src = td("""
+        [a.b]
+        x = 1
+    """)
+    doc = tomlrt.loads(src)
+    del doc.table("a")["b"]
+    assert tomlrt.dumps(doc) == ""
+    assert "a" in doc
+    assert dict(doc.table("a")) == {}
+
+
+def test_delete_one_of_two_implicit_subsections_keeps_parent() -> None:
+    src = td("""
+        [a.b]
+        x = 1
+        [a.c]
+        y = 2
+    """)
+    doc = tomlrt.loads(src)
+    del doc.table("a")["b"]
+    assert tomlrt.dumps(doc) == td("""
+        [a.c]
+        y = 2
+    """)
+
+
+def test_delete_deep_implicit_inside_aot_keeps_implicit_chain() -> None:
+    # Implicit ancestors (`foo`, `bar`) inside an AoT entry stay as
+    # empty `Table` views — they have no rendering presence.
+    doc = tomlrt.loads("[[arr]]\nfoo.bar.baz = 1\n")
+    del doc.aot("arr")[0].table("foo")["bar"]
+    assert tomlrt.dumps(doc) == "[[arr]]\n"
+    assert doc.to_dict() == {"arr": [{"foo": {}}]}
+
+
+def test_delete_deep_non_aot_implicit_keeps_chain() -> None:
+    # `[a.b.c.d]\nx=1` → a, b, c are all implicit. Deleting `d`
+    # removes only `d`; the implicit chain `a.b.c` survives as
+    # nested empty `Table` views with no rendering presence.
+    doc = tomlrt.loads("[a.b.c.d]\nx = 1\n")
+    del doc.table("a").table("b").table("c")["d"]
+    assert tomlrt.dumps(doc) == ""
+    assert "a" in doc
+    assert dict(doc.table("a").table("b").table("c")) == {}
+
+
+def test_delete_header_only_section() -> None:
+    doc = tomlrt.loads("[s]\n")
+    del doc["s"]
+    assert tomlrt.dumps(doc) == ""
+
+
+def test_readd_into_emptied_aot_implicit_anchors_inside_entry() -> None:
+    # After deleting the only descendant of an AoT-owned implicit
+    # chain, re-adding under that chain must synthesise the
+    # [arr.foo] header inside the owning entry's slot region.
+    doc = tomlrt.loads("[[arr]]\nfoo.bar.baz = 1\n\n[[arr]]\nname = 2\n")
+    foo = doc.aot("arr")[0].table("foo")
+    del foo["bar"]
+    foo["new"] = 1
+    out = tomlrt.dumps(doc)
+    assert "[arr.foo]\nnew = 1" in out
+    assert (
+        tomlrt.loads(out).to_dict()
+        == doc.to_dict()
+        == {"arr": [{"foo": {"new": 1}}, {"name": 2}]}
+    )
+
+
+def test_delete_then_reinsert_at_top_level_after_section_delete() -> None:
+    src = td("""
+        x = 1
+        [a]
+        inner = 2
+    """)
+    doc = tomlrt.loads(src)
+    del doc["a"]
+    doc["y"] = 3
+    assert tomlrt.dumps(doc) == "x = 1\ny = 3\n"
+
+
+def test_insert_two_top_level_kvs_into_section_only_doc() -> None:
+    doc = tomlrt.loads("[s]\nx = 1\n")
+    doc["a"] = 1
+    doc["b"] = 2
+    assert tomlrt.dumps(doc) == "a = 1\nb = 2\n\n[s]\nx = 1\n"
+
+
+def test_insert_top_level_kv_crlf_doc() -> None:
+    doc = tomlrt.loads("[s]\r\nx = 1\r\n")
+    doc["new"] = 1
+    assert tomlrt.dumps(doc) == "new = 1\r\n\r\n[s]\r\nx = 1\r\n"
+
+
+def test_delete_inserted_top_level_kv_round_trips() -> None:
+    doc = tomlrt.loads("[s]\nx = 1\n")
+    doc["new"] = 1
+    del doc["new"]
+    # Blank-line residue is acceptable; reparse is what matters.
+    assert tomlrt.loads(tomlrt.dumps(doc)).to_dict() == {"s": {"x": 1}}
+
+
+def test_structural_only_implicit_promotes_to_section() -> None:
+    # `a` exists only via the descendant header [a.b]; assigning a
+    # KV under `a` promotes it to an explicit `[a]` section before
+    # the descendant rather than emitting a top-level dotted KV.
+    doc = tomlrt.loads("[a.b]\ny = 1\n")
+    doc.table("a")["x"] = 2
+    out = tomlrt.dumps(doc)
+    assert out == "[a]\nx = 2\n\n[a.b]\ny = 1\n"
+    re_parsed = tomlrt.loads(out)
+    assert re_parsed.table("a")["x"] == 2
+    assert re_parsed.table("a").table("b")["y"] == 1
+
+
+def test_multiple_aot_entries_independent() -> None:
+    src = "[[arr]]\na.x = 1\n\n[[arr]]\na.x = 2\n"
+    doc = tomlrt.loads(src)
+    doc.aot("arr")[0].table("a")["y"] = 9
+    assert tomlrt.dumps(doc) == "[[arr]]\na.x = 1\na.y = 9\n\n[[arr]]\na.x = 2\n"
+
+
+def test_insert_before_later_child_section() -> None:
+    doc = tomlrt.loads("a.x = 1\n\n[a.b]\ny = 2\n")
+    doc.table("a")["z"] = 3
+    assert tomlrt.dumps(doc) == "a.x = 1\na.z = 3\n\n[a.b]\ny = 2\n"
