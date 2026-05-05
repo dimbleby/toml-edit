@@ -1332,7 +1332,7 @@ def clone_aot_entry(
     Returns the new ``Table`` view.
     """
     from tomlrt._array import AoT  # noqa: PLC0415
-    from tomlrt._container import Container, Table  # noqa: PLC0415
+    from tomlrt._container import Table  # noqa: PLC0415
 
     assert isinstance(aot, AoT)
     assert isinstance(src_entry_table, Table)
@@ -1359,6 +1359,7 @@ def clone_aot_entry(
     cloned_slots = _clone_entry_slots(
         src_slots,
         new_entry=new_entry,
+        body_owner=new_entry,
         src_prefix=src_prefix,
         target_prefix=target_path,
         head_kind="aot-entry",
@@ -1419,15 +1420,12 @@ def clone_aot_entry(
     _populate_entry_views(
         entry_table=entry_table,
         cloned_slots=cloned_slots[1:],
-        src_entry_table=src_entry_table,
-        src_prefix=src_prefix,
         target_prefix=target_path,
-        new_entry=new_entry,
+        body_owner=new_entry,
         doc=doc,
     )
 
     list.append(aot, entry_table)
-    _ = Container  # keep import used for typing
     return entry_table
 
 
@@ -1465,6 +1463,7 @@ def clone_aot_entry_as_table(
     cloned_slots = _clone_entry_slots(
         src_slots,
         new_entry=None,
+        body_owner=parent._owner_aot_entry,  # noqa: SLF001
         src_prefix=src_prefix,
         target_prefix=target_path,
         head_kind="table",
@@ -1498,10 +1497,8 @@ def clone_aot_entry_as_table(
     _populate_entry_views(
         entry_table=section,
         cloned_slots=cloned_slots[1:],
-        src_entry_table=src_entry_table,
-        src_prefix=src_prefix,
         target_prefix=target_path,
-        new_entry=None,
+        body_owner=parent._owner_aot_entry,  # noqa: SLF001
         doc=doc,
     )
 
@@ -1547,17 +1544,21 @@ def _clone_entry_slots(
     src_slots: list[Slot],
     *,
     new_entry: AoTEntry | None,
+    body_owner: AoTEntry | None,
     src_prefix: tuple[str, ...],
     target_prefix: tuple[str, ...],
     head_kind: str,
 ) -> list[Slot]:
     """Deep-clone an entry's slot list with path/owner rebasing.
 
-    The first slot must be the entry header. ``new_entry`` is
-    written to every slot's ``owner_aot_entry`` (None means: clear
-    the back-pointer, used by the standard-table install path).
-    The first slot's ``kind`` is set to ``head_kind`` and its
-    ``entry`` reset accordingly.
+    The first slot must be the entry header. ``body_owner`` is
+    written to every slot's ``owner_aot_entry`` (so cloning into a
+    table that itself sits under another AoT entry keeps physical
+    ownership coherent). ``new_entry`` is the AoTEntry the cloned
+    slots are *logically* owned by — used only for ``entry``
+    back-pointers on aot-entry headers and for the ``entry_slots``
+    membership list. The first slot's ``kind`` is set to
+    ``head_kind`` and its ``entry`` reset accordingly.
     """
     import copy  # noqa: PLC0415
 
@@ -1567,10 +1568,10 @@ def _clone_entry_slots(
         c._prev = None  # noqa: SLF001
         c._next = None  # noqa: SLF001
         if isinstance(c, KVSlot):
-            c.owner_aot_entry = new_entry
+            c.owner_aot_entry = body_owner
             c.host_path = _rebase_path(c.host_path, src_prefix, target_prefix)
         elif isinstance(c, StructuralHeaderSlot):
-            c.owner_aot_entry = new_entry
+            c.owner_aot_entry = body_owner
             c.path = _rebase_path(c.path, src_prefix, target_prefix)
             c.key_parts = _build_header_keyparts(c.path)
             c.key_seps = ["."] * (len(c.key_parts) - 1)
@@ -1584,6 +1585,7 @@ def _clone_entry_slots(
     head.kind = head_kind  # type: ignore[assignment]
     if head_kind == "aot-entry":
         head.entry = new_entry
+        head.owner_aot_entry = new_entry
     else:
         head.entry = None
     return cloned
@@ -1606,10 +1608,8 @@ def _populate_entry_views(
     *,
     entry_table: Container,
     cloned_slots: list[Slot],
-    src_entry_table: Container,
-    src_prefix: tuple[str, ...],
     target_prefix: tuple[str, ...],
-    new_entry: AoTEntry | None,
+    body_owner: AoTEntry | None,
     doc: Document,
 ) -> None:
     """Walk cloned non-header slots, building child Container views.
@@ -1618,7 +1618,13 @@ def _populate_entry_views(
     refs into their host container; sub-section headers create child
     Containers under the entry root and file own-header refs +
     parent-binding refs.
+
+    Decoded Python values are derived from each slot's (already
+    deep-cloned) ``Value`` via ``_decode_value`` — never aliased
+    from the source dict — so the destination view is fully
+    independent of the source.
     """
+    from tomlrt._build import _decode_value  # noqa: PLC0415
     from tomlrt._container import Table  # noqa: PLC0415
 
     # path -> Container for every container in the entry sub-tree.
@@ -1627,7 +1633,6 @@ def _populate_entry_views(
     def _ensure_container(path: tuple[str, ...]) -> Container:
         if path in containers:
             return containers[path]
-        # Build implicit chain from entry_table down to `path`.
         cur: Container = entry_table
         cur_path = target_prefix
         for comp in path[len(target_prefix) :]:
@@ -1639,7 +1644,7 @@ def _populate_entry_views(
             child._layout_root = doc  # noqa: SLF001
             child._path = cur_path  # noqa: SLF001
             child._parent = cur  # noqa: SLF001
-            child._owner_aot_entry = new_entry  # noqa: SLF001
+            child._owner_aot_entry = body_owner  # noqa: SLF001
             containers[cur_path] = child
             dict.__setitem__(cur, comp, child)
             cur = child
@@ -1652,7 +1657,6 @@ def _populate_entry_views(
             own_ref = SlotRef(slot=s, container=container, local_key=None)
             container._refs.append(own_ref)  # noqa: SLF001
             container._header_ref = own_ref  # noqa: SLF001
-            # Parent binding ref.
             if s.path == target_prefix:
                 continue
             local = s.path[-1]
@@ -1664,20 +1668,24 @@ def _populate_entry_views(
             continue
         assert isinstance(s, KVSlot)
         host = _ensure_container(s.host_path)
-        # Use src_entry_table to look up the decoded value.
-        src_host_path = _rebase_path(s.host_path, target_prefix, src_prefix)
-        src_host = _walk_path(src_entry_table, src_host_path[len(src_prefix) :])
+        assert s.value is not None
+        slot_value = s.value
         if len(s.key_parts) == 1:
             key = s.key_parts[0].value
             kv_ref = SlotRef(slot=s, container=host, local_key=key)
             host._refs.append(kv_ref)  # noqa: SLF001
             host._index.setdefault(key, []).append(kv_ref)  # noqa: SLF001
-            dict.__setitem__(host, key, src_host[key])
+            decoded = _decode_value(
+                slot_value,
+                layout_root=doc,
+                parent=host,
+                path=(*host._path, key),  # noqa: SLF001
+                owner=body_owner,
+            )
+            dict.__setitem__(host, key, decoded)
         else:
-            # Dotted KV under host (e.g. `b.c = 1` under [a]).
-            # File ref into each container along the dotted prefix.
             cur = host
-            for j, kp in enumerate(s.key_parts[:-1]):
+            for kp in s.key_parts[:-1]:
                 comp = kp.value
                 ref = SlotRef(slot=s, container=cur, local_key=comp)
                 cur._refs.append(ref)  # noqa: SLF001
@@ -1687,7 +1695,7 @@ def _populate_entry_views(
                     sub._layout_root = doc  # noqa: SLF001
                     sub._path = (*cur._path, comp)  # noqa: SLF001
                     sub._parent = cur  # noqa: SLF001
-                    sub._owner_aot_entry = new_entry  # noqa: SLF001
+                    sub._owner_aot_entry = body_owner  # noqa: SLF001
                     containers[sub._path] = sub  # noqa: SLF001
                     dict.__setitem__(cur, comp, sub)
                 nxt = dict.__getitem__(cur, comp)
@@ -1695,16 +1703,18 @@ def _populate_entry_views(
                     msg = "internal: dotted KV traversal hit non-Table"
                     raise AssertionError(msg)  # noqa: TRY004
                 cur = nxt
-                _ = j
             leaf_key = s.key_parts[-1].value
             kv_ref = SlotRef(slot=s, container=cur, local_key=leaf_key)
             cur._refs.append(kv_ref)  # noqa: SLF001
             cur._index.setdefault(leaf_key, []).append(kv_ref)  # noqa: SLF001
-            # Decoded value: walk src_host along inner key parts.
-            decoded_walk = src_host
-            for kp in s.key_parts[:-1]:
-                decoded_walk = decoded_walk[kp.value]
-            dict.__setitem__(cur, leaf_key, decoded_walk[leaf_key])
+            decoded = _decode_value(
+                slot_value,
+                layout_root=doc,
+                parent=cur,
+                path=(*cur._path, leaf_key),  # noqa: SLF001
+                owner=body_owner,
+            )
+            dict.__setitem__(cur, leaf_key, decoded)
 
 
 def _walk_path(table: Container, path: tuple[str, ...]) -> Container:
