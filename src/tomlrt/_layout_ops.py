@@ -102,6 +102,23 @@ def _wire_section_container(
     return ref
 
 
+def _init_implicit_table(
+    doc: Document,
+    path: tuple[str, ...],
+    parent: Container,
+    owner: AoTEntry | None,
+) -> Table:
+    """Build an implicit (header-less) Table wired into ``doc`` at ``path``."""
+    from tomlrt._container import Table  # noqa: PLC0415
+
+    child = Table()
+    child._layout_root = doc  # noqa: SLF001
+    child._path = path  # noqa: SLF001
+    child._parent = parent  # noqa: SLF001
+    child._owner_aot_entry = owner  # noqa: SLF001
+    return child
+
+
 def _rebuild_index_for_key(c: Container, local_key: str) -> None:
     """Restore ``c._index[local_key]`` as the doc-stream subset of ``c._refs``.
 
@@ -1986,11 +2003,7 @@ def _populate_entry_views(
             if cur_path in containers:
                 cur = containers[cur_path]
                 continue
-            child = Table()
-            child._layout_root = doc  # noqa: SLF001
-            child._path = cur_path  # noqa: SLF001
-            child._parent = cur  # noqa: SLF001
-            child._owner_aot_entry = body_owner  # noqa: SLF001
+            child = _init_implicit_table(doc, cur_path, cur, body_owner)
             containers[cur_path] = child
             dict.__setitem__(cur, comp, child)
             cur = child
@@ -2034,11 +2047,7 @@ def _populate_entry_views(
                 ref = SlotRef(slot=s, container=cur, local_key=comp)
                 _file_ref_at_tail(cur, ref)
                 if comp not in cur:
-                    sub = Table()
-                    sub._layout_root = doc  # noqa: SLF001
-                    sub._path = (*cur._path, comp)  # noqa: SLF001
-                    sub._parent = cur  # noqa: SLF001
-                    sub._owner_aot_entry = body_owner  # noqa: SLF001
+                    sub = _init_implicit_table(doc, (*cur._path, comp), cur, body_owner)  # noqa: SLF001
                     containers[sub._path] = sub  # noqa: SLF001
                     dict.__setitem__(cur, comp, sub)
                 nxt = dict.__getitem__(cur, comp)
@@ -2159,11 +2168,12 @@ def attach_section_at(
                 raise TypeError(msg)
             chain.append(nxt)
             continue
-        implicit = Table()
-        implicit._layout_root = doc  # noqa: SLF001
-        implicit._path = (*parent._path, *sub[: j + 1])  # noqa: SLF001
-        implicit._parent = cur  # noqa: SLF001
-        implicit._owner_aot_entry = owner  # noqa: SLF001
+        implicit = _init_implicit_table(
+            doc,
+            (*parent._path, *sub[: j + 1]),  # noqa: SLF001
+            cur,
+            owner,
+        )
         dict.__setitem__(cur, comp, implicit)
         chain.append(implicit)
 
