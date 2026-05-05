@@ -92,6 +92,14 @@ def _encode_comment(text: str) -> str:
     return f"# {text}"
 
 
+def _container_newline(c: Container) -> str:
+    r"""Return the document's newline string, or ``"\n"`` if detached."""
+    from tomlrt._container import Document  # noqa: PLC0415
+
+    lr = c._layout_root  # noqa: SLF001
+    return lr._newline if isinstance(lr, Document) else "\n"  # noqa: SLF001
+
+
 def _direct_kv_slot(c: Container, key: str) -> KVSlot | None:
     """Return the primary direct-KV slot for ``key`` in ``c``, or None."""
     from tomlrt._slots import KVSlot  # noqa: PLC0415
@@ -152,11 +160,7 @@ class EolCommentView(MutableMapping[str, str]):
             slot.eol.trailing_ws.text = " "
         slot.eol.comment = CommentNode(_encode_comment(value))
         if slot.eol.newline is None:
-            from tomlrt._container import Document  # noqa: PLC0415
-
-            lr = self._c._layout_root  # noqa: SLF001
-            nl = lr._newline if isinstance(lr, Document) else "\n"  # noqa: SLF001
-            slot.eol.newline = NewlineNode(nl)
+            slot.eol.newline = NewlineNode(_container_newline(self._c))
 
     @override
     def __delitem__(self, key: str) -> None:
@@ -304,10 +308,7 @@ class LeadingCommentView(MutableMapping[str, tuple[str, ...]]):
             msg = f"key {key!r} not in container"
             raise KeyError(msg)
         comments = _validate_comment_seq(value, "leading_comments")
-        from tomlrt._container import Document  # noqa: PLC0415
-
-        lr = self._c._layout_root  # noqa: SLF001
-        nl = lr._newline if isinstance(lr, Document) else "\n"  # noqa: SLF001
+        nl = _container_newline(self._c)
         # Replace only the *attached* comment block; preserve any
         # preamble / archived blocks above any blank-line separator,
         # and re-apply the slot's own indent before each new comment
@@ -412,11 +413,7 @@ def _header_comment_set(c: Container, value: str | None) -> None:
         eol.trailing_ws.text = " "
     eol.comment = CommentNode(_encode_comment(value))
     if eol.newline is None:
-        from tomlrt._container import Document  # noqa: PLC0415
-
-        lr = c._layout_root  # noqa: SLF001
-        nl = lr._newline if isinstance(lr, Document) else "\n"  # noqa: SLF001
-        eol.newline = NewlineNode(nl)
+        eol.newline = NewlineNode(_container_newline(c))
 
 
 def _header_leading_get(c: Container) -> tuple[str, ...]:
@@ -434,10 +431,7 @@ def _header_leading_set(c: Container, value: tuple[str, ...]) -> None:
         msg = "container has no header to attach leading comments to"
         raise TOMLError(msg)
     comments = _validate_comment_seq(value, "header_leading_comments")
-    from tomlrt._container import Document  # noqa: PLC0415
-
-    lr = c._layout_root  # noqa: SLF001
-    nl = lr._newline if isinstance(lr, Document) else "\n"  # noqa: SLF001
+    nl = _container_newline(c)
     leading = h.leading
     above, _attached, indent = _split_attached_block(leading)
     kept: list[TriviaPiece] = []
