@@ -1066,14 +1066,11 @@ class AoT(list["Table"]):
         (empty entry). The AoT must be attached to a document.
         """
         from tomlrt import _layout_ops  # noqa: PLC0415
-        from tomlrt._container import Table  # noqa: PLC0415
 
         if self._layout_root is None:
             list.append(self, _make_unattached_entry(body))
             return self[-1]
-        result = _layout_ops.add_aot_entry(self, body)
-        assert isinstance(result, Table)
-        return result
+        return _layout_ops.add_aot_entry(self, body)
 
     def _add_entry_attached(self, value: Mapping[str, Any]) -> Table:
         """Dispatch a new attached AoT entry from ``value``.
@@ -1088,15 +1085,10 @@ class AoT(list["Table"]):
 
         if isinstance(value, TableType) and value._layout_root is not None:  # noqa: SLF001
             if value._owner_aot_entry is not None:  # noqa: SLF001
-                result = _layout_ops.clone_aot_entry(self, value)
-            elif value._header_ref is not None and not value._inline:  # noqa: SLF001
-                result = _layout_ops.clone_table_as_aot_entry(self, value)
-            else:
-                result = _layout_ops.add_aot_entry(self, value)
-        else:
-            result = _layout_ops.add_aot_entry(self, value)
-        assert isinstance(result, TableType)
-        return result
+                return _layout_ops.clone_aot_entry(self, value)
+            if value._header_ref is not None and not value._inline:  # noqa: SLF001
+                return _layout_ops.clone_table_as_aot_entry(self, value)
+        return _layout_ops.add_aot_entry(self, value)
 
     def _replace_entry_attached(
         self, index: int, value: Mapping[str, Any] | None
@@ -1131,11 +1123,7 @@ class AoT(list["Table"]):
             raise IndexError(msg)
         if self._layout_root is None:
             return list.pop(self, idx)
-        result = _layout_ops.remove_aot_entry(self, idx)
-        from tomlrt._container import Table  # noqa: PLC0415
-
-        assert isinstance(result, Table)
-        return result
+        return _layout_ops.remove_aot_entry(self, idx)
 
     @override
     def __delitem__(self, key: SupportsIndex | slice) -> None:

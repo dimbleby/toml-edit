@@ -1359,8 +1359,8 @@ def _aot_separator(aot: AoT, doc: Document) -> Trivia:
 
 
 def add_aot_entry(
-    aot: AoT, body: Mapping[str, Any] | None, *, rehome: Container | None = None
-) -> Container:
+    aot: AoT, body: Mapping[str, Any] | None, *, rehome: Table | None = None
+) -> Table:
     """Append a ``[[path]]`` entry to ``aot`` and return its `Table` view.
 
     If ``rehome`` is supplied (must be an unattached ``Table``), it is
@@ -1466,7 +1466,7 @@ def clone_aot_entry(
     src_entry_table: Container,
     *,
     dst_path: tuple[str, ...] | None = None,
-) -> Container:
+) -> Table:
     """Append a deep CST clone of ``src_entry_table`` to ``aot``.
 
     Preserves the source entry's per-slot leading / EOL / lexeme bytes
@@ -1497,7 +1497,7 @@ def clone_aot_entry(
     )
 
 
-def clone_aot_entry_from(aot: AoT, src_entry: AoTEntry) -> Container:
+def clone_aot_entry_from(aot: AoT, src_entry: AoTEntry) -> Table:
     """Like ``clone_aot_entry`` but driven by a bare ``AoTEntry``.
 
     Used by the AoT private-orphan rehome path where the source entry
@@ -1524,7 +1524,7 @@ def _clone_aot_entry_impl(
     src_layout_root: Document | None,
     src_entry_table: Container | None,  # noqa: ARG001
     dst_path: tuple[str, ...] | None,
-) -> Container:
+) -> Table:
     from tomlrt._container import Table  # noqa: PLC0415
 
     parent = aot._parent  # noqa: SLF001
@@ -1617,7 +1617,7 @@ def clone_aot_entry_as_table(
     parent: Container,
     key: str,
     src_entry_table: Container,
-) -> Container:
+) -> Table:
     """Install an AoT entry under ``parent[key]`` as a standard ``[key]`` table.
 
     Used by ``parent[key] = some_aot_entry`` and ``install`` paths.
@@ -1721,7 +1721,7 @@ def _gather_section_slots(src_table: Container) -> list[Slot]:
 def clone_table_as_aot_entry(
     aot: AoT,
     src_table: Container,
-) -> Container:
+) -> Table:
     """Append ``src_table`` (a standard ``[k]`` section) to ``aot`` as an entry.
 
     Deep-clones the source section's slots, rewriting the head from
@@ -1808,7 +1808,7 @@ def clone_section_as_section(
     parent: Container,
     key: str,
     src_table: Container,
-) -> Container:
+) -> Table:
     """Install a deep clone of a standard section under ``parent[key]``.
 
     Used for cross-doc table assignment / same-doc clone of an
@@ -2262,7 +2262,7 @@ def attach_section_at(
 
 def attach_section(
     parent: Container, key: str, source: Mapping[str, Any] | Container | None = None
-) -> Container:
+) -> Table:
     """Synthesise ``[parent_path.key]`` at end-of-doc and attach.
 
     ``source`` may be ``None`` (empty section) or a Mapping (initial body).
@@ -2419,7 +2419,7 @@ def _scrub_refs_to_owned_slots(c: Container, owned: set[Slot]) -> None:
             pass
 
 
-def remove_aot_entry(aot: AoT, index: int) -> Container:
+def remove_aot_entry(aot: AoT, index: int) -> Table:
     """Remove ``aot[index]``, unlink its slots, and return a snapshot.
 
     The snapshot is a fresh unattached `Table` populated from the
