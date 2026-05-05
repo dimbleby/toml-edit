@@ -78,6 +78,32 @@ def _file_ref_at_tail(c: Container, ref: SlotRef) -> None:
         c._index.setdefault(ref.local_key, []).append(ref)  # noqa: SLF001
 
 
+def _wire_section_container(
+    c: Container,
+    *,
+    doc: Document,
+    path: tuple[str, ...],
+    parent: Container,
+    owner: AoTEntry | None,
+    header: StructuralHeaderSlot,
+) -> SlotRef:
+    """Initialise a freshly-built container as the owner of ``header``.
+
+    Wires ``_layout_root`` / ``_path`` / ``_parent`` / ``_owner_aot_entry``,
+    files the own-header ref onto ``c._refs``, and sets ``_header_ref``.
+    Returns the filed ref so callers can keep it in scope (e.g. for
+    insertion bookkeeping).
+    """
+    c._layout_root = doc  # noqa: SLF001
+    c._path = path  # noqa: SLF001
+    c._parent = parent  # noqa: SLF001
+    c._owner_aot_entry = owner  # noqa: SLF001
+    ref = SlotRef(slot=header, container=c, local_key=None)
+    c._refs.append(ref)  # noqa: SLF001
+    c._header_ref = ref  # noqa: SLF001
+    return ref
+
+
 def _rebuild_index_for_key(c: Container, local_key: str) -> None:
     """Restore ``c._index[local_key]`` as the doc-stream subset of ``c._refs``.
 
@@ -1373,13 +1399,14 @@ def add_aot_entry(
     else:
         entry_table = Table()
         body_items = list(_items_for_synth(body)) if body is not None else []
-    entry_table._layout_root = doc  # noqa: SLF001
-    entry_table._path = path  # noqa: SLF001
-    entry_table._parent = parent  # noqa: SLF001
-    entry_table._owner_aot_entry = entry  # noqa: SLF001
-    entry_ref = SlotRef(slot=header, container=entry_table, local_key=None)
-    entry_table._refs.append(entry_ref)  # noqa: SLF001
-    entry_table._header_ref = entry_ref  # noqa: SLF001
+    _wire_section_container(
+        entry_table,
+        doc=doc,
+        path=path,
+        parent=parent,
+        owner=entry,
+        header=header,
+    )
 
     # Splice header after the last existing AoT-owned slot if any,
     # else at end-of-doc.
@@ -1533,13 +1560,14 @@ def _clone_aot_entry_impl(
     # comment block) survives unchanged.
 
     entry_table = Table()
-    entry_table._layout_root = doc  # noqa: SLF001
-    entry_table._path = target_path  # noqa: SLF001
-    entry_table._parent = parent  # noqa: SLF001
-    entry_table._owner_aot_entry = new_entry  # noqa: SLF001
-    own_header_ref = SlotRef(slot=cloned_header, container=entry_table, local_key=None)
-    entry_table._refs.append(own_header_ref)  # noqa: SLF001
-    entry_table._header_ref = own_header_ref  # noqa: SLF001
+    _wire_section_container(
+        entry_table,
+        doc=doc,
+        path=target_path,
+        parent=parent,
+        owner=new_entry,
+        header=cloned_header,
+    )
 
     anchor = _last_aot_slot(aot)
     if anchor is None:
@@ -1613,13 +1641,14 @@ def clone_aot_entry_as_table(
     cloned_header.leading = _build_section_leading(doc)
 
     section = Table.section()
-    section._layout_root = doc  # noqa: SLF001
-    section._path = target_path  # noqa: SLF001
-    section._parent = parent  # noqa: SLF001
-    section._owner_aot_entry = parent._owner_aot_entry  # noqa: SLF001
-    own_ref = SlotRef(slot=cloned_header, container=section, local_key=None)
-    section._refs.append(own_ref)  # noqa: SLF001
-    section._header_ref = own_ref  # noqa: SLF001
+    _wire_section_container(
+        section,
+        doc=doc,
+        path=target_path,
+        parent=parent,
+        owner=parent._owner_aot_entry,  # noqa: SLF001
+        header=cloned_header,
+    )
 
     _splice_block_at_parent_anchor(cloned_slots, parent, doc)
 
@@ -1724,13 +1753,14 @@ def clone_table_as_aot_entry(
     cloned_header.leading = Trivia([*sep.pieces, *remainder.pieces])
 
     entry_table = Table()
-    entry_table._layout_root = doc  # noqa: SLF001
-    entry_table._path = path  # noqa: SLF001
-    entry_table._parent = parent  # noqa: SLF001
-    entry_table._owner_aot_entry = new_entry  # noqa: SLF001
-    own_header_ref = SlotRef(slot=cloned_header, container=entry_table, local_key=None)
-    entry_table._refs.append(own_header_ref)  # noqa: SLF001
-    entry_table._header_ref = own_header_ref  # noqa: SLF001
+    _wire_section_container(
+        entry_table,
+        doc=doc,
+        path=path,
+        parent=parent,
+        owner=new_entry,
+        header=cloned_header,
+    )
 
     anchor = _last_aot_slot(aot)
     if anchor is None:
@@ -1802,13 +1832,14 @@ def clone_section_as_section(
     cloned_header.leading = _build_section_leading(doc)
 
     section = Table.section()
-    section._layout_root = doc  # noqa: SLF001
-    section._path = target_path  # noqa: SLF001
-    section._parent = parent  # noqa: SLF001
-    section._owner_aot_entry = parent._owner_aot_entry  # noqa: SLF001
-    own_ref = SlotRef(slot=cloned_header, container=section, local_key=None)
-    section._refs.append(own_ref)  # noqa: SLF001
-    section._header_ref = own_ref  # noqa: SLF001
+    _wire_section_container(
+        section,
+        doc=doc,
+        path=target_path,
+        parent=parent,
+        owner=parent._owner_aot_entry,  # noqa: SLF001
+        header=cloned_header,
+    )
 
     _splice_block_at_parent_anchor(cloned_slots, parent, doc)
 
@@ -2152,12 +2183,14 @@ def attach_section_at(
         section = Table()
         pending = list(_items_for_synth(source)) if source is not None else []
 
-    section._layout_root = doc  # noqa: SLF001
-    section._path = full_path  # noqa: SLF001
-    section._parent = chain[-1]  # noqa: SLF001
-    header_ref = SlotRef(slot=header, container=section, local_key=None)
-    section._refs.append(header_ref)  # noqa: SLF001
-    section._header_ref = header_ref  # noqa: SLF001
+    _wire_section_container(
+        section,
+        doc=doc,
+        path=full_path,
+        parent=chain[-1],
+        owner=None,
+        header=header,
+    )
 
     if owner is not None and owner.entry_slots:
         # AoT-entry-aware splice: place the synthetic header inside the
@@ -2244,12 +2277,14 @@ def attach_section(
         section = Table()
         pending = list(_items_for_synth(source)) if source is not None else []
 
-    section._layout_root = doc  # noqa: SLF001
-    section._path = new_path  # noqa: SLF001
-    section._parent = parent  # noqa: SLF001
-    header_ref = SlotRef(slot=header, container=section, local_key=None)
-    section._refs.append(header_ref)  # noqa: SLF001
-    section._header_ref = header_ref  # noqa: SLF001
+    _wire_section_container(
+        section,
+        doc=doc,
+        path=new_path,
+        parent=parent,
+        owner=None,
+        header=header,
+    )
 
     if owner is not None and owner.entry_slots:
         # AoT-entry-aware attach: splice immediately after the entry's
