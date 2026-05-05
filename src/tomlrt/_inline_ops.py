@@ -30,7 +30,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
-from tomlrt._trivia import Trivia, WhitespaceNode
+from tomlrt._trivia import CommentNode, Trivia, WhitespaceNode
 from tomlrt._values import InlineTableEntry
 
 if TYPE_CHECKING:
@@ -88,8 +88,6 @@ def _find_prefix_entries(iv: InlineTableValue, key_path: tuple[str, ...]) -> lis
 
 def _is_ws_only(trivia: Trivia) -> bool:
     """True iff trivia contains no comments (whitespace + newlines OK)."""
-    from tomlrt._trivia import CommentNode  # noqa: PLC0415
-
     return not any(isinstance(p, CommentNode) for p in trivia.pieces)
 
 

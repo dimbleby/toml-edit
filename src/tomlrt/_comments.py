@@ -32,7 +32,7 @@ else:
     from typing_extensions import override
 
 from tomlrt._errors import TOMLError
-from tomlrt._slots import StructuralHeaderSlot
+from tomlrt._slots import KVSlot, StructuralHeaderSlot
 from tomlrt._trivia import (
     CommentNode,
     NewlineNode,
@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from tomlrt._container import Container, Document
-    from tomlrt._slots import KVSlot, Slot
+    from tomlrt._slots import Slot
     from tomlrt._trivia import (
         Trivia,
         TriviaPiece,
@@ -102,8 +102,6 @@ def _container_newline(c: Container) -> str:
 
 def _direct_kv_slot(c: Container, key: str) -> KVSlot | None:
     """Return the primary direct-KV slot for ``key`` in ``c``, or None."""
-    from tomlrt._slots import KVSlot  # noqa: PLC0415
-
     refs = c._index.get(key)  # noqa: SLF001
     if not refs:
         return None

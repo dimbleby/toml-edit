@@ -38,8 +38,8 @@ from tomlrt._comments import (
 )
 from tomlrt._errors import TOMLError
 from tomlrt._render import render
-from tomlrt._slots import KVSlot
-from tomlrt._trivia import CommentNode, Trivia, WhitespaceNode
+from tomlrt._slots import KVSlot, StructuralHeaderSlot
+from tomlrt._trivia import CommentNode, NewlineNode, Trivia, WhitespaceNode
 from tomlrt._values import (
     ArrayItem,
     ArrayValue,
@@ -720,8 +720,6 @@ class Container(dict[str, Any]):
         Intermediate sections are created as needed via `ensure_table`.
         Returns the live view stored at the leaf.
         """
-        from tomlrt._array import AoT  # noqa: PLC0415
-
         parts = _validate_path(path)
         if self._inline and len(parts) > 1:
             msg = "cannot install dotted path into an inline-style table"
@@ -746,9 +744,7 @@ class Container(dict[str, Any]):
                 if p not in cur:
                     break
                 nxt = dict.__getitem__(cur, p)
-                from tomlrt._array import AoT as _AoT  # noqa: PLC0415
-
-                if isinstance(nxt, _AoT):
+                if isinstance(nxt, AoT):
                     msg = (
                         f"cannot install through array-of-tables at {p!r}: "
                         "no addressable target inside an AoT"
@@ -827,8 +823,6 @@ class Container(dict[str, Any]):
             if p not in cur:
                 break
             nxt = dict.__getitem__(cur, p)
-            from tomlrt._array import AoT  # noqa: PLC0415
-
             if isinstance(nxt, AoT):
                 msg = (
                     f"cannot ensure_table through array-of-tables at {p!r}: "
@@ -895,8 +889,6 @@ class Container(dict[str, Any]):
         result = dict.__getitem__(self, key)
         assert isinstance(result, Table)
         new_header = result._header_ref.slot if result._header_ref else None  # noqa: SLF001
-        from tomlrt._slots import StructuralHeaderSlot  # noqa: PLC0415
-
         if isinstance(new_header, StructuralHeaderSlot):
             if saved_leading is not None:
                 new_header.leading = saved_leading
@@ -906,13 +898,14 @@ class Container(dict[str, Any]):
             # entries from the promoted child header. promote_inline
             # turns a KV (originally inline, no separator) into a
             # section header (deserves visual separation).
-            if self._body_tail is not None and new_header._prev is self._body_tail:  # noqa: SLF001
-                from tomlrt._trivia import NewlineNode as _NewlineNode  # noqa: PLC0415
-
-                if not _layout_ops._leading_has_blank_line(new_header.leading):  # noqa: SLF001
-                    layout_root = self._layout_root
-                    nl = layout_root._newline if layout_root else "\n"  # noqa: SLF001
-                    new_header.leading.pieces.insert(0, _NewlineNode(text=nl))
+            if (
+                self._body_tail is not None
+                and new_header._prev is self._body_tail  # noqa: SLF001
+                and not _layout_ops._leading_has_blank_line(new_header.leading)  # noqa: SLF001
+            ):
+                layout_root = self._layout_root
+                nl = layout_root._newline if layout_root else "\n"  # noqa: SLF001
+                new_header.leading.pieces.insert(0, NewlineNode(text=nl))
         return result
 
     def promote_array(self, key: str) -> AoT:
@@ -923,8 +916,6 @@ class Container(dict[str, Any]):
         is missing, refers to a non-array, an empty array, or an array
         with non-inline-table elements.
         """
-        from tomlrt._array import AoT, Array  # noqa: PLC0415
-
         if self._inline:
             msg = "array-of-tables promotion is not supported on inline tables"
             raise TOMLError(msg)
@@ -968,8 +959,6 @@ class Container(dict[str, Any]):
         # Apply saved leading to the first entry's header; saved eol
         # to the last entry's last slot.
         if saved_leading is not None and len(result) > 0:
-            from tomlrt._slots import StructuralHeaderSlot  # noqa: PLC0415
-
             first_entry = result[0]
             entry_record = first_entry._owner_aot_entry  # noqa: SLF001
             if entry_record is not None and entry_record.entry_slots:
@@ -983,8 +972,6 @@ class Container(dict[str, Any]):
                         *first_slot.leading.pieces,
                     ]
         if saved_eol is not None and len(result) > 0:
-            from tomlrt._slots import KVSlot, StructuralHeaderSlot  # noqa: PLC0415
-
             last_entry = result[-1]
             entry_record = last_entry._owner_aot_entry  # noqa: SLF001
             if entry_record is not None and entry_record.entry_slots:
@@ -1240,8 +1227,6 @@ def _inline_value_has_inner_comments(v: object) -> bool:
     Used to refuse ``promote_inline`` on inline tables whose comments
     would have nowhere to live in the promoted form.
     """
-    from tomlrt._values import InlineTableValue  # noqa: PLC0415
-
     if not isinstance(v, InlineTableValue):
         return False
     if _trivia_has_comment(v.final_trivia):
@@ -1263,8 +1248,6 @@ def _array_value_has_outer_comments(v: object) -> bool:
     inline-value comments are tested separately (and produce a
     different error message).
     """
-    from tomlrt._values import ArrayValue  # noqa: PLC0415
-
     if not isinstance(v, ArrayValue):
         return False
     if _trivia_has_comment(v.final_trivia):
@@ -1318,8 +1301,6 @@ def _reset_table_for_rehome(t: Container, *, recurse: bool = False) -> None:
     Used when re-installing a held view that was detached into a
     private orphan ``Document``.
     """
-    from tomlrt._array import AoT  # noqa: PLC0415
-
     old_root = t._layout_root  # noqa: SLF001
     t._layout_root = None  # noqa: SLF001
     t._path = ()  # noqa: SLF001
@@ -1382,8 +1363,6 @@ def _install_attached_subtree(
     a ``Table.section`` snapshot is installed at ``dst_path`` to
     carry them.
     """
-    from tomlrt._array import AoT  # noqa: PLC0415
-
     direct_kvs: list[tuple[str, Any]] = []
     structural: list[tuple[str, Any]] = []
     for k, v in src_table.items():
@@ -1567,8 +1546,6 @@ def _basic_string_lexeme(v: str) -> str:
 
 
 def _dt_kind(v: object) -> Any:
-    from datetime import datetime  # noqa: PLC0415
-
     assert isinstance(v, datetime)
     return "offset-datetime" if v.tzinfo is not None else "local-datetime"
 

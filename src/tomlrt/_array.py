@@ -17,6 +17,8 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override
 
+from copy import deepcopy
+
 from tomlrt import _layout_ops
 from tomlrt._errors import TOMLError
 from tomlrt._trivia import CommentNode, NewlineNode, Trivia, WhitespaceNode
@@ -660,8 +662,6 @@ class Array(list[Any]):
         if count == 1 or self._value is None:
             return self
         # Snapshot original items + values, then append count-1 copies.
-        from copy import deepcopy  # noqa: PLC0415
-
         original_items = list(self._value.items)
         original_values = list(self)
         for _ in range(count - 1):
@@ -1030,8 +1030,6 @@ def _normalise_for_renormalise(items: list[ArrayItem], bracket_leading: Trivia) 
 
 
 def _clone_item(item: ArrayItem) -> ArrayItem:
-    from copy import deepcopy  # noqa: PLC0415
-
     return deepcopy(item)
 
 

@@ -91,8 +91,6 @@ def insert_before_head(new_slot: Slot, doc: Document) -> None:
         nl = doc._newline  # noqa: SLF001
         migrated = list(doc._trailing.pieces)  # noqa: SLF001
         # Add a blank-line separator between preamble and content.
-        from tomlrt._trivia import NewlineNode  # noqa: PLC0415
-
         migrated.append(NewlineNode(nl))
         new_slot.leading.pieces = [*migrated, *new_slot.leading.pieces]
         doc._trailing.pieces = []  # noqa: SLF001
@@ -140,8 +138,6 @@ def _strip_leading_blank_lines(slot: Slot) -> None:
     Comment pieces are preserved (we don't want to silently drop user
     comments). Stops at the first non-newline piece.
     """
-    from tomlrt._trivia import NewlineNode  # noqa: PLC0415
-
     pieces = slot.leading.pieces
     i = 0
     while i < len(pieces) and isinstance(pieces[i], NewlineNode):
@@ -1145,8 +1141,6 @@ def _slot_in_subtree(slot: Slot, base_path: tuple[str, ...]) -> bool:
     A slot is "within" if its host (KVSlot) or path (StructuralHeaderSlot)
     starts with ``base_path``.
     """
-    from tomlrt._slots import KVSlot, StructuralHeaderSlot  # noqa: PLC0415
-
     if isinstance(slot, KVSlot):
         path = slot.host_path
     elif isinstance(slot, StructuralHeaderSlot):
@@ -1221,8 +1215,6 @@ def _maybe_demote_synthetic_empty_header(parent: Container) -> None:
     dotted-implicit anchor (``[tool.poetry]``), the placeholder header
     is redundant and is removed.
     """
-    from tomlrt._slots import KVSlot, StructuralHeaderSlot  # noqa: PLC0415
-
     hdr_ref = parent._header_ref  # noqa: SLF001
     if hdr_ref is None:
         return
