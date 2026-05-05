@@ -13,6 +13,7 @@ same reason.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
@@ -150,6 +151,21 @@ def quote_basic_key(s: str) -> str:
             out.append(ch)
     out.append('"')
     return "".join(out)
+
+
+_RE_BARE_KEY_FULL = re.compile(r"\A[A-Za-z0-9_\-]+\Z")
+
+
+def make_keypart(name: str) -> KeyPart:
+    """Build a ``KeyPart`` for ``name``, choosing bare vs basic-quoted."""
+    if _RE_BARE_KEY_FULL.match(name):
+        return KeyPart(raw=name, value=name, kind="bare")
+    return KeyPart(raw=quote_basic_key(name), value=name, kind="basic")
+
+
+def make_keyparts(path: tuple[str, ...]) -> list[KeyPart]:
+    """Build a list of ``KeyPart``s for each segment of ``path``."""
+    return [make_keypart(p) for p in path]
 
 
 @dataclass(slots=True, eq=False)

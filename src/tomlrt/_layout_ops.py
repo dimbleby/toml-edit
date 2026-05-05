@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import contextlib
 import copy
-import re
 from typing import TYPE_CHECKING, Any, Literal
 
 from tomlrt._slots import AoTEntry, KVSlot, SlotRef, StructuralHeaderSlot
@@ -41,7 +40,7 @@ from tomlrt._trivia import (
     Trivia,
     WhitespaceNode,
 )
-from tomlrt._values import KeyPart, quote_basic_key
+from tomlrt._values import make_keypart, make_keyparts
 
 HeaderKind = Literal["table", "aot-entry"]
 
@@ -55,7 +54,6 @@ if TYPE_CHECKING:
     from tomlrt._values import Value
 
 
-_RE_BARE_KEY = re.compile(r"\A[A-Za-z0-9_\-]+\Z")
 
 
 # ---------------------------------------------------------------------------
@@ -621,11 +619,7 @@ def _build_kv_slot(c: Container, key: str, value: Value, doc: Document) -> KVSlo
     if anchor_slot is not None:
         _ensure_terminator(anchor_slot, doc)
 
-    kp = (
-        KeyPart(raw=key, value=key, kind="bare")
-        if _RE_BARE_KEY.match(key)
-        else KeyPart(raw=quote_basic_key(key), value=key, kind="basic")
-    )
+    kp = make_keypart(key)
     return KVSlot(
         leading=_kv_separator_leading(c, doc),
         host_path=c._path,  # noqa: SLF001
@@ -643,11 +637,6 @@ def _build_kv_slot(c: Container, key: str, value: Value, doc: Document) -> KVSlo
     )
 
 
-def _make_keypart(name: str) -> KeyPart:
-    """Build a `KeyPart` for an inserted key, choosing bare vs basic-quoted."""
-    if _RE_BARE_KEY.match(name):
-        return KeyPart(raw=name, value=name, kind="bare")
-    return KeyPart(raw=quote_basic_key(name), value=name, kind="basic")
 
 
 def _append_dotted_kv_under_implicit(c: Container, key: str, value: Value) -> None:
@@ -699,7 +688,7 @@ def _append_dotted_kv_under_implicit(c: Container, key: str, value: Value) -> No
 
     # Build the dotted slot: keypath = host..key.
     keypath = (*c._path[len(host._path) :], key)  # noqa: SLF001
-    parts = [_make_keypart(k) for k in keypath]
+    parts = [make_keypart(k) for k in keypath]
     seps = ["."] * (len(parts) - 1)
     new_slot = KVSlot(
         leading=_host_kv_separator_leading(host, doc),
@@ -840,7 +829,7 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
     new_kv = KVSlot(
         leading=Trivia(),
         host_path=c._path,  # noqa: SLF001
-        key_parts=[_make_keypart(key)],
+        key_parts=[make_keypart(key)],
         key_seps=[],
         pre_eq=" ",
         post_eq=" ",
@@ -953,7 +942,7 @@ def _synthesise_header_then_insert_kv_at_doc_tail(
     new_kv = KVSlot(
         leading=Trivia(),
         host_path=c._path,  # noqa: SLF001
-        key_parts=[_make_keypart(key)],
+        key_parts=[make_keypart(key)],
         key_seps=[],
         pre_eq=" ",
         post_eq=" ",
@@ -1087,14 +1076,6 @@ def _recompute_body_tail(c: Container) -> Slot | None:
 # ---------------------------------------------------------------------------
 
 
-def _build_header_keyparts(path: tuple[str, ...]) -> list[KeyPart]:
-    out: list[KeyPart] = []
-    for p in path:
-        if _RE_BARE_KEY.match(p):
-            out.append(KeyPart(raw=p, value=p, kind="bare"))
-        else:
-            out.append(KeyPart(raw=quote_basic_key(p), value=p, kind="basic"))
-    return out
 
 
 def _new_section_header(
@@ -1110,7 +1091,7 @@ def _new_section_header(
         leading=leading,
         kind=kind,
         path=path,
-        key_parts=_build_header_keyparts(path),
+        key_parts=make_keyparts(path),
         key_seps=["."] * (len(path) - 1),
         eol=EolTrivia(
             trailing_ws=None,
@@ -1919,7 +1900,7 @@ def _clone_entry_slots(
         elif isinstance(c, StructuralHeaderSlot):
             c.owner_aot_entry = body_owner
             c.path = _rebase_path(c.path, src_prefix, target_prefix)
-            c.key_parts = _build_header_keyparts(c.path)
+            c.key_parts = make_keyparts(c.path)
             c.key_seps = ["."] * (len(c.key_parts) - 1)
             c.entry = new_entry if c.kind == "aot-entry" else None
         cloned.append(c)

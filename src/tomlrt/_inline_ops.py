@@ -27,18 +27,16 @@ filed there, with multi-component `key_parts`.
 
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING
 
 from tomlrt._trivia import CommentNode, Trivia, WhitespaceNode, clone_trivia
-from tomlrt._values import InlineTableEntry, KeyPart, quote_basic_key
+from tomlrt._values import InlineTableEntry, make_keyparts
 
 if TYPE_CHECKING:
     from tomlrt._container import Container
     from tomlrt._values import InlineTableValue, Value
 
 
-_RE_BARE_KEY = re.compile(r"\A[A-Za-z0-9_\-]+\Z")
 
 
 def _outermost_inline(t: Container) -> Container:
@@ -89,14 +87,6 @@ def _is_ws_only(trivia: Trivia) -> bool:
     return not any(isinstance(p, CommentNode) for p in trivia.pieces)
 
 
-def _make_key_parts(path: tuple[str, ...]) -> list[KeyPart]:
-    out: list[KeyPart] = []
-    for p in path:
-        if _RE_BARE_KEY.match(p):
-            out.append(KeyPart(raw=p, value=p, kind="bare"))
-        else:
-            out.append(KeyPart(raw=quote_basic_key(p), value=p, kind="basic"))
-    return out
 
 
 
@@ -148,7 +138,7 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
         eq_post = " "
     new_entry = InlineTableEntry(
         leading=Trivia(),
-        key_parts=_make_key_parts(key_path),
+        key_parts=make_keyparts(key_path),
         key_seps=["."] * (len(key_path) - 1),
         pre_eq=eq_pre,
         post_eq=eq_post,
