@@ -59,7 +59,7 @@ from tomlrt._values import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Sequence
 
     from typing_extensions import Self
 
@@ -1233,16 +1233,7 @@ def _inline_value_has_inner_comments(v: object) -> bool:
     """
     if not isinstance(v, InlineTableValue):
         return False
-    if trivia_has_comment(v.final_trivia):
-        return True
-    for e in v.entries:
-        if (
-            trivia_has_comment(e.leading)
-            or trivia_has_comment(e.trailing)
-            or trivia_has_comment(e.post_comma_trivia)
-        ):
-            return True
-    return False
+    return _comma_value_has_outer_comments(v.final_trivia, v.entries)
 
 
 def _array_value_has_outer_comments(v: object) -> bool:
@@ -1254,16 +1245,21 @@ def _array_value_has_outer_comments(v: object) -> bool:
     """
     if not isinstance(v, ArrayValue):
         return False
-    if trivia_has_comment(v.final_trivia):
+    return _comma_value_has_outer_comments(v.final_trivia, v.items)
+
+
+def _comma_value_has_outer_comments(
+    final_trivia: Trivia,
+    parts: Iterable[ArrayItem | InlineTableEntry],
+) -> bool:
+    if trivia_has_comment(final_trivia):
         return True
-    for it in v.items:
-        if (
-            trivia_has_comment(it.leading)
-            or trivia_has_comment(it.trailing)
-            or trivia_has_comment(it.post_comma_trivia)
-        ):
-            return True
-    return False
+    return any(
+        trivia_has_comment(p.leading)
+        or trivia_has_comment(p.trailing)
+        or trivia_has_comment(p.post_comma_trivia)
+        for p in parts
+    )
 
 
 def _deep_section_clone(c: Container) -> Container:
