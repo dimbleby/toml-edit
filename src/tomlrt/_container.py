@@ -1095,6 +1095,19 @@ class Document(Container):
     __slots__ = ("_head", "_is_private", "_newline", "_tail", "_trailing")
 
     def __init__(self, data: Mapping[str, Any] | None = None) -> None:
+        """Return a fresh empty document, optionally populated from ``data``.
+
+        With a mapping, recursively populates the document so that:
+
+        * nested mappings become standard ``[section]`` blocks (not
+          inline tables);
+        * lists of mappings become ``[[array.of.tables]]`` blocks;
+        * everything else is set with ordinary key-value assignment.
+
+        Existing :class:`Table` / :class:`AoT` / :class:`Array` views
+        are deep-cloned, so the returned document shares no mutable
+        state with ``data``.
+        """
         super().__init__()
         self._head: Slot | None = None
         self._tail: Slot | None = None
@@ -1103,13 +1116,6 @@ class Document(Container):
         self._is_private: bool = False
         self._layout_root = self
         if data is not None:
-            import warnings  # noqa: PLC0415
-
-            warnings.warn(
-                "Document(data=...) is deprecated; build documents incrementally.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
             for k, v in data.items():
                 self[k] = _coerce_for_document_init(v)
 
