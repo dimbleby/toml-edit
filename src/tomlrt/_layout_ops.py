@@ -2446,8 +2446,76 @@ def _last_aot_slot(aot: AoT) -> Slot | None:
     return None
 
 
+def _candidate_keys_for(c: Container, owned: set[Slot]) -> set[str]:
+    """Local-keys in ``c._index`` that may hold refs to slots in ``owned``."""
+    plen = len(c._path)  # noqa: SLF001
+    keys: set[str] = set()
+    for s in owned:
+        if isinstance(s, KVSlot):
+            host = s.host_path
+            if len(host) > plen and host[:plen] == c._path:  # noqa: SLF001
+                keys.add(host[plen])
+            elif host == c._path and s.key_parts:  # noqa: SLF001
+                keys.add(s.key_parts[0].value)
+        elif isinstance(s, StructuralHeaderSlot):
+            path = s.path
+            if len(path) > plen and path[:plen] == c._path:  # noqa: SLF001
+                keys.add(path[plen])
+    return keys
+
+
+def _scrub_container_refs(c: Container, owned: set[Slot]) -> None:
+    """Remove every SlotRef in ``c`` (only) that points at a slot in ``owned``.
+
+    Non-recursive; caller is responsible for visiting any nested
+    containers that may also hold refs. Bucket-driven: only the
+    `_index` buckets named by ``owned``'s logical paths are walked,
+    and `c._refs` entries are removed via C-level `list.remove` when
+    the removal count is small relative to `len(c._refs)`.
+    """
+    if c._inline:  # noqa: SLF001
+        return
+    owned_ids = {id(s) for s in owned}
+    candidate_keys = _candidate_keys_for(c, owned)
+    to_remove: list[SlotRef] = []
+    empty_buckets: list[str] = []
+    for lk in candidate_keys:
+        bucket = c._index.get(lk)  # noqa: SLF001
+        if bucket is None:
+            continue
+        kept_bucket = [r for r in bucket if id(r.slot) not in owned_ids]
+        if len(kept_bucket) == len(bucket):
+            continue
+        to_remove.extend(r for r in bucket if id(r.slot) in owned_ids)
+        if kept_bucket:
+            c._index[lk] = kept_bucket  # noqa: SLF001
+        else:
+            empty_buckets.append(lk)
+    for lk in empty_buckets:
+        del c._index[lk]  # noqa: SLF001
+    # Own-header ref (local_key=None, not in _index): drop if owned.
+    header_ref = c._header_ref  # noqa: SLF001
+    if header_ref is not None and header_ref.slot in owned:
+        to_remove.append(header_ref)
+        c._header_ref = None  # noqa: SLF001
+    if not to_remove:
+        return
+    refs = c._refs  # noqa: SLF001
+    if len(to_remove) == len(refs):
+        c._refs = []  # noqa: SLF001
+    elif len(to_remove) * 8 < len(refs):
+        for r in to_remove:
+            refs.remove(r)
+    else:
+        removed_ids = {id(r) for r in to_remove}
+        c._refs = [r for r in refs if id(r) not in removed_ids]  # noqa: SLF001
+    if c._body_tail is not None and c._body_tail in owned:  # noqa: SLF001
+        c._body_tail = None  # noqa: SLF001
+    _invalidate_last_direct_kv_if(c, owned_ids)
+
+
 def _scrub_refs_to_owned_slots(c: Container, owned: set[Slot]) -> None:
-    """Remove every SlotRef in ``c`` that points at a slot in ``owned``.
+    """Remove SlotRefs to slots in ``owned`` from ``c`` and its live nested values.
 
     Recurses into nested live `Container` / `Array` / `AoT` values held
     in dict/list storage. Inline containers are skipped (they can't
@@ -2456,25 +2524,7 @@ def _scrub_refs_to_owned_slots(c: Container, owned: set[Slot]) -> None:
     from tomlrt._array import AoT, Array  # noqa: PLC0415
     from tomlrt._container import Container  # noqa: PLC0415
 
-    if c._inline:  # noqa: SLF001
-        return
-    new_refs = [r for r in c._refs if r.slot not in owned]  # noqa: SLF001
-    if len(new_refs) != len(c._refs):  # noqa: SLF001
-        c._refs[:] = new_refs  # noqa: SLF001
-        # Rebuild _index from remaining refs that have a local_key.
-        new_index: dict[str, list[SlotRef]] = {}
-        for r in new_refs:
-            if r.local_key is not None:
-                new_index.setdefault(r.local_key, []).append(r)
-        c._index.clear()  # noqa: SLF001
-        c._index.update(new_index)  # noqa: SLF001
-        # Clear header_ref if it pointed at an owned slot.
-        if c._header_ref is not None and c._header_ref.slot in owned:  # noqa: SLF001
-            c._header_ref = None  # noqa: SLF001
-        # Clear body_tail if it pointed at an owned slot.
-        if c._body_tail is not None and c._body_tail in owned:  # noqa: SLF001
-            c._body_tail = None  # noqa: SLF001
-        _invalidate_last_direct_kv_if(c, {id(s) for s in owned})
+    _scrub_container_refs(c, owned)
     # Recurse.
     for v in list(dict.values(c)):
         if isinstance(v, Container):
@@ -2542,8 +2592,20 @@ def remove_aot_entry(aot: AoT, index: int) -> Table:
     for k, v in entry_table.items():
         dict.__setitem__(snapshot, k, v)
 
-    # Scrub refs from every still-live container, walking from the doc.
-    _scrub_refs_to_owned_slots(doc, owned)
+    # Scrub refs along the AoT-ancestor path (binding refs to the
+    # popped entry's [[..]] header live in every prefix container
+    # by the Ref-propagation rule), and recursively through the
+    # popped entry's own subtree (nested sub-section refs to slots
+    # owned by this entry). Sibling AoT entries and unrelated
+    # sections cannot hold refs to the popped entry's slots — every
+    # ref's slot.owner_aot_entry would have to match — so we skip
+    # them, replacing the previous full-doc walk that was O(siblings)
+    # per pop and made bulk pop O(N²).
+    cur: Container | None = parent
+    while cur is not None:
+        _scrub_container_refs(cur, owned)
+        cur = cur._parent  # noqa: SLF001
+    _scrub_refs_to_owned_slots(entry_table, owned)
 
     # Unlink owned slots from the doc-stream linked list, walking
     # ``owned_ordered`` in reverse so the parent entry's leftmost
