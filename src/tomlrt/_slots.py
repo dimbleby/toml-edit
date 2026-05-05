@@ -62,6 +62,12 @@ class Slot:
     leading: Trivia
     _prev: Slot | None = field(default=None, repr=False, compare=False)
     _next: Slot | None = field(default=None, repr=False, compare=False)
+    owner_aot_entry: AoTEntry | None = None
+    """The AoT entry that physically contains this slot, if any.
+
+    Set on every slot regardless of kind so the field is uniformly
+    typed at the base; both subclasses preserve `None` defaults.
+    """
 
     def render(self) -> str:  # pragma: no cover - overridden
         raise NotImplementedError
@@ -87,7 +93,6 @@ class KVSlot(Slot):
     post_eq: str = ""
     value: Value | None = None
     eol: EolTrivia = field(default_factory=lambda: EolTrivia(None, None, None))
-    owner_aot_entry: AoTEntry | None = None
 
     def render_key(self) -> str:
         parts = self.key_parts
@@ -129,10 +134,6 @@ class StructuralHeaderSlot(Slot):
     inner_pre: str = ""
     inner_post: str = ""
     eol: EolTrivia = field(default_factory=lambda: EolTrivia(None, None, None))
-    owner_aot_entry: AoTEntry | None = None
-    """The enclosing AoT entry, if any (independent of whether this
-    header itself opens an AoT entry).
-    """
 
     entry: AoTEntry | None = None
     """The AoT entry this header opens, when ``kind == 'aot-entry'``."""

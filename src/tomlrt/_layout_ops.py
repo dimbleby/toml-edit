@@ -502,14 +502,14 @@ def delete_key(c: Container, key: str) -> None:
 
     candidate_owners: set[int] = set()
     for slot in owned_slots:
-        owner = getattr(slot, "owner_aot_entry", None)
+        owner = slot.owner_aot_entry
         if owner is not None and id(owner) not in moving_aot_entry_ids:
             candidate_owners.add(id(owner))
     surviving_aot_entries = (
         _surviving_aot_entries(doc, candidate_owners) if candidate_owners else set()
     )
     for slot in owned_slots:
-        owner = getattr(slot, "owner_aot_entry", None)
+        owner = slot.owner_aot_entry
         if (
             owner is not None
             and id(owner) in surviving_aot_entries
@@ -1273,7 +1273,7 @@ def _parent_subtree_tail(parent: Container) -> Slot | None:
     cur = refs[-1].slot
     while cur._next is not None:  # noqa: SLF001
         nxt = cur._next  # noqa: SLF001
-        if getattr(nxt, "owner_aot_entry", None) is not base_owner:
+        if nxt.owner_aot_entry is not base_owner:
             break
         if not _slot_in_subtree(nxt, base_path):
             break

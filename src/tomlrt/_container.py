@@ -1306,8 +1306,7 @@ def _reset_inline_for_rehome(t: Container) -> None:
     t._layout_root = None  # noqa: SLF001
     t._parent = None  # noqa: SLF001
     t._owner_aot_entry = None  # noqa: SLF001
-    if hasattr(t, "_value"):
-        t._value = None  # noqa: SLF001
+    t._value = None  # noqa: SLF001
 
 
 def _reset_array_for_rehome(a: Array) -> None:
