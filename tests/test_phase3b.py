@@ -146,13 +146,16 @@ def test_inline_delete_dotted_leaf_cleans_empty_prefix_container() -> None:
     assert loads(dumps(doc)).table("obj").to_dict() == {}
 
 
-def test_inline_setitem_scalar_over_dotted_prefix_raises() -> None:
-    import pytest  # noqa: PLC0415
+def test_inline_setitem_scalar_over_dotted_prefix_replaces() -> None:
+    from tomlrt import dumps  # noqa: PLC0415
 
     doc = loads("obj = { a.b = 1 }\n")
     obj = doc.table("obj")
-    with pytest.raises(NotImplementedError, match="dotted-inline"):
-        obj["a"] = 2
+    obj["a"] = 2
+    out = dumps(doc)
+    assert out.startswith("obj = {")
+    re_parsed = loads(out)
+    assert re_parsed.table("obj")["a"] == 2
 
 
 def test_inline_append_does_not_steal_eol_comment_in_multiline() -> None:

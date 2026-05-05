@@ -653,14 +653,14 @@ class Container(dict[str, Any]):
             )
             raise NotImplementedError(msg)
         if key in self and isinstance(dict.__getitem__(self, key), Container):
-            # Replacing a dotted-prefix sub-table (e.g. `a` in
-            # `{a.b = 1}`) would have to delete every `a.*` entry and
-            # add an `a = ...` entry. Structural overwrite, deferred.
-            msg = (
-                "overwrite of a dotted-inline sub-table is not yet "
-                "supported (structural overwrite, Phase 4)"
-            )
-            raise NotImplementedError(msg)
+            # Overwriting a dotted-prefix sub-table (e.g. `server`
+            # in `{server.host = "x", server.port = 80}`) with a
+            # scalar / inline value: delete every `server.*` entry
+            # via the canonical delete path, then re-enter to add
+            # `server = value` as a fresh single-keypart entry.
+            del self[key]
+            self[key] = value
+            return
         if _is_scalar(value):
             cst: Value = _coerce_scalar(value)
             decoded: object = value
@@ -764,6 +764,24 @@ class Container(dict[str, Any]):
                     break
                 cur = nxt
                 i += 1
+            # If we stopped at an inline-table prefix containing the
+            # remaining tail, drop the conflicting tail key from the
+            # inline so attach_section_at can install the section
+            # without leaving a stale `name = "x"` shadow.
+            if (
+                i < len(parts) - 1
+                and parts[i] in cur
+                and isinstance(dict.__getitem__(cur, parts[i]), Container)
+                and dict.__getitem__(cur, parts[i])._inline  # noqa: SLF001
+            ):
+                inline_holder: Container = dict.__getitem__(cur, parts[i])
+                # Walk inline entries looking for the next path
+                # component(s); delete each in order.
+                tail = parts[i + 1 :]
+                if tail and tail[0] in inline_holder:
+                    del inline_holder[tail[0]]
+                    if len(inline_holder) == 0:
+                        del cur[parts[i]]
             # Overwrite-existing path: leaf already present, fall through
             # to direct __setitem__ on the deepest existing container.
             if i == len(parts) - 1:
