@@ -428,7 +428,7 @@ class Array(list[Any]):
             )
             if opens_with_comment:
                 adopted = Trivia(pieces=old_leading_pieces)
-                displaced.leading = _trivia_empty()
+                displaced.leading = Trivia()
                 new_item = _new_item(
                     cst, leading_first=True, style=style, leading=adopted
                 )
@@ -441,7 +441,7 @@ class Array(list[Any]):
                     style=style,
                     leading=Trivia(pieces=old_leading_pieces),
                 )
-                displaced.leading = _trivia_empty()
+                displaced.leading = Trivia()
             else:
                 # "Above-item" leading begins at the first comment;
                 # the indent prefix goes to the new item.
@@ -489,7 +489,7 @@ class Array(list[Any]):
         # of items[0] and the trailing of items[-1] are bracket-padding
         # that belong to *the array*, not to those particular items.
         style = self._style()
-        bracket_leading = clone_trivia(items[0].leading) if items else _trivia_empty()
+        bracket_leading = clone_trivia(items[0].leading) if items else Trivia()
         leadings, eols = snapshot_comments(self)
         items.reverse()
         list.reverse(self)
@@ -513,7 +513,7 @@ class Array(list[Any]):
         items = self._value.items
         # See `reverse` — capture style + bracket padding before reorder.
         style = self._style()
-        bracket_leading = clone_trivia(items[0].leading) if items else _trivia_empty()
+        bracket_leading = clone_trivia(items[0].leading) if items else Trivia()
         leadings, eols = snapshot_comments(self)
         new_items = [items[j] for j in order]
         new_decoded = [self[j] for j in order]
@@ -597,7 +597,7 @@ class Array(list[Any]):
         style = self._style()
         had_leading = bool(items) and bool(items[0].leading.pieces)
         leading_first = (
-            clone_trivia(items[0].leading) if had_leading else _trivia_empty()
+            clone_trivia(items[0].leading) if had_leading else Trivia()
         )
         # Snapshot terminal item's trailing for tail-pad migration: if
         # the delete includes the original last item and final_trivia
@@ -610,7 +610,7 @@ class Array(list[Any]):
             and not self._value.final_trivia.pieces
         )
         tail_pad = (
-            clone_trivia(items[last_idx].trailing) if had_tail_pad else _trivia_empty()
+            clone_trivia(items[last_idx].trailing) if had_tail_pad else Trivia()
         )
         if isinstance(key, slice):
             removed_indices = range(*key.indices(len(items)))
@@ -901,7 +901,7 @@ def _flip_to_internal(
     ):
         value.final_trivia = item.trailing
     if not has_comment:
-        item.trailing = _trivia_empty()
+        item.trailing = Trivia()
     if item.has_comma and item.post_comma_trivia.pieces:
         if not _has_ws_after_last_newline(item.post_comma_trivia):
             indent = _first_indent_after_newline(style.inter_separator)
@@ -933,12 +933,6 @@ def _flip_to_terminal(item: ArrayItem, style: _ArrayStyle) -> None:
     item.post_comma_trivia = (
         clone_trivia(style.trailing_post) if style.trailing_comma else Trivia()
     )
-
-
-def _trivia_empty() -> Trivia:
-    return Trivia()
-
-
 
 
 def _value_has_any_comment(val: Value) -> bool:
