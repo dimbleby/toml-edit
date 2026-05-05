@@ -61,6 +61,22 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
+def _rebuild_index_for_key(c: Container, local_key: str) -> None:
+    """Restore ``c._index[local_key]`` as the doc-stream subset of ``c._refs``.
+
+    The invariant is that ``_index[k]`` equals the in-order list of refs
+    in ``_refs`` whose ``local_key == k``. Rebuild after any mid-stream
+    insertion under ``k`` rather than blindly appending — appending
+    would be wrong when the new ref is followed by other contributors
+    sharing the same key (e.g. a later ``[a.b]`` header).
+    """
+    c._index[local_key] = [  # noqa: SLF001
+        r
+        for r in c._refs  # noqa: SLF001
+        if r.local_key == local_key
+    ]
+
+
 def _default_eol(doc: Document) -> EolTrivia:
     """A bare-newline `EolTrivia` for a freshly synthesised slot."""
     return EolTrivia(
@@ -746,11 +762,7 @@ def _append_dotted_kv_under_implicit(c: Container, key: str, value: Value) -> No
         # name (e.g. ``a.x = 1`` then ``[a.b]`` — the ``[a.b]``
         # header sits after our new ``a.z`` slot, so the new ref
         # belongs in the middle of ``doc._index['a']``, not the end).
-        anc._index[local_keys[i]] = [  # noqa: SLF001
-            r
-            for r in anc._refs  # noqa: SLF001
-            if r.local_key == local_keys[i]
-        ]
+        _rebuild_index_for_key(anc, local_keys[i])
         if anc._body_tail is body_tail:  # noqa: SLF001
             anc._body_tail = new_slot  # noqa: SLF001
 
@@ -839,11 +851,7 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
         # Rebuild _index[local_key] to preserve doc-stream order
         # (binding_ref now sits before the descendant's existing
         # binding ref, so it becomes the primary).
-        anc._index[local_key] = [  # noqa: SLF001
-            r
-            for r in anc._refs  # noqa: SLF001
-            if r.local_key == local_key
-        ]
+        _rebuild_index_for_key(anc, local_key)
 
     # Insert the KV directly after the synthetic header.
     new_kv = _new_kv_slot(c, key, value, doc, owner, leading=Trivia())
@@ -936,11 +944,7 @@ def _synthesise_header_then_insert_kv_at_doc_tail(
                     insert_idx = i + 1
                     break
             anc._refs.insert(insert_idx, binding_ref)  # noqa: SLF001
-            anc._index[local_key] = [  # noqa: SLF001
-                r
-                for r in anc._refs  # noqa: SLF001
-                if r.local_key == local_key
-            ]
+            _rebuild_index_for_key(anc, local_key)
         else:
             anc._refs.append(binding_ref)  # noqa: SLF001
             anc._index.setdefault(local_key, []).append(binding_ref)  # noqa: SLF001
