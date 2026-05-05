@@ -422,19 +422,64 @@ class Array(list[Any]):
         style = self._style()
         leadings, eols = snapshot_comments(self)
         if i == 0 and items:
-            # Inheriting position 0's leading: the new item adopts
-            # the prior items[0].leading (which carries any post-`[`
-            # comment block + indent). The new item's post_comma_trivia
-            # (set by _flip_to_internal below) carries the inter-item
-            # separator including its indent, so the displaced item
-            # must NOT keep its own leading indent — that would double
-            # the column position.
-            adopted_leading = items[0].leading
-            displaced = items[0]
-            displaced.leading = _trivia_empty()
-            new_item = _new_item(
-                cst, leading_first=True, style=style, leading=adopted_leading
+            # Inheriting position 0's leading: split it into the
+            # "indent prefix" (initial NL+WS that puts the item on
+            # its own line) and the "above-item block" (comments
+            # plus their surrounding trivia). When the leading
+            # opens with a comment (no initial newline) it's an
+            # EOL-of-`[` style — the whole thing stays at position
+            # 0 and apply_comments must not re-emit it onto the
+            # displaced item.
+            from tomlrt._trivia import (  # noqa: PLC0415
+                CommentNode,
+                NewlineNode,
+                Trivia,
+                WhitespaceNode,
             )
+
+            old_leading_pieces = list(items[0].leading.pieces)
+            displaced = items[0]
+            first_nonws = next(
+                (
+                    j
+                    for j, p in enumerate(old_leading_pieces)
+                    if not isinstance(p, (NewlineNode, WhitespaceNode))
+                ),
+                None,
+            )
+            opens_with_comment = first_nonws is not None and isinstance(
+                old_leading_pieces[first_nonws], CommentNode
+            ) and not any(
+                isinstance(p, NewlineNode) for p in old_leading_pieces[:first_nonws]
+            )
+            if opens_with_comment:
+                adopted = Trivia(pieces=old_leading_pieces)
+                displaced.leading = _trivia_empty()
+                new_item = _new_item(
+                    cst, leading_first=True, style=style, leading=adopted
+                )
+                if leadings:
+                    leadings[0] = ()
+            elif first_nonws is None:
+                new_item = _new_item(
+                    cst,
+                    leading_first=True,
+                    style=style,
+                    leading=Trivia(pieces=old_leading_pieces),
+                )
+                displaced.leading = _trivia_empty()
+            else:
+                # "Above-item" leading begins at the first comment;
+                # the indent prefix goes to the new item.
+                new_item = _new_item(
+                    cst,
+                    leading_first=True,
+                    style=style,
+                    leading=Trivia(pieces=old_leading_pieces[:first_nonws]),
+                )
+                displaced.leading = Trivia(pieces=old_leading_pieces[first_nonws:])
+                if leadings:
+                    leadings[0] = ()
         else:
             new_item = _new_item(cst, leading_first=False, style=style)
         # Insert into items at position i.
