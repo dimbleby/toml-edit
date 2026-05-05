@@ -452,19 +452,20 @@ def delete_key(c: Container, key: str) -> None:
         cur = cur._parent  # noqa: SLF001
 
     for cc in chain:
-        old_refs = cc._refs  # noqa: SLF001
         # Identify which buckets in cc._index point at owned slots.
         # Only buckets named by an owned slot's local_key in cc are
         # candidates — the rest of cc._index is untouched. This keeps
         # bulk deletion O(num_owned_slots), not O(len(cc._refs)).
+        # `cc` is along the chain c → ancestors, so every owned slot's
+        # logical path passes through cc; we never see the "host
+        # strictly below cc" case here.
         candidate_keys: set[str] = set()
         for s in owned_slots:
             if isinstance(s, KVSlot):
                 # KVSlot at host_path H with key parts K contributes a
                 # ref into container H+K[:j] under local_key K[j], for
-                # j in 0..len(K)-1. cc is in chain (cc._path is a
-                # prefix of len(H)+len(K)); the contributing local_key
-                # at cc is the next path step.
+                # j in 0..len(K)-1. The contributing local_key at cc
+                # is the next path step.
                 j = len(cc._path) - len(s.host_path)  # noqa: SLF001
                 if 0 <= j < len(s.key_parts):
                     candidate_keys.add(s.key_parts[j].value)
@@ -474,39 +475,8 @@ def delete_key(c: Container, key: str) -> None:
                 # is P[len(cc._path)] when cc is a strict prefix.
                 if len(cc._path) < len(s.path):  # noqa: SLF001
                     candidate_keys.add(s.path[len(cc._path)])  # noqa: SLF001
-        to_remove: list[SlotRef] = []
-        empty_buckets: list[str] = []
-        for lk in candidate_keys:
-            bucket = cc._index.get(lk)  # noqa: SLF001
-            if bucket is None:
-                continue
-            kept_bucket = [r for r in bucket if id(r.slot) not in owned_ids]
-            if len(kept_bucket) == len(bucket):
-                continue
-            to_remove.extend(r for r in bucket if id(r.slot) in owned_ids)
-            if kept_bucket:
-                cc._index[lk] = kept_bucket  # noqa: SLF001
-            else:
-                empty_buckets.append(lk)
-        for lk in empty_buckets:
-            del cc._index[lk]  # noqa: SLF001
-        if not to_remove:
+        if not _remove_owned_refs(cc, candidate_keys, owned_ids):
             continue
-        if len(to_remove) == len(old_refs):
-            cc._refs = []  # noqa: SLF001
-        elif len(to_remove) * 8 < len(old_refs):
-            # A few removals from a large list — list.remove is a C
-            # loop and beats rebuilding the whole list in Python.
-            for r in to_remove:
-                old_refs.remove(r)
-        else:
-            removed_ids = {id(r) for r in to_remove}
-            cc._refs = [r for r in old_refs if id(r) not in removed_ids]  # noqa: SLF001
-        if (
-            cc._header_ref is not None  # noqa: SLF001
-            and id(cc._header_ref.slot) in owned_ids  # noqa: SLF001
-        ):
-            cc._header_ref = None  # noqa: SLF001
         if (
             cc._body_tail is not None  # noqa: SLF001
             and id(cc._body_tail) in owned_ids  # noqa: SLF001
@@ -631,6 +601,15 @@ def _surviving_aot_entries(doc: Document, candidates: set[int]) -> set[int]:
 # ---------------------------------------------------------------------------
 
 
+def _last_kv(c: Container, predicate: Callable[[KVSlot], bool]) -> KVSlot | None:
+    """Reverse-walk ``c._refs`` for the last KVSlot satisfying ``predicate``."""
+    for ref in reversed(c._refs):  # noqa: SLF001
+        s = ref.slot
+        if isinstance(s, KVSlot) and predicate(s):
+            return s
+    return None
+
+
 def _is_direct_kv(c: Container, s: Slot) -> bool:
     """True iff ``s`` is a direct (single-key-part, host=c) KV of ``c``."""
     return (
@@ -653,12 +632,16 @@ def _last_direct_kv(c: Container) -> KVSlot | None:
     if body_tail is not None and _is_direct_kv(c, body_tail):
         assert isinstance(body_tail, KVSlot)
         return body_tail
-    for ref in reversed(c._refs):  # noqa: SLF001
-        s = ref.slot
-        if _is_direct_kv(c, s):
-            assert isinstance(s, KVSlot)
-            return s
-    return None
+    own_path = c._path  # noqa: SLF001
+    own_aot = c._owner_aot_entry  # noqa: SLF001
+    return _last_kv(
+        c,
+        lambda s: (
+            s.host_path == own_path
+            and len(s.key_parts) == 1
+            and s.owner_aot_entry is own_aot
+        ),
+    )
 
 
 def _extract_indent(leading: Trivia) -> str:
@@ -781,20 +764,13 @@ def _kv_separator_leading(c: Container, doc: Document) -> Trivia:
 
 
 def _last_host_kv(host: Container) -> KVSlot | None:
-    """Last KV slot whose ``host_path`` matches ``host._path`` (any keypath length).
-
-    Walks ``host._refs`` from the end so the typical case is O(1).
-    """
-    same_owner = host._owner_aot_entry  # noqa: SLF001
-    for ref in reversed(host._refs):  # noqa: SLF001
-        s = ref.slot
-        if (
-            isinstance(s, KVSlot)
-            and s.host_path == host._path  # noqa: SLF001
-            and s.owner_aot_entry is same_owner
-        ):
-            return s
-    return None
+    """Last KV slot whose ``host_path`` matches ``host._path`` (any keypath length)."""
+    own_path = host._path  # noqa: SLF001
+    own_aot = host._owner_aot_entry  # noqa: SLF001
+    return _last_kv(
+        host,
+        lambda s: s.host_path == own_path and s.owner_aot_entry is own_aot,
+    )
 
 
 def _host_kv_separator_leading(host: Container, doc: Document) -> Trivia:
@@ -1219,15 +1195,15 @@ def _recompute_body_tail(c: Container) -> Slot | None:
     has_header = c._header_ref is not None  # noqa: SLF001
     own_aot = c._owner_aot_entry  # noqa: SLF001
     own_path = c._path  # noqa: SLF001
-    for ref in reversed(c._refs):  # noqa: SLF001
-        s = ref.slot
-        if not isinstance(s, KVSlot):
-            continue
-        if s.owner_aot_entry is not own_aot:
-            continue
-        if has_header and s.host_path != own_path:
-            continue
-        return s
+    found = _last_kv(
+        c,
+        lambda s: (
+            s.owner_aot_entry is own_aot
+            and (not has_header or s.host_path == own_path)
+        ),
+    )
+    if found is not None:
+        return found
     if has_header:
         # Header-only container falls back to its own header.
         header_ref = c._header_ref  # noqa: SLF001
@@ -2423,51 +2399,79 @@ def _candidate_keys_for(c: Container, owned: set[Slot]) -> set[str]:
     return keys
 
 
-def _scrub_container_refs(c: Container, owned: set[Slot]) -> None:
-    """Remove every SlotRef in ``c`` (only) that points at a slot in ``owned``.
+def _remove_owned_refs(
+    c: Container,
+    candidate_keys: set[str],
+    owned_ids: set[int],
+) -> bool:
+    """Bucket-driven removal of refs whose slot id is in ``owned_ids``.
 
-    Non-recursive; caller is responsible for visiting any nested
-    containers that may also hold refs. Bucket-driven: only the
-    `_index` buckets named by ``owned``'s logical paths are walked,
-    and `c._refs` entries are removed via C-level `list.remove` when
-    the removal count is small relative to `len(c._refs)`.
+    Walks only the ``_index`` buckets named by ``candidate_keys``,
+    rewrites or drops them, and removes the same refs from
+    ``c._refs`` (using the C-level ``list.remove`` when removals
+    are sparse, a single rebuild otherwise). Also clears
+    ``c._header_ref`` if its slot is owned.
+
+    Caller is responsible for ``_body_tail`` handling — the right
+    policy depends on whether the container is being torn down or
+    is a survivor of a partial delete.
+
+    Returns ``True`` iff anything was removed.
     """
     if c._inline:  # noqa: SLF001
-        return
-    owned_ids = {id(s) for s in owned}
-    candidate_keys = _candidate_keys_for(c, owned)
+        return False
     to_remove: list[SlotRef] = []
     empty_buckets: list[str] = []
     for lk in candidate_keys:
         bucket = c._index.get(lk)  # noqa: SLF001
         if bucket is None:
             continue
-        kept_bucket = [r for r in bucket if id(r.slot) not in owned_ids]
-        if len(kept_bucket) == len(bucket):
+        kept = [r for r in bucket if id(r.slot) not in owned_ids]
+        if len(kept) == len(bucket):
             continue
         to_remove.extend(r for r in bucket if id(r.slot) in owned_ids)
-        if kept_bucket:
-            c._index[lk] = kept_bucket  # noqa: SLF001
+        if kept:
+            c._index[lk] = kept  # noqa: SLF001
         else:
             empty_buckets.append(lk)
     for lk in empty_buckets:
         del c._index[lk]  # noqa: SLF001
     # Own-header ref (local_key=None, not in _index): drop if owned.
     header_ref = c._header_ref  # noqa: SLF001
-    if header_ref is not None and header_ref.slot in owned:
+    if header_ref is not None and id(header_ref.slot) in owned_ids:
         to_remove.append(header_ref)
         c._header_ref = None  # noqa: SLF001
     if not to_remove:
-        return
+        return False
     refs = c._refs  # noqa: SLF001
     if len(to_remove) == len(refs):
         c._refs = []  # noqa: SLF001
     elif len(to_remove) * 8 < len(refs):
+        # A few removals from a large list — list.remove is a C
+        # loop and beats rebuilding the whole list in Python.
         for r in to_remove:
             refs.remove(r)
     else:
         removed_ids = {id(r) for r in to_remove}
         c._refs = [r for r in refs if id(r) not in removed_ids]  # noqa: SLF001
+    return True
+
+
+def _scrub_container_refs(c: Container, owned: set[Slot]) -> None:
+    """Remove every SlotRef in ``c`` (only) that points at a slot in ``owned``.
+
+    Non-recursive; caller is responsible for visiting any nested
+    containers that may also hold refs. Body-tail policy: clear if
+    the old tail is owned (callers of this primitive — currently
+    `remove_aot_entry`'s ancestor walk — don't need a recomputed
+    tail; the next mutation will recompute lazily).
+    """
+    if c._inline:  # noqa: SLF001
+        return
+    owned_ids = {id(s) for s in owned}
+    candidate_keys = _candidate_keys_for(c, owned)
+    if not _remove_owned_refs(c, candidate_keys, owned_ids):
+        return
     if c._body_tail is not None and c._body_tail in owned:  # noqa: SLF001
         c._body_tail = None  # noqa: SLF001
 
