@@ -2450,10 +2450,10 @@ def remove_aot_entry(aot: AoT, index: int) -> Table:
                                 owned.add(s)
                                 owned_ordered.append(s)
                     _collect_nested_aot_slots(nested_entry_table)
-            elif isinstance(v, Container) and not v._inline:  # noqa: SLF001
+            elif _is_section(v):
                 _collect_nested_aot_slots(v)
 
-    from tomlrt._container import Container  # noqa: PLC0415
+    from tomlrt._container import _is_section  # noqa: PLC0415
 
     _collect_nested_aot_slots(entry_table)
 

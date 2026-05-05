@@ -15,7 +15,7 @@ import re
 import sys
 from collections.abc import Mapping
 from datetime import date, datetime, time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeGuard
 
 if sys.version_info >= (3, 12):
     from typing import Self, override
@@ -297,7 +297,7 @@ class Container(dict[str, Any]):
             # in place; ordering, comments, key spelling are preserved.
             if (
                 _is_scalar(current)
-                or (isinstance(current, Container) and current._inline)  # noqa: SLF001
+                or _is_inline_table(current)
                 or isinstance(current, Array)
             ) and (_is_scalar(value) or _is_synth_inline(value)):
                 self._inline_typed_replace(key, value)
@@ -312,8 +312,7 @@ class Container(dict[str, Any]):
             # the delete+insert fallback so the new explicit header
             # lands where the implicit subtree used to be.
             if (
-                isinstance(current, Container)
-                and not current._inline  # noqa: SLF001
+                _is_section(current)
                 and current._header_ref is not None  # noqa: SLF001
                 and isinstance(value, Mapping)
                 and not isinstance(value, AoT)
@@ -340,7 +339,7 @@ class Container(dict[str, Any]):
                 _is_scalar(value)
                 or _is_synth_inline(value)
                 or isinstance(value, AoT)
-                or (isinstance(value, Container) and not value._inline)  # noqa: SLF001
+                or _is_section(value)
                 or isinstance(value, Mapping)
             ):
                 primary_refs = self._index.get(key, [])
@@ -361,7 +360,7 @@ class Container(dict[str, Any]):
                 self[key] = value
                 if primary_refs and (
                     isinstance(value, AoT)
-                    or (isinstance(value, Container) and not value._inline)  # noqa: SLF001
+                    or _is_section(value)
                     or isinstance(value, Mapping)
                 ):
                     _layout_ops.move_slots_to_anchor(
@@ -460,7 +459,7 @@ class Container(dict[str, Any]):
                 for entry_table in existing_entries:
                     _layout_ops.add_aot_entry(value, None, rehome=entry_table)
             return
-        if isinstance(value, Container) and not value._inline:  # noqa: SLF001
+        if _is_section(value):
             # Section-flavoured Table — synthesise [path] header.
             # Already-attached Table (live doc): clone via snapshot.
             # Detached/private: rehome in place.
@@ -557,7 +556,7 @@ class Container(dict[str, Any]):
         slot.value = cst
         dict.__setitem__(self, key, decoded)
         # Detach the displaced view so it can be reattached live.
-        if isinstance(old, Container) and old._inline and old is not decoded:  # noqa: SLF001
+        if _is_inline_table(old) and old is not decoded:
             _reset_inline_for_rehome(old)
         elif isinstance(old, Array) and old is not decoded:
             _reset_array_for_rehome(old)
@@ -650,7 +649,7 @@ class Container(dict[str, Any]):
         if isinstance(value, AoT):
             msg = "Cannot store an array-of-tables inside an inline table"
             raise TOMLError(msg)
-        if isinstance(value, Container) and not value._inline:  # noqa: SLF001
+        if _is_section(value):
             msg = "Cannot store a section-style table inside an inline-style table"
             raise TOMLError(msg)
         if not _is_scalar(value) and not _is_synth_inline(value):
@@ -876,7 +875,7 @@ class Container(dict[str, Any]):
             msg = f"key {key!r} not in table"
             raise KeyError(msg)
         cur = dict.__getitem__(self, key)
-        if not (isinstance(cur, Container) and cur._inline):  # noqa: SLF001
+        if not (_is_inline_table(cur)):
             msg = f"{key!r} is not an inline table"
             raise TOMLError(msg)
         if _inline_value_has_inner_comments(cur._value):  # noqa: SLF001
@@ -937,7 +936,7 @@ class Container(dict[str, Any]):
             msg = f"cannot promote empty array {key!r}"
             raise TOMLError(msg)
         for el in cur:
-            if not (isinstance(el, Container) and el._inline):  # noqa: SLF001
+            if not (_is_inline_table(el)):
                 msg = f"{key!r} contains a non-inline-table element"
                 raise TOMLError(msg)
         if cur._value is not None:  # noqa: SLF001
@@ -1279,7 +1278,7 @@ def _deep_section_clone(c: Container) -> Container:
     """
     out = Table.section()
     for k, v in c.items():
-        if isinstance(v, Container) and not v._inline:  # noqa: SLF001
+        if _is_section(v):
             dict.__setitem__(out, k, _deep_section_clone(v))
         elif isinstance(v, AoT):
             dict.__setitem__(out, k, AoT([_deep_section_clone(e) for e in v]))
@@ -1321,7 +1320,7 @@ def _reset_table_for_rehome(t: Container, *, recurse: bool = False) -> None:
     if not recurse:
         return
     for child in dict.values(t):
-        if isinstance(child, Container) and not child._inline:  # noqa: SLF001
+        if _is_section(child):
             if child._layout_root is old_root:  # noqa: SLF001
                 _reset_table_for_rehome(child, recurse=True)
         elif isinstance(child, AoT) and child._layout_root is old_root:  # noqa: SLF001
@@ -1374,7 +1373,7 @@ def _install_attached_subtree(
     structural: list[tuple[str, Any]] = []
     for k, v in src_table.items():
         if isinstance(v, AoT) or (
-            isinstance(v, Container) and not v._inline  # noqa: SLF001
+            _is_section(v)
         ):
             structural.append((k, v))
         else:
@@ -1467,6 +1466,16 @@ def _is_scalar(v: object) -> bool:
     if isinstance(v, (int, float, str)):
         return True
     return isinstance(v, (datetime, date, time))
+
+
+def _is_section(v: object) -> TypeGuard[Container]:
+    """True iff ``v`` is a non-inline (section-style) Container."""
+    return isinstance(v, Container) and not v._inline  # noqa: SLF001
+
+
+def _is_inline_table(v: object) -> TypeGuard[Container]:
+    """True iff ``v`` is an inline Container."""
+    return isinstance(v, Container) and v._inline  # noqa: SLF001
 
 
 def _coerce_for_document_init(v: Any) -> Any:
@@ -1629,7 +1638,7 @@ def _synth_value(
     if isinstance(v, AoT):
         msg = "live-attach of AoT through value synthesis is not supported"
         raise NotImplementedError(msg)
-    if isinstance(v, Container) and not v._inline:  # noqa: SLF001
+    if _is_section(v):
         msg = (
             "live-attach of section Container through value synthesis is not supported"
         )
@@ -1640,8 +1649,7 @@ def _synth_value(
     # (sitting in a private root after a prior overwrite) are also
     # treated as unattached.
     if (
-        isinstance(v, Container)
-        and v._inline  # noqa: SLF001
+        _is_inline_table(v)
         and (
             v._layout_root is None  # noqa: SLF001
             or v._layout_root._is_private  # noqa: SLF001
@@ -1659,7 +1667,7 @@ def _synth_value(
     if isinstance(v, Array) and not v._attached:  # noqa: SLF001
         return _live_attach_array(v)
     # Mappings (incl. inline Container) → inline table.
-    if isinstance(v, Mapping) or (isinstance(v, Container) and v._inline):  # noqa: SLF001
+    if isinstance(v, Mapping) or (_is_inline_table(v)):
         return _synth_inline_table(
             v, layout_root=layout_root, parent=parent, path=path, owner=owner
         )
