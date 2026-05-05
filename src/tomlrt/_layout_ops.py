@@ -177,13 +177,11 @@ def append_direct_kv(c: Container, key: str, value: Value) -> None:
         if c._body_tail is None:  # noqa: SLF001
             # Implicit ``c`` whose only contributors are descendant
             # headers (e.g. ``[a.b]\ny = 1`` then mutating
-            # ``doc.table('a')['x']``). Insert as a dotted KV under
-            # the nearest header-bearing ancestor, positioned
-            # immediately *before* ``c``'s first descendant slot
-            # in doc-stream order (so the new top-level / scope-
-            # local key lands inside that ancestor's region rather
-            # than after the descendant header).
-            _insert_dotted_kv_before_descendants(c, key, value)
+            # ``doc.table('a')['x']``). Promote ``c`` to an explicit
+            # section by synthesising a ``[c._path]`` header before
+            # the first descendant slot, then insert the KV directly
+            # under it.
+            _synthesise_header_then_insert_kv(c, key, value)
             return
         _append_dotted_kv_under_implicit(c, key, value)
         return
@@ -778,6 +776,121 @@ def _append_dotted_kv_under_implicit(c: Container, key: str, value: Value) -> No
             owner.entry_slots.append(new_slot)
         else:
             owner.entry_slots.insert(anchor_idx + 1, new_slot)
+
+
+def _synthesise_header_then_insert_kv(
+    c: Container, key: str, value: Value
+) -> None:
+    """Promote a purely-implicit container ``c`` to an explicit section.
+
+    Pre-conditions (checked by caller):
+      * ``c._path`` is non-empty
+      * ``c._header_ref is None``
+      * ``c._body_tail is None``
+      * ``c._refs`` is non-empty (at least one descendant binding ref)
+
+    Synthesises a ``[c._path]`` header before the first descendant
+    slot in doc-stream order, adopts that descendant's old leading
+    onto the synthetic header (preserving the existing seam-from-
+    above), and rewrites the descendant's leading to the document's
+    current inter-section separator style (compact or blank-line).
+    Then inserts a fresh single-keypart KV ``key = value`` directly
+    after the synthetic header.
+    """
+    layout_root = c._layout_root  # noqa: SLF001
+    assert layout_root is not None
+    doc = layout_root
+
+    if not c._refs:  # noqa: SLF001
+        msg = (
+            "structural-only implicit container with no contributors — "
+            "likely a held view of a deleted subtree (Phase 3e detach)"
+        )
+        raise NotImplementedError(msg)
+    anchor_slot = c._refs[0].slot  # noqa: SLF001
+    owner = c._owner_aot_entry  # noqa: SLF001
+
+    # Build the synthetic header. Adopt the descendant's existing
+    # leading (so any preamble / inter-section separator that used
+    # to land on the descendant lands on the synthetic header
+    # instead) and give the descendant a fresh inter-section leading
+    # in the doc's current style (compact / blank-separated).
+    adopted_leading = anchor_slot.leading
+    new_descendant_leading = _build_section_leading(doc)
+    header_slot = _new_section_header(
+        c._path,  # noqa: SLF001
+        leading=adopted_leading,
+        doc=doc,
+        kind="table",
+        owner_aot_entry=owner,
+    )
+    insert_before(anchor_slot, header_slot, doc)
+    anchor_slot.leading = new_descendant_leading
+
+    # File the new header's refs:
+    #   * own-header ref on c (local_key=None);
+    #   * binding refs on every ancestor along c._path.
+    own_header_ref = SlotRef(slot=header_slot, container=c, local_key=None)
+    c._refs.insert(0, own_header_ref)  # noqa: SLF001
+    c._header_ref = own_header_ref  # noqa: SLF001
+
+    # Walk ancestor chain (excluding c) top-down so we can name
+    # local_keys correctly.
+    ancestors: list[Container] = []
+    cur: Container | None = c._parent  # noqa: SLF001
+    while cur is not None:
+        ancestors.append(cur)
+        cur = cur._parent  # noqa: SLF001
+    # ancestors[0] = c._parent, ..., ancestors[-1] = doc root.
+    # local_key on each ancestor is c._path[-(distance from c)] —
+    # for ancestor at distance d from c, local_key = c._path[-d].
+    for d, anc in enumerate(ancestors, start=1):
+        local_key = c._path[-d]  # noqa: SLF001
+        binding_ref = SlotRef(slot=header_slot, container=anc, local_key=local_key)
+        anchor_idx_anc = _find_ref_index_by_slot(anc, anchor_slot)
+        anc._refs.insert(anchor_idx_anc, binding_ref)  # noqa: SLF001
+        # Rebuild _index[local_key] to preserve doc-stream order
+        # (binding_ref now sits before the descendant's existing
+        # binding ref, so it becomes the primary).
+        anc._index[local_key] = [  # noqa: SLF001
+            r
+            for r in anc._refs  # noqa: SLF001
+            if r.local_key == local_key
+        ]
+
+    # Insert the KV directly after the synthetic header.
+    new_kv = KVSlot(
+        leading=Trivia(),
+        host_path=c._path,  # noqa: SLF001
+        key_parts=[_make_keypart(key)],
+        key_seps=[],
+        pre_eq=" ",
+        post_eq=" ",
+        value=value,
+        eol=EolTrivia(
+            trailing_ws=None,
+            comment=None,
+            newline=NewlineNode(text=doc._newline),  # noqa: SLF001
+        ),
+        owner_aot_entry=owner,
+    )
+    insert_after(header_slot, new_kv, doc)
+    kv_ref = SlotRef(slot=new_kv, container=c, local_key=key)
+    # KV ref sits right after the own-header ref in c._refs.
+    c._refs.insert(1, kv_ref)  # noqa: SLF001
+    c._index.setdefault(key, []).append(kv_ref)  # noqa: SLF001
+    c._body_tail = new_kv  # noqa: SLF001
+
+    # Maintain the AoT entry's slot list when applicable.
+    if owner is not None:
+        try:
+            anchor_idx = owner.entry_slots.index(anchor_slot)
+        except ValueError:
+            owner.entry_slots.append(header_slot)
+            owner.entry_slots.append(new_kv)
+        else:
+            owner.entry_slots.insert(anchor_idx, header_slot)
+            owner.entry_slots.insert(anchor_idx + 1, new_kv)
 
 
 def _insert_dotted_kv_before_descendants(c: Container, key: str, value: Value) -> None:

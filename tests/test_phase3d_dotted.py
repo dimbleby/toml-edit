@@ -80,15 +80,15 @@ def test_no_final_newline_on_anchor() -> None:
     )
 
 
-def test_structural_only_implicit_now_synthesises_dotted_kv() -> None:
+def test_structural_only_implicit_now_synthesises_section() -> None:
     # `a` exists only via the descendant header [a.b]; no body
-    # contributors. Phase 4 now synthesises a top-level dotted KV
-    # `a.x = 2` immediately before `[a.b]`.
+    # contributors. Phase 4 now promotes the implicit `a` to an
+    # explicit `[a]` section before the descendant rather than
+    # inserting a top-level dotted KV.
     doc = loads("[a.b]\ny = 1\n")
     doc.table("a")["x"] = 2
     out = dumps(doc)
-    assert "a.x = 2" in out
-    # Round-trips correctly.
+    assert out == "[a]\nx = 2\n\n[a.b]\ny = 1\n"
     re_parsed = loads(out)
     assert re_parsed.table("a")["x"] == 2
     assert re_parsed.table("a").table("b")["y"] == 1
