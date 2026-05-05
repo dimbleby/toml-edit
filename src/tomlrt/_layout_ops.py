@@ -542,29 +542,23 @@ def _leading_has_blank_line(leading: Trivia) -> bool:
     return False
 
 
-def _kv_separator_leading(c: Container, doc: Document) -> Trivia:
-    """Pick leading trivia for a new direct-KV slot in container ``c``.
+def _kv_leading_from_prior(
+    kvs: list[KVSlot], doc: Document, *, fallback_indent: str = ""
+) -> Trivia:
+    """Build leading trivia for a new KV slot from prior siblings.
 
-    Inherits indentation from the most recent existing direct-KV slot
-    in ``c``. Adds a leading blank line iff every prior gap between
-    same-owner direct-KV slots already has one (i.e. user is uniformly
-    blank-separating their KVs).
-
-    For an AoT entry with no own KVs yet, falls back to inheriting
-    indent (only) from the previous sibling entry's KVs.
+    Inherits indent from ``kvs[-1]``; adds a blank line iff every
+    prior gap between siblings already has one. With no prior siblings,
+    falls back to a bare ``fallback_indent`` (or empty trivia).
     """
-    kvs = _collect_direct_kvs(c)
     if not kvs:
-        sibling_kvs = _aot_sibling_kvs(c)
-        if sibling_kvs:
-            indent_text = _extract_indent(sibling_kvs[-1].leading)
-            if indent_text:
-                return Trivia([WhitespaceNode(text=indent_text)])
+        if fallback_indent:
+            return Trivia([WhitespaceNode(text=fallback_indent)])
         return Trivia()
     indent_text = _extract_indent(kvs[-1].leading)
-    add_blank = False
-    if len(kvs) >= 2:
-        add_blank = all(_leading_has_blank_line(kv.leading) for kv in kvs[1:])
+    add_blank = len(kvs) >= 2 and all(
+        _leading_has_blank_line(kv.leading) for kv in kvs[1:]
+    )
     pieces: list[Any] = []
     if add_blank:
         pieces.append(NewlineNode(text=doc._newline))  # noqa: SLF001
@@ -573,9 +567,24 @@ def _kv_separator_leading(c: Container, doc: Document) -> Trivia:
     return Trivia(pieces)
 
 
+def _kv_separator_leading(c: Container, doc: Document) -> Trivia:
+    """Pick leading trivia for a new direct-KV slot in container ``c``.
+
+    For an AoT entry with no own KVs yet, falls back to inheriting
+    indent (only) from the previous sibling entry's KVs.
+    """
+    kvs = _collect_direct_kvs(c)
+    if kvs:
+        return _kv_leading_from_prior(kvs, doc)
+    sibling_kvs = _aot_sibling_kvs(c)
+    fallback = _extract_indent(sibling_kvs[-1].leading) if sibling_kvs else ""
+    return _kv_leading_from_prior([], doc, fallback_indent=fallback)
+
+
 def _collect_host_kvs(host: Container) -> list[KVSlot]:
     """All KV slots whose ``host_path`` matches ``host._path`` (any keypath length)."""
     same_owner = host._owner_aot_entry  # noqa: SLF001
+    seen: set[int] = set()
     out: list[KVSlot] = []
     for ref in host._refs:  # noqa: SLF001
         s = ref.slot
@@ -583,40 +592,16 @@ def _collect_host_kvs(host: Container) -> list[KVSlot]:
             isinstance(s, KVSlot)
             and s.host_path == host._path  # noqa: SLF001
             and s.owner_aot_entry is same_owner
+            and id(s) not in seen
         ):
+            seen.add(id(s))
             out.append(s)
-    # Deduplicate (a KV with dotted path generates multiple refs in
-    # the host's _refs — once per intermediate container — but we
-    # only want each slot once for indent/blank inspection).
-    seen: set[int] = set()
-    deduped: list[KVSlot] = []
-    for s in out:
-        if id(s) in seen:
-            continue
-        seen.add(id(s))
-        deduped.append(s)
-    return deduped
+    return out
 
 
 def _host_kv_separator_leading(host: Container, doc: Document) -> Trivia:
-    """Pick leading trivia for a new dotted-KV slot whose host is ``host``.
-
-    Inherits indent + blank-line policy from existing KVs (any
-    keypath length) under the same host.
-    """
-    kvs = _collect_host_kvs(host)
-    if not kvs:
-        return Trivia()
-    indent_text = _extract_indent(kvs[-1].leading)
-    add_blank = False
-    if len(kvs) >= 2:
-        add_blank = all(_leading_has_blank_line(kv.leading) for kv in kvs[1:])
-    pieces: list[Any] = []
-    if add_blank:
-        pieces.append(NewlineNode(text=doc._newline))  # noqa: SLF001
-    if indent_text:
-        pieces.append(WhitespaceNode(text=indent_text))
-    return Trivia(pieces)
+    """Pick leading trivia for a new dotted-KV slot whose host is ``host``."""
+    return _kv_leading_from_prior(_collect_host_kvs(host), doc)
 
 
 def _build_kv_slot(c: Container, key: str, value: Value, doc: Document) -> KVSlot:
