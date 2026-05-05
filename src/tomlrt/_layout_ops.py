@@ -110,9 +110,6 @@ def _file_synthetic_header_and_kv(
     c._refs.insert(header_ref_index + 1, kv_ref)  # noqa: SLF001
     c._index.setdefault(key, []).append(kv_ref)  # noqa: SLF001
     c._body_tail = new_kv  # noqa: SLF001
-    # Synthesised header just opened c; its first body KV is by
-    # construction the only (and therefore last) direct KV of c.
-    _set_last_direct_kv(c, new_kv)
     return new_kv
 
 
@@ -368,9 +365,6 @@ def append_direct_kv(c: Container, key: str, value: Value) -> None:
         c._refs.append(new_ref)  # noqa: SLF001
     c._index.setdefault(key, []).append(new_ref)  # noqa: SLF001
     c._body_tail = new_slot  # noqa: SLF001
-    # New direct KV is appended after the previous body tail — by
-    # invariant it is now the last direct KV of c.
-    _set_last_direct_kv(c, new_slot)
 
 
 def delete_key(c: Container, key: str) -> None:
@@ -518,7 +512,6 @@ def delete_key(c: Container, key: str) -> None:
             and id(cc._body_tail) in owned_ids  # noqa: SLF001
         ):
             cc._body_tail = _recompute_body_tail(cc)  # noqa: SLF001
-        _invalidate_last_direct_kv_if(cc, owned_ids)
 
     # 4. Unlink owned slots from the doc; clean up AoTEntry.entry_slots
     # for live (still-attached) entries. Owned slots are then
@@ -651,44 +644,21 @@ def _is_direct_kv(c: Container, s: Slot) -> bool:
 def _last_direct_kv(c: Container) -> KVSlot | None:
     """Return the most-recent direct KV slot of ``c`` in doc-stream order.
 
-    O(1) hot path via ``c._last_direct_kv_slot`` cache; on miss falls
-    back to a reversed walk of ``c._refs`` and refreshes the cache.
+    Fast path: ``c._body_tail`` is by construction the latest body-region
+    slot, and on every direct-KV append it IS the new direct KV — so for
+    the typical "just-appended" case this is O(1). Otherwise (body_tail
+    is a header or a dotted KV) reverse-walk ``c._refs``.
     """
-    cached = c._last_direct_kv_slot  # noqa: SLF001
-    if cached is not None:
-        assert _is_direct_kv(c, cached), (
-            "internal: stale _last_direct_kv_slot — slot no longer matches "
-            "the direct-KV predicate (host_path / owner_aot_entry / "
-            "key_parts changed?)"
-        )
-        return cached
+    body_tail = c._body_tail  # noqa: SLF001
+    if body_tail is not None and _is_direct_kv(c, body_tail):
+        assert isinstance(body_tail, KVSlot)
+        return body_tail
     for ref in reversed(c._refs):  # noqa: SLF001
         s = ref.slot
         if _is_direct_kv(c, s):
             assert isinstance(s, KVSlot)
-            c._last_direct_kv_slot = s  # noqa: SLF001
             return s
     return None
-
-
-def _set_last_direct_kv(c: Container, s: KVSlot) -> None:
-    """Note that ``s`` is now the most-recent direct KV of ``c``.
-
-    Caller must ensure ``s`` is a direct KV of ``c`` AND that no later
-    direct KV exists in ``c._refs`` (i.e. ``s`` was just appended at
-    the body tail). Asserts the direct-KV predicate (debug builds).
-    """
-    assert _is_direct_kv(c, s), (
-        "internal: _set_last_direct_kv called with non-direct KV"
-    )
-    c._last_direct_kv_slot = s  # noqa: SLF001
-
-
-def _invalidate_last_direct_kv_if(c: Container, dropped_slots: set[int]) -> None:
-    """Drop the cache if it points at a slot in ``dropped_slots``."""
-    cached = c._last_direct_kv_slot  # noqa: SLF001
-    if cached is not None and id(cached) in dropped_slots:
-        c._last_direct_kv_slot = None  # noqa: SLF001
 
 
 def _extract_indent(leading: Trivia) -> str:
@@ -1177,7 +1147,6 @@ def _append_kv_in_aot_entry(c: Container, key: str, value: Value) -> None:
         c._refs.append(new_ref)  # noqa: SLF001
     c._index.setdefault(key, []).append(new_ref)  # noqa: SLF001
     c._body_tail = new_slot  # noqa: SLF001
-    _set_last_direct_kv(c, new_slot)
 
     # Maintain entry_slots in doc-stream order. Insert after the anchor
     # if it is in the list, else append.
@@ -2501,7 +2470,6 @@ def _scrub_container_refs(c: Container, owned: set[Slot]) -> None:
         c._refs = [r for r in refs if id(r) not in removed_ids]  # noqa: SLF001
     if c._body_tail is not None and c._body_tail in owned:  # noqa: SLF001
         c._body_tail = None  # noqa: SLF001
-    _invalidate_last_direct_kv_if(c, owned_ids)
 
 
 def _scrub_refs_to_owned_slots(c: Container, owned: set[Slot]) -> None:

@@ -87,7 +87,6 @@ class Container(dict[str, Any]):
         "_header_ref",
         "_index",
         "_inline",
-        "_last_direct_kv_slot",
         "_layout_root",
         "_owner_aot_entry",
         "_parent",
@@ -107,13 +106,6 @@ class Container(dict[str, Any]):
         self._refs: list[SlotRef] = []
         self._header_ref: SlotRef | None = None
         self._body_tail: Slot | None = None
-        # Cache of the most-recent direct (single-key-part, host_path
-        # matches, same owner_aot_entry) KVSlot in self._refs. ``None``
-        # when there is no such slot or when the cache has been
-        # invalidated (recompute lazily via ``_last_direct_kv``). See
-        # ``_last_direct_kv`` and ``_set_last_direct_kv`` in
-        # ``_layout_ops``.
-        self._last_direct_kv_slot: KVSlot | None = None
         self._value: InlineTableValue | None = None
 
     @property
@@ -1288,7 +1280,6 @@ def _reset_table_for_rehome(t: Container, *, recurse: bool = False) -> None:
     t._index = {}  # noqa: SLF001
     t._header_ref = None  # noqa: SLF001
     t._body_tail = None  # noqa: SLF001
-    t._last_direct_kv_slot = None  # noqa: SLF001
 
     if not recurse:
         return
