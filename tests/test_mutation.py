@@ -284,7 +284,7 @@ def test_array_setitem_slice_matches_list_semantics() -> None:
     assert list(xs) == ["a", "b", 2, 3]
     # Non-iterables raise TypeError, like list.__setitem__ does.
     with pytest.raises(TypeError):
-        xs[0:1] = 5  # ty: ignore[invalid-assignment]
+        xs[0:1] = 5  # type: ignore[call-overload]  # ty: ignore[invalid-assignment]
 
 
 def test_array_delitem_slice() -> None:
@@ -570,7 +570,7 @@ def test_aot_setitem_slice_validates_before_mutating() -> None:
     original = tomlrt.dumps(doc)
     aot = doc.aot("pkg")
     with pytest.raises(TypeError):
-        aot[0:2] = [{"ok": True}, "not a mapping"]  # ty: ignore[invalid-assignment]
+        aot[0:2] = [{"ok": True}, "not a mapping"]  # type: ignore[list-item]  # ty: ignore[invalid-assignment]
     assert tomlrt.dumps(doc) == original
 
 

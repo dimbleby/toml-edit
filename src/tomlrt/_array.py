@@ -7,8 +7,9 @@ backed by `AoTEntry` records and whose elements are `Table` views.
 
 from __future__ import annotations
 
+import operator
 import sys
-from typing import TYPE_CHECKING, Any, SupportsIndex
+from typing import TYPE_CHECKING, Any, SupportsIndex, overload
 
 if sys.version_info >= (3, 12):
     from typing import override
@@ -16,6 +17,8 @@ else:
     from typing_extensions import override
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping
+
     if sys.version_info >= (3, 11):
         from typing import Self
     else:
@@ -336,7 +339,7 @@ class Array(list[Any]):
         list.append(self, decoded)
 
     @override
-    def extend(self, values: Any) -> None:
+    def extend(self, values: Iterable[Any]) -> None:
         for v in values:
             self.append(v)
 
@@ -567,6 +570,10 @@ class Array(list[Any]):
         clear_all_comments(self)
         apply_comments(self, new_leadings, new_eols)
 
+    @overload
+    def __setitem__(self, key: SupportsIndex, value: Any) -> None: ...
+    @overload
+    def __setitem__(self, key: slice, value: Iterable[Any]) -> None: ...
     @override
     def __setitem__(
         self,
@@ -1183,14 +1190,21 @@ class AoT(list["Table"]):
             _layout_ops.remove_aot_entry(self, -1)
 
     @override
-    def __setitem__(  # type: ignore[override]
-        self, index: int | slice, value: object
+    @overload
+    def __setitem__(self, index: SupportsIndex, value: Mapping[str, Any]) -> None: ...
+    @overload
+    def __setitem__(self, index: slice, value: Iterable[Mapping[str, Any]]) -> None: ...
+    @override
+    def __setitem__(
+        self,
+        index: SupportsIndex | slice,
+        value: Mapping[str, Any] | Iterable[Mapping[str, Any]],
     ) -> None:
         from tomlrt import _layout_ops  # noqa: PLC0415
 
         if isinstance(index, slice):
             try:
-                values = list(value)  # type: ignore[call-overload]
+                values = list(value)
             except TypeError as exc:
                 msg = "can only assign an iterable"
                 raise TypeError(msg) from exc
@@ -1252,17 +1266,18 @@ class AoT(list["Table"]):
             return
         from tomlrt._container import Table as _TableType  # noqa: PLC0415
 
+        i = operator.index(index)
         if (
             isinstance(value, _TableType)
             and value._layout_root is not None  # noqa: SLF001
             and value._owner_aot_entry is not None  # noqa: SLF001
         ):
-            _layout_ops.replace_aot_entry_with_clone(self, index, value)
+            _layout_ops.replace_aot_entry_with_clone(self, i, value)
             return
-        _layout_ops.replace_aot_entry(self, index, value)
+        _layout_ops.replace_aot_entry(self, i, value)
 
     @override
-    def append(self, value: Table | dict[str, Any]) -> None:
+    def append(self, value: Table | Mapping[str, Any]) -> None:
         # Same semantics as `add(body)` but with no return value (list API).
         from tomlrt import _layout_ops  # noqa: PLC0415
         from tomlrt._container import Table as TableType  # noqa: PLC0415
@@ -1291,12 +1306,12 @@ class AoT(list["Table"]):
         _layout_ops.add_aot_entry(self, value)
 
     @override
-    def extend(self, values: Any) -> None:
+    def extend(self, values: Iterable[Table | Mapping[str, Any]]) -> None:
         for v in values:
             self.append(v)
 
     @override
-    def insert(self, index: SupportsIndex, value: Any) -> None:
+    def insert(self, index: SupportsIndex, value: Table | Mapping[str, Any]) -> None:
         from tomlrt import _layout_ops  # noqa: PLC0415
         from tomlrt._container import Table as TableType  # noqa: PLC0415
 
