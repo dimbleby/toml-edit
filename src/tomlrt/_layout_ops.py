@@ -61,6 +61,16 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
+def _ancestor_chain(c: Container) -> list[Container]:
+    """Ancestors from ``c._parent`` up to (and including) the document root."""
+    out: list[Container] = []
+    cur = c._parent  # noqa: SLF001
+    while cur is not None:
+        out.append(cur)
+        cur = cur._parent  # noqa: SLF001
+    return out
+
+
 def _rebuild_index_for_key(c: Container, local_key: str) -> None:
     """Restore ``c._index[local_key]`` as the doc-stream subset of ``c._refs``.
 
@@ -835,11 +845,7 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
 
     # Walk ancestor chain (excluding c) top-down so we can name
     # local_keys correctly.
-    ancestors: list[Container] = []
-    cur: Container | None = c._parent  # noqa: SLF001
-    while cur is not None:
-        ancestors.append(cur)
-        cur = cur._parent  # noqa: SLF001
+    ancestors = _ancestor_chain(c)
     # ancestors[0] = c._parent, ..., ancestors[-1] = doc root.
     # local_key on each ancestor is c._path[-(distance from c)] —
     # for ancestor at distance d from c, local_key = c._path[-d].
@@ -917,11 +923,7 @@ def _synthesise_header_then_insert_kv_at_doc_tail(
     c._refs.append(own_header_ref)  # noqa: SLF001
     c._header_ref = own_header_ref  # noqa: SLF001
 
-    ancestors: list[Container] = []
-    cur: Container | None = c._parent  # noqa: SLF001
-    while cur is not None:
-        ancestors.append(cur)
-        cur = cur._parent  # noqa: SLF001
+    ancestors = _ancestor_chain(c)
     # When ``c`` lives inside an AoT entry and was anchored after
     # ``owner.entry_slots[-1]`` above, the synthesised header sits
     # in the middle of the doc-stream (between this entry's last
