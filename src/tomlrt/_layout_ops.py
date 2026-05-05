@@ -32,6 +32,7 @@ import contextlib
 import copy
 from typing import TYPE_CHECKING, Any, Literal
 
+from tomlrt._scalar import is_scalar
 from tomlrt._slots import AoTEntry, KVSlot, SlotRef, StructuralHeaderSlot
 from tomlrt._trivia import (
     CommentNode,
@@ -1371,7 +1372,6 @@ def add_aot_entry(
     """
     from tomlrt._container import (  # noqa: PLC0415
         Table,
-        _is_scalar,
         _is_synth_inline,
         _synth_value,
     )
@@ -1443,7 +1443,7 @@ def add_aot_entry(
 
     # Populate body.
     for k, v in body_items:
-        if not (_is_scalar(v) or _is_synth_inline(v)):
+        if not (is_scalar(v) or _is_synth_inline(v)):
             entry_table[k] = v
             continue
         cst, dec = _synth_value(
@@ -2056,7 +2056,6 @@ def attach_section_at(
     from tomlrt._container import (  # noqa: PLC0415
         Container,
         Table,
-        _is_scalar,
         _is_synth_inline,
         _synth_value,
     )
@@ -2152,7 +2151,7 @@ def attach_section_at(
     _maybe_demote_synthetic_empty_header(parent)
 
     for k, v in pending:
-        if not (_is_scalar(v) or _is_synth_inline(v)):
+        if not (is_scalar(v) or _is_synth_inline(v)):
             section[k] = v
             continue
         cst, dec = _synth_value(
@@ -2177,7 +2176,6 @@ def attach_section(
     """
     from tomlrt._container import (  # noqa: PLC0415
         Table,
-        _is_scalar,
         _is_synth_inline,
         _synth_value,
     )
@@ -2251,7 +2249,7 @@ def attach_section(
     scalars: list[tuple[str, object]] = []
     structurals: list[tuple[str, object]] = []
     for k, v in pending:
-        if _is_scalar(v) or _is_synth_inline(v):
+        if is_scalar(v) or _is_synth_inline(v):
             scalars.append((k, v))
         else:
             structurals.append((k, v))

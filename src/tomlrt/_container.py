@@ -10,10 +10,8 @@ dict from there.
 
 from __future__ import annotations
 
-import math
 import sys
 from collections.abc import Mapping
-from datetime import date, datetime, time
 from typing import TYPE_CHECKING, Any, TypeGuard, TypeVar
 
 if sys.version_info >= (3, 12):
@@ -38,6 +36,10 @@ from tomlrt._comments import (
 from tomlrt._errors import TOMLError
 from tomlrt._paths import split_path, validate_path
 from tomlrt._render import render
+from tomlrt._scalar import (
+    coerce_scalar,
+    is_scalar,
+)
 from tomlrt._slots import KVSlot, StructuralHeaderSlot
 from tomlrt._trivia import (
     NewlineNode,
@@ -48,13 +50,8 @@ from tomlrt._trivia import (
 from tomlrt._values import (
     ArrayItem,
     ArrayValue,
-    BoolValue,
-    DateTimeValue,
-    FloatValue,
     InlineTableEntry,
     InlineTableValue,
-    IntegerValue,
-    StringValue,
     make_keypart,
 )
 
@@ -66,7 +63,6 @@ if TYPE_CHECKING:
     from tomlrt._slots import AoTEntry, Slot, SlotRef
     from tomlrt._trivia import TriviaPiece
     from tomlrt._values import (
-        DateLikeKind,
         Value,
     )
 
@@ -274,17 +270,17 @@ class Container(dict[str, Any]):
         if key in self:
             current = dict.__getitem__(self, key)
             # Fast-path: pure scalar → scalar (cheap, no synth alloc).
-            if _is_scalar(current) and _is_scalar(value):
+            if is_scalar(current) and is_scalar(value):
                 self._scalar_replace(key, value)
                 return
             # Single-direct-KV-slot current → any synth-able value
             # (scalar or inline). The slot's `value` field is swapped
             # in place; ordering, comments, key spelling are preserved.
             if (
-                _is_scalar(current)
+                is_scalar(current)
                 or _is_inline_table(current)
                 or isinstance(current, Array)
-            ) and (_is_scalar(value) or _is_synth_inline(value)):
+            ) and (is_scalar(value) or _is_synth_inline(value)):
                 self._inline_typed_replace(key, value)
                 return
             # Same-flavour structural replace: mutate existing in
@@ -321,7 +317,7 @@ class Container(dict[str, Any]):
             # through followed by an unsupported-insert raise that
             # leaves the doc partially mutated.
             if (
-                _is_scalar(value)
+                is_scalar(value)
                 or _is_synth_inline(value)
                 or isinstance(value, AoT)
                 or _is_section(value)
@@ -372,8 +368,8 @@ class Container(dict[str, Any]):
             )
             raise TypeError(msg)
         # New direct-KV insert.
-        if _is_scalar(value):
-            _layout_ops.append_direct_kv(self, key, _coerce_scalar(value))
+        if is_scalar(value):
+            _layout_ops.append_direct_kv(self, key, coerce_scalar(value))
             dict.__setitem__(self, key, value)
             return
         if _is_synth_inline(value):
@@ -504,7 +500,7 @@ class Container(dict[str, Any]):
         if not isinstance(slot, KVSlot):
             msg = "internal: scalar replace expects KVSlot"
             raise AssertionError(msg)  # noqa: TRY004
-        slot.value = _coerce_scalar(value)
+        slot.value = coerce_scalar(value)
         dict.__setitem__(self, key, value)
 
     def _inline_typed_replace(self, key: str, value: Any) -> None:
@@ -637,7 +633,7 @@ class Container(dict[str, Any]):
         if _is_section(value):
             msg = "Cannot store a section-style table inside an inline-style table"
             raise TOMLError(msg)
-        if not _is_scalar(value) and not _is_synth_inline(value):
+        if not is_scalar(value) and not _is_synth_inline(value):
             msg = (
                 "live-attach of typed Container/Array/AoT into an inline table "
                 "is not supported"
@@ -652,8 +648,8 @@ class Container(dict[str, Any]):
             del self[key]
             self[key] = value
             return
-        if _is_scalar(value):
-            cst: Value = _coerce_scalar(value)
+        if is_scalar(value):
+            cst: Value = coerce_scalar(value)
             decoded: object = value
         else:
             cst, decoded = _synth_value(
@@ -1386,17 +1382,6 @@ def _to_python(v: Any) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def _is_scalar(v: object) -> bool:
-    """True iff ``v`` is a TOML scalar (and not an array / table)."""
-    # `bool` is an `int` subclass — explicit allow keeps the semantics
-    # in this gate clear.
-    if isinstance(v, bool):
-        return True
-    if isinstance(v, (int, float, str)):
-        return True
-    return isinstance(v, (datetime, date, time))
-
-
 def _is_section(v: object) -> TypeGuard[Container]:
     """True iff ``v`` is a non-inline (section-style) Container."""
     return isinstance(v, Container) and not v._inline  # noqa: SLF001
@@ -1427,72 +1412,6 @@ def _coerce_for_document_init(v: Any) -> Any:
             [{k: _coerce_for_document_init(sub) for k, sub in m.items()} for m in v]
         )
     return v
-
-
-def _coerce_scalar(
-    v: object,
-) -> StringValue | IntegerValue | FloatValue | BoolValue | DateTimeValue:
-    """Coerce a Python scalar to a fresh `Value` with a default lexeme."""
-    if isinstance(v, bool):
-        return BoolValue(lexeme="true" if v else "false", value=v)
-    if isinstance(v, int):
-        return IntegerValue(lexeme=str(v), value=v, style="dec")
-    if isinstance(v, float):
-        return FloatValue(lexeme=_float_lexeme(v), value=v)
-    if isinstance(v, str):
-        return StringValue(lexeme=_basic_string_lexeme(v), value=v, style="basic")
-    if isinstance(v, datetime):
-        return DateTimeValue(lexeme=v.isoformat(), value=v, kind=_dt_kind(v))
-    if isinstance(v, date):
-        return DateTimeValue(lexeme=v.isoformat(), value=v, kind="local-date")
-    if isinstance(v, time):
-        return DateTimeValue(lexeme=v.isoformat(), value=v, kind="local-time")
-    msg = f"cannot coerce {type(v).__name__} to a TOML scalar"
-    raise TypeError(msg)
-
-
-def _float_lexeme(v: float) -> str:
-    if math.isnan(v):
-        return "nan"
-    if math.isinf(v):
-        return "-inf" if v < 0 else "inf"
-    s = repr(v)
-    # Python may emit "1e10" — TOML requires a fractional component or an
-    # exponent; keep the repr() output as is (TOML accepts both).
-    if "." not in s and "e" not in s and "E" not in s and "n" not in s:
-        s += ".0"
-    return s
-
-
-def _basic_string_lexeme(v: str) -> str:
-    out = ['"']
-    for ch in v:
-        c = ord(ch)
-        if ch == "\\":
-            out.append("\\\\")
-        elif ch == '"':
-            out.append('\\"')
-        elif ch == "\b":
-            out.append("\\b")
-        elif ch == "\t":
-            out.append("\\t")
-        elif ch == "\n":
-            out.append("\\n")
-        elif ch == "\f":
-            out.append("\\f")
-        elif ch == "\r":
-            out.append("\\r")
-        elif c < 0x20 or c == 0x7F:
-            out.append(f"\\u{c:04X}")
-        else:
-            out.append(ch)
-    out.append('"')
-    return "".join(out)
-
-
-def _dt_kind(v: object) -> DateLikeKind:
-    assert isinstance(v, datetime)
-    return "offset-datetime" if v.tzinfo is not None else "local-datetime"
 
 
 # `_array` depends on `Container` for `Table`, so the import is at the
@@ -1555,8 +1474,8 @@ def _synth_value(
     Anything else raises ``TypeError`` (mentioning the type name and
     the prefix ``"Cannot convert"``).
     """
-    if _is_scalar(v):
-        return _coerce_scalar(v), v
+    if is_scalar(v):
+        return coerce_scalar(v), v
     if isinstance(v, AoT):
         msg = "live-attach of AoT through value synthesis is not supported"
         raise NotImplementedError(msg)
