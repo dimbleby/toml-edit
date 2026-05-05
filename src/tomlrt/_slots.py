@@ -176,17 +176,39 @@ AoTHeaderSlot = StructuralHeaderSlot
 
 @dataclass(eq=False)
 class SlotRef:
-    """A per-container occurrence of a slot."""
+    """A per-container occurrence of a slot.
+
+    A `SlotRef` records that `slot` contributes to `container`'s
+    logical view. The key under which it is filed in
+    `container._index` is derived from the geometry of
+    (slot, container) and exposed via `local_key`.
+    """
 
     slot: Slot
     container: Container
-    local_key: str | None
-    """The key under which this ref is filed in
-    ``container._index`` — exactly one path component for body and
-    child-binding refs. ``None`` for the container's own header
-    ref (which lives in ``_refs`` + ``_header_ref``, not in
-    ``_index``).
-    """
+
+    @property
+    def local_key(self) -> str | None:
+        """Key under which this ref is filed in ``container._index``.
+
+        ``None`` for the container's own header ref (which lives in
+        ``_refs`` + ``_header_ref``, not in ``_index``); otherwise a
+        single path component, derived from the slot's logical path
+        and the container's depth.
+        """
+        slot = self.slot
+        c_path = self.container._path  # noqa: SLF001
+        if isinstance(slot, StructuralHeaderSlot):
+            if slot.path == c_path:
+                return None
+            # Binding ref in an ancestor: next path step.
+            assert len(slot.path) > len(c_path)
+            assert slot.path[: len(c_path)] == c_path
+            return slot.path[len(c_path)]
+        assert isinstance(slot, KVSlot)
+        j = len(c_path) - len(slot.host_path)
+        assert 0 <= j < len(slot.key_parts)
+        return slot.key_parts[j].value
 
 
 __all__ = [

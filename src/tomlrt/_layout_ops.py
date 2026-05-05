@@ -100,13 +100,13 @@ def _file_synthetic_header_and_kv(
     and ancestor binding-ref filing remain explicit in callers; both
     are highly position-sensitive and not safe to share.
     """
-    own_header_ref = SlotRef(slot=header_slot, container=c, local_key=None)
+    own_header_ref = SlotRef(slot=header_slot, container=c)
     c._refs.insert(header_ref_index, own_header_ref)  # noqa: SLF001
     c._header_ref = own_header_ref  # noqa: SLF001
 
     new_kv = _new_kv_slot(c, key, value, doc, owner, leading=Trivia())
     insert_after(header_slot, new_kv, doc)
-    kv_ref = SlotRef(slot=new_kv, container=c, local_key=key)
+    kv_ref = SlotRef(slot=new_kv, container=c)
     c._refs.insert(header_ref_index + 1, kv_ref)  # noqa: SLF001
     c._index.setdefault(key, []).append(kv_ref)  # noqa: SLF001
     c._body_tail = new_kv  # noqa: SLF001
@@ -133,7 +133,7 @@ def _wire_section_container(
     c._path = path  # noqa: SLF001
     c._parent = parent  # noqa: SLF001
     c._owner_aot_entry = owner  # noqa: SLF001
-    ref = SlotRef(slot=header, container=c, local_key=None)
+    ref = SlotRef(slot=header, container=c)
     c._refs.append(ref)  # noqa: SLF001
     c._header_ref = ref  # noqa: SLF001
     return ref
@@ -347,7 +347,7 @@ def append_direct_kv(c: Container, key: str, value: Value) -> None:
         # slot's leading.
         insert_before_head(new_slot, doc)
 
-    new_ref = SlotRef(slot=new_slot, container=c, local_key=key)
+    new_ref = SlotRef(slot=new_slot, container=c)
     # The new ref's correct position in ``c._refs`` is immediately
     # after the anchor ref (the previous body_tail's ref). With no
     # anchor: head-of-doc insert (3d-5) → index 0, so the ref
@@ -895,7 +895,7 @@ def _append_dotted_kv_under_implicit(c: Container, key: str, value: Value) -> No
     # structural primary (e.g. a header-owning ref on the host) at
     # index 0; a new dotted contributor is always secondary.
     for i, anc in enumerate(chain):
-        new_ref = SlotRef(slot=new_slot, container=anc, local_key=local_keys[i])
+        new_ref = SlotRef(slot=new_slot, container=anc)
         anchor_idx = _find_ref_index_by_slot(anc, body_tail)
         anc._refs.insert(anchor_idx + 1, new_ref)  # noqa: SLF001
         # ``_index[local_key]`` must equal the doc-stream-ordered
@@ -982,7 +982,7 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
     # for ancestor at distance d from c, local_key = c._path[-d].
     for d, anc in enumerate(ancestors, start=1):
         local_key = c._path[-d]  # noqa: SLF001
-        binding_ref = SlotRef(slot=header_slot, container=anc, local_key=local_key)
+        binding_ref = SlotRef(slot=header_slot, container=anc)
         anchor_idx_anc = _find_ref_index_by_slot(anc, anchor_slot)
         anc._refs.insert(anchor_idx_anc, binding_ref)  # noqa: SLF001
         # Rebuild _index[local_key] to preserve doc-stream order
@@ -1066,7 +1066,7 @@ def _synthesise_header_then_insert_kv_at_doc_tail(
         entry_slot_set = set(owner.entry_slots)
     for d, anc in enumerate(ancestors, start=1):
         local_key = c._path[-d]  # noqa: SLF001
-        binding_ref = SlotRef(slot=header_slot, container=anc, local_key=local_key)
+        binding_ref = SlotRef(slot=header_slot, container=anc)
         if entry_slot_set is not None:
             insert_idx = len(anc._refs)  # noqa: SLF001
             for i in range(len(anc._refs) - 1, -1, -1):  # noqa: SLF001
@@ -1115,7 +1115,7 @@ def _append_kv_in_aot_entry(c: Container, key: str, value: Value) -> None:
     _ensure_terminator(anchor, doc)
     insert_after(anchor, new_slot, doc)
 
-    new_ref = SlotRef(slot=new_slot, container=c, local_key=key)
+    new_ref = SlotRef(slot=new_slot, container=c)
     if body_tail is not None:
         anchor_idx = _find_ref_index_by_slot(c, body_tail)
         c._refs.insert(anchor_idx + 1, new_ref)  # noqa: SLF001
@@ -1517,7 +1517,7 @@ def add_aot_entry(
         insert_after(anchor, header, doc)
 
     # File parent-chain refs for this entry's header.
-    parent_ref = SlotRef(slot=header, container=parent, local_key=path[-1])
+    parent_ref = SlotRef(slot=header, container=parent)
     _file_ref_at_tail(parent, parent_ref)
 
     # Append the new entry to the AoT view list.
@@ -1681,8 +1681,7 @@ def _install_cloned_aot_entry(
         prev = s
 
     parent_ref = SlotRef(
-        slot=cloned_header, container=parent, local_key=target_path[-1]
-    )
+        slot=cloned_header, container=parent)
     _file_ref_at_tail(parent, parent_ref)
 
     _populate_entry_views(
@@ -1768,7 +1767,7 @@ def _install_cloned_section(
 
     _splice_block_at_parent_anchor(cloned_slots, parent, doc)
 
-    parent_ref = SlotRef(slot=cloned_header, container=parent, local_key=key)
+    parent_ref = SlotRef(slot=cloned_header, container=parent)
     _file_ref_at_tail(parent, parent_ref)
 
     _populate_entry_views(
@@ -2032,15 +2031,14 @@ def _populate_entry_views(
         if isinstance(s, StructuralHeaderSlot):
             assert s.kind == "table"
             container = _ensure_container(s.path)
-            own_ref = SlotRef(slot=s, container=container, local_key=None)
+            own_ref = SlotRef(slot=s, container=container)
             container._refs.append(own_ref)  # noqa: SLF001
             container._header_ref = own_ref  # noqa: SLF001
             if s.path == target_prefix:
                 continue
-            local = s.path[-1]
             parent_path = s.path[:-1]
             parent_view = _ensure_container(parent_path)
-            binding = SlotRef(slot=s, container=parent_view, local_key=local)
+            binding = SlotRef(slot=s, container=parent_view)
             _file_ref_at_tail(parent_view, binding)
             continue
         assert isinstance(s, KVSlot)
@@ -2049,7 +2047,7 @@ def _populate_entry_views(
         slot_value = s.value
         if len(s.key_parts) == 1:
             key = s.key_parts[0].value
-            kv_ref = SlotRef(slot=s, container=host, local_key=key)
+            kv_ref = SlotRef(slot=s, container=host)
             _file_ref_at_tail(host, kv_ref)
             decoded = _decode_value(
                 slot_value,
@@ -2063,7 +2061,7 @@ def _populate_entry_views(
             cur = host
             for kp in s.key_parts[:-1]:
                 comp = kp.value
-                ref = SlotRef(slot=s, container=cur, local_key=comp)
+                ref = SlotRef(slot=s, container=cur)
                 _file_ref_at_tail(cur, ref)
                 if comp not in cur:
                     sub = _init_implicit_table(doc, (*cur._path, comp), cur, body_owner)  # noqa: SLF001
@@ -2075,7 +2073,7 @@ def _populate_entry_views(
                     raise AssertionError(msg)  # noqa: TRY004
                 cur = nxt
             leaf_key = s.key_parts[-1].value
-            kv_ref = SlotRef(slot=s, container=cur, local_key=leaf_key)
+            kv_ref = SlotRef(slot=s, container=cur)
             _file_ref_at_tail(cur, kv_ref)
             decoded = _decode_value(
                 slot_value,
@@ -2228,7 +2226,7 @@ def attach_section_at(
 
     # File the binding ref under the deepest implicit parent.
     deepest_parent = chain[-1]
-    parent_ref = SlotRef(slot=header, container=deepest_parent, local_key=sub[-1])
+    parent_ref = SlotRef(slot=header, container=deepest_parent)
     _file_ref_at_tail(deepest_parent, parent_ref)
     dict.__setitem__(deepest_parent, sub[-1], section)
 
@@ -2237,7 +2235,7 @@ def attach_section_at(
     for j in range(len(sub) - 1):
         anc = chain[j]
         comp = sub[j]
-        anc_ref = SlotRef(slot=header, container=anc, local_key=comp)
+        anc_ref = SlotRef(slot=header, container=anc)
         _file_ref_at_tail(anc, anc_ref)
 
     _maybe_demote_synthetic_empty_header(parent)
@@ -2319,7 +2317,7 @@ def attach_section(
     else:
         _splice_block_at_parent_anchor([header], parent, doc)
 
-    parent_ref = SlotRef(slot=header, container=parent, local_key=key)
+    parent_ref = SlotRef(slot=header, container=parent)
     _file_ref_at_tail(parent, parent_ref)
     dict.__setitem__(parent, key, section)
 
