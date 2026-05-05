@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Iterable, MutableMapping
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 if sys.version_info >= (3, 12):
     from typing import override
@@ -118,7 +118,17 @@ def _direct_kv_slot(c: Container, key: str) -> KVSlot | None:
     return None
 
 
-class EolCommentView(MutableMapping[str, str]):
+_T = TypeVar("_T")
+
+
+class _SlotKeyedView(MutableMapping[str, _T]):
+    """Mapping over Container keys whose direct-KV slot satisfies a predicate.
+
+    Subclasses provide ``_present(slot)`` plus the read/write/delete
+    item methods. The base supplies ``__init__``, ``__contains__``,
+    ``__iter__``, ``__len__`` and ``__repr__``.
+    """
+
     __slots__ = ("_c",)
 
     def __init__(self, container: Container) -> None:
@@ -126,6 +136,9 @@ class EolCommentView(MutableMapping[str, str]):
 
     def _slot(self, key: str) -> KVSlot | None:
         return _direct_kv_slot(self._c, key)
+
+    def _present(self, slot: KVSlot) -> bool:
+        raise NotImplementedError
 
     @override
     def __repr__(self) -> str:
@@ -136,7 +149,31 @@ class EolCommentView(MutableMapping[str, str]):
         if not isinstance(key, str):
             return False
         slot = self._slot(key)
-        return slot is not None and slot.eol.comment is not None
+        return slot is not None and self._present(slot)
+
+    @override
+    def __iter__(self) -> Iterator[str]:
+        seen: set[str] = set()
+        for ref in self._c._refs:  # noqa: SLF001
+            k = ref.local_key
+            if k is None or k in seen:
+                continue
+            slot = self._slot(k)
+            if slot is not None and self._present(slot):
+                seen.add(k)
+                yield k
+
+    @override
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
+
+
+class EolCommentView(_SlotKeyedView[str]):
+    __slots__ = ()
+
+    @override
+    def _present(self, slot: KVSlot) -> bool:
+        return slot.eol.comment is not None
 
     @override
     def __getitem__(self, key: str) -> str:
@@ -164,22 +201,6 @@ class EolCommentView(MutableMapping[str, str]):
         # don't leave a dangling tail like `key = 1   \n`.
         if slot.eol.trailing_ws is not None:
             slot.eol.trailing_ws = None
-
-    @override
-    def __iter__(self) -> Iterator[str]:
-        seen: set[str] = set()
-        for ref in self._c._refs:  # noqa: SLF001
-            k = ref.local_key
-            if k is None or k in seen:
-                continue
-            slot = self._slot(k)
-            if slot is not None and slot.eol.comment is not None:
-                seen.add(k)
-                yield k
-
-    @override
-    def __len__(self) -> int:
-        return sum(1 for _ in self)
 
 
 def _split_leading_into_lines(leading: Trivia) -> list[list[TriviaPiece]]:
@@ -258,26 +279,11 @@ def _slot_has_attached_comments(slot: Slot) -> bool:
     return any(_line_is_comment(line) for line in attached)
 
 
-class LeadingCommentView(MutableMapping[str, tuple[str, ...]]):
-    __slots__ = ("_c",)
-
-    def __init__(self, container: Container) -> None:
-        self._c = container
-
-    def _slot(self, key: str) -> KVSlot | None:
-        return _direct_kv_slot(self._c, key)
+class LeadingCommentView(_SlotKeyedView[tuple[str, ...]]):
+    __slots__ = ()
 
     @override
-    def __repr__(self) -> str:
-        return repr(dict(self))
-
-    @override
-    def __contains__(self, key: object) -> bool:
-        if not isinstance(key, str):
-            return False
-        slot = self._slot(key)
-        if slot is None:
-            return False
+    def _present(self, slot: KVSlot) -> bool:
         return _slot_has_attached_comments(slot)
 
     @override
@@ -309,24 +315,6 @@ class LeadingCommentView(MutableMapping[str, tuple[str, ...]]):
             kept.extend(line)
         kept.extend(indent)
         slot.leading.pieces = kept
-
-    @override
-    def __iter__(self) -> Iterator[str]:
-        seen: set[str] = set()
-        for ref in self._c._refs:  # noqa: SLF001
-            k = ref.local_key
-            if k is None or k in seen:
-                continue
-            slot = self._slot(k)
-            if slot is None:
-                continue
-            if _slot_has_attached_comments(slot):
-                seen.add(k)
-                yield k
-
-    @override
-    def __len__(self) -> int:
-        return sum(1 for _ in self)
 
 
 def _header_slot(c: Container) -> StructuralHeaderSlot | None:

@@ -33,7 +33,7 @@ from __future__ import annotations
 import contextlib
 import sys
 from collections.abc import MutableMapping
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 if sys.version_info >= (3, 12):
     from typing import override
@@ -203,11 +203,54 @@ def _slot_indent(arr: Array) -> str:
 # ---------------------------------------------------------------------------
 
 
-class ArrayEolView(MutableMapping[int, str]):
+_T = TypeVar("_T")
+
+
+class _ArrayIntKeyedView(MutableMapping[int, _T]):
+    """Mapping over Array item indices whose item satisfies a predicate.
+
+    Subclasses provide ``_present(idx)`` plus the read/write/delete
+    item methods. The base supplies ``__init__``, ``__contains__``,
+    ``__iter__``, ``__len__``.
+    """
+
     __slots__ = ("_arr",)
 
     def __init__(self, arr: Array) -> None:
         self._arr = arr
+
+    def _present(self, idx: int) -> bool:
+        raise NotImplementedError
+
+    @override
+    def __contains__(self, key: object) -> bool:
+        if not isinstance(key, int) or isinstance(key, bool):
+            return False
+        try:
+            idx = _check_index(self._arr, key)
+        except KeyError:
+            return False
+        return self._present(idx)
+
+    @override
+    def __iter__(self) -> Iterator[int]:
+        items = _items_or_raise(self._arr)
+        for i in range(len(items)):
+            if self._present(i):
+                yield i
+
+    @override
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
+
+
+class ArrayEolView(_ArrayIntKeyedView[str]):
+    __slots__ = ()
+
+    @override
+    def _present(self, idx: int) -> bool:
+        items = _items_or_raise(self._arr)
+        return _item_eol(items[idx]) is not None
 
     @override
     def __getitem__(self, key: int) -> str:
@@ -275,41 +318,20 @@ class ArrayEolView(MutableMapping[int, str]):
         raise KeyError(key)
 
     @override
-    def __iter__(self) -> Iterator[int]:
-        items = _items_or_raise(self._arr)
-        for i, it in enumerate(items):
-            if _item_eol(it) is not None:
-                yield i
-
-    @override
-    def __len__(self) -> int:
-        return sum(1 for _ in iter(self))
-
-    @override
-    def __contains__(self, key: object) -> bool:
-        if not isinstance(key, int) or isinstance(key, bool):
-            return False
-        try:
-            idx = _check_index(self._arr, key)
-        except KeyError:
-            return False
-        items = _items_or_raise(self._arr)
-        return _item_eol(items[idx]) is not None
-
-    @override
     def __repr__(self) -> str:
         return repr(dict(self))
 
 
-class ArrayLeadingView(MutableMapping[int, tuple[str, ...]]):
-    __slots__ = ("_arr",)
-
-    def __init__(self, arr: Array) -> None:
-        self._arr = arr
+class ArrayLeadingView(_ArrayIntKeyedView[tuple[str, ...]]):
+    __slots__ = ()
 
     def _read(self, idx: int) -> tuple[str, ...]:
         items = _items_or_raise(self._arr)
         return _comments_from_lines(_leading_pieces(items, idx))
+
+    @override
+    def _present(self, idx: int) -> bool:
+        return bool(self._read(idx))
 
     @override
     def __getitem__(self, key: int) -> tuple[str, ...]:
@@ -406,28 +428,6 @@ class ArrayLeadingView(MutableMapping[int, tuple[str, ...]]):
     def __delitem__(self, key: int) -> None:
         idx = _check_index(self._arr, key)
         self._delete(idx, allow_missing=False)
-
-    @override
-    def __iter__(self) -> Iterator[int]:
-        items = _items_or_raise(self._arr)
-        for i in range(len(items)):
-            if _comments_from_lines(_leading_pieces(items, i)):
-                yield i
-
-    @override
-    def __len__(self) -> int:
-        return sum(1 for _ in iter(self))
-
-    @override
-    def __contains__(self, key: object) -> bool:
-        if not isinstance(key, int) or isinstance(key, bool):
-            return False
-        try:
-            idx = _check_index(self._arr, key)
-        except KeyError:
-            return False
-        items = _items_or_raise(self._arr)
-        return bool(_comments_from_lines(_leading_pieces(items, idx)))
 
     @override
     def __repr__(self) -> str:
