@@ -1210,7 +1210,7 @@ def _deep_section_clone(c: Container) -> Container:
     return out
 
 
-def _reset_table_for_rehome(t: Container) -> None:
+def _reset_table_for_rehome(t: Container, *, recurse: bool = False) -> None:
     """Clear a Table's slot infrastructure so it can be reattached.
 
     Preserves dict storage (so post-detach mutations survive) but
@@ -1218,11 +1218,14 @@ def _reset_table_for_rehome(t: Container) -> None:
     / `_refs` / `_index` / `_header_ref` / `_body_tail` so the
     standard attach path treats `t` as if freshly constructed.
 
-    Recurses into nested non-inline children **only** when the
-    child's `_layout_root` matches the root's previous layout root
-    (i.e. it belongs to the same detached subtree). Children
-    pointing at a different doc are left alone — they're an "alien"
-    live view that the standard cross-doc clone path will handle.
+    With ``recurse=True``, walks dict values and resets nested
+    non-inline ``Container`` / ``AoT`` children whose
+    ``_layout_root`` matches the root's previous layout root (i.e.
+    they belong to the same detached subtree). Children pointing
+    at a different doc are left alone — they're an "alien" live
+    view that the standard cross-doc clone path will handle.
+    Recursion is opt-in because most rehome callers operate on a
+    single freshly-detached Table and don't pay the subtree walk.
 
     Used when re-installing a held view that was detached into a
     private orphan ``Document``.
@@ -1239,14 +1242,16 @@ def _reset_table_for_rehome(t: Container) -> None:
     t._header_ref = None  # noqa: SLF001
     t._body_tail = None  # noqa: SLF001
 
+    if not recurse:
+        return
     for child in dict.values(t):
         if isinstance(child, Container) and not child._inline:  # noqa: SLF001
             if child._layout_root is old_root:  # noqa: SLF001
-                _reset_table_for_rehome(child)
+                _reset_table_for_rehome(child, recurse=True)
         elif isinstance(child, AoT):
             if child._layout_root is old_root:  # noqa: SLF001
                 for entry in list.__iter__(child):
-                    _reset_table_for_rehome(entry)
+                    _reset_table_for_rehome(entry, recurse=True)
                 child._layout_root = None  # noqa: SLF001
                 child._parent = None  # noqa: SLF001
                 child._path = ()  # noqa: SLF001

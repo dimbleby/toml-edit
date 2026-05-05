@@ -2583,7 +2583,7 @@ def remove_aot_entry(aot: object, index: int) -> object:
     from tomlrt._container import _reset_table_for_rehome  # noqa: PLC0415
 
     snapshot._layout_root = doc  # noqa: SLF001
-    _reset_table_for_rehome(snapshot)
+    _reset_table_for_rehome(snapshot, recurse=True)
 
     # If empty AoT now, also remove the parent _index[k] entry entirely
     # (dict storage of parent retains the AoT object).
