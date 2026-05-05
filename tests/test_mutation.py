@@ -2264,3 +2264,227 @@ def test_insert_before_later_child_section() -> None:
     doc = tomlrt.loads("a.x = 1\n\n[a.b]\ny = 2\n")
     doc.table("a")["z"] = 3
     assert tomlrt.dumps(doc) == "a.x = 1\na.z = 3\n\n[a.b]\ny = 2\n"
+
+
+# ---------------------------------------------------------------------------
+# Coverage gaps: unattached AoT mutators (Phase 13)
+# ---------------------------------------------------------------------------
+
+
+def test_unattached_aot_setitem_int() -> None:
+    aot = AoT([{"a": 1}, {"a": 2}])
+    aot[0] = {"a": 99}
+    assert aot[0]["a"] == 99
+    assert aot[1]["a"] == 2
+
+
+def test_unattached_aot_setitem_slice() -> None:
+    aot = AoT([{"a": 1}, {"a": 2}, {"a": 3}])
+    aot[1:3] = [{"a": 20}, {"a": 30}]
+    assert [t["a"] for t in aot] == [1, 20, 30]
+
+
+def test_unattached_aot_setitem_slice_grow() -> None:
+    aot = AoT([{"a": 1}])
+    aot[1:1] = [{"a": 2}, {"a": 3}]
+    assert [t["a"] for t in aot] == [1, 2, 3]
+
+
+def test_unattached_aot_setitem_non_iterable_raises() -> None:
+    aot = AoT([{"a": 1}])
+    with pytest.raises(TypeError, match="iterable"):
+        aot[0:1] = 5  # type: ignore[call-overload]
+
+
+def test_unattached_aot_append_via_list_api() -> None:
+    aot = AoT()
+    aot.append({"a": 1})
+    aot.append({"a": 2})
+    assert [t["a"] for t in aot] == [1, 2]
+
+
+def test_unattached_aot_insert() -> None:
+    aot = AoT([{"a": 1}, {"a": 3}])
+    aot.insert(1, {"a": 2})
+    assert [t["a"] for t in aot] == [1, 2, 3]
+
+
+def test_unattached_aot_pop() -> None:
+    aot = AoT([{"a": 1}, {"a": 2}])
+    popped = aot.pop()
+    assert popped["a"] == 2
+    assert len(aot) == 1
+
+
+def test_unattached_aot_delitem() -> None:
+    aot = AoT([{"a": 1}, {"a": 2}, {"a": 3}])
+    del aot[1]
+    assert [t["a"] for t in aot] == [1, 3]
+
+
+def test_unattached_aot_delitem_slice() -> None:
+    aot = AoT([{"a": 1}, {"a": 2}, {"a": 3}])
+    del aot[0:2]
+    assert [t["a"] for t in aot] == [3]
+
+
+def test_unattached_aot_clear() -> None:
+    aot = AoT([{"a": 1}, {"a": 2}])
+    aot.clear()
+    assert len(aot) == 0
+
+
+def test_unattached_aot_reverse() -> None:
+    aot = AoT([{"a": 1}, {"a": 2}, {"a": 3}])
+    aot.reverse()
+    assert [t["a"] for t in aot] == [3, 2, 1]
+
+
+def test_unattached_aot_sort() -> None:
+    aot = AoT([{"a": 3}, {"a": 1}, {"a": 2}])
+    aot.sort(key=lambda t: t["a"])
+    assert [t["a"] for t in aot] == [1, 2, 3]
+
+
+def test_unattached_aot_then_attach_preserves_contents() -> None:
+    aot = AoT()
+    aot.append({"name": "a"})
+    aot.insert(0, {"name": "z"})
+    aot[1] = {"name": "b"}
+    doc = tomlrt.loads("")
+    doc["pkg"] = aot
+    assert _reparses(tomlrt.dumps(doc)) == {"pkg": [{"name": "z"}, {"name": "b"}]}
+
+
+# ---------------------------------------------------------------------------
+# Coverage gaps: ensure_table edge cases (Phase 13)
+# ---------------------------------------------------------------------------
+
+
+def test_ensure_table_on_inline_view_raises() -> None:
+    doc = tomlrt.loads("t = {a = 1}\n")
+    inline = doc.table("t")
+    with pytest.raises(tomlrt.TOMLError, match="inline"):
+        inline.ensure_table("sub")
+
+
+def test_ensure_table_through_aot_raises() -> None:
+    doc = tomlrt.loads("[[arr]]\nx = 1\n")
+    with pytest.raises(tomlrt.TOMLError, match="array-of-tables"):
+        doc.ensure_table(["arr", "sub"])
+
+
+def test_ensure_table_through_inline_value_raises() -> None:
+    doc = tomlrt.loads("t = {a = 1}\n")
+    with pytest.raises(tomlrt.TOMLError, match="inline table or non-table"):
+        doc.ensure_table(["t", "sub"])
+
+
+def test_ensure_table_on_detached_table_section() -> None:
+    t = Table.section()
+    sub = t.ensure_table(["a", "b", "c"])
+    sub["x"] = 1
+    assert dict(t["a"]["b"]["c"]) == {"x": 1}
+
+
+# ---------------------------------------------------------------------------
+# Coverage gaps: AoT clone-with-dotted-key + nested AoT cleanup (Phase 13)
+# ---------------------------------------------------------------------------
+
+
+def test_aot_entry_with_dotted_key_clones() -> None:
+    src = td(
+        """
+        [[arr]]
+        a.b = 1
+        a.c = 2
+        """,
+    )
+    doc = tomlrt.loads(src)
+    src_entry = doc.aot("arr")[0]
+    # Re-attach into a new AoT key — exercises clone path with dotted KVs.
+    doc["dst"] = AoT()
+    doc.aot("dst").append(src_entry)
+    assert _reparses(tomlrt.dumps(doc)) == {
+        "arr": [{"a": {"b": 1, "c": 2}}],
+        "dst": [{"a": {"b": 1, "c": 2}}],
+    }
+
+
+def test_delete_aot_entry_with_nested_aot() -> None:
+    src = td(
+        """
+        [[outer]]
+        x = 1
+
+        [[outer.inner]]
+        y = 10
+
+        [[outer.inner]]
+        y = 20
+
+        [[outer]]
+        x = 2
+        """,
+    )
+    doc = tomlrt.loads(src)
+    del doc.aot("outer")[0]
+    out = tomlrt.dumps(doc)
+    assert _reparses(out) == {"outer": [{"x": 2}]}
+    # The nested entries' headers must have gone with their parent.
+    assert "[[outer.inner]]" not in out
+
+
+# ---------------------------------------------------------------------------
+# Coverage gaps: standalone Array multiline + comment inheritance (Phase 13)
+# ---------------------------------------------------------------------------
+
+
+def test_standalone_array_multiline_property() -> None:
+    arr_single = Array([1, 2])
+    assert arr_single.multiline is False
+    arr_multi = Array([1, 2], multiline=True)
+    assert arr_multi.multiline is True
+
+
+def test_standalone_array_set_multiline_then_attach() -> None:
+    arr = Array([1, 2])
+    arr.set_multiline(multiline=True, indent="  ")
+    doc = tomlrt.loads("")
+    doc["xs"] = arr
+    out = tomlrt.dumps(doc)
+    assert "\n" in out  # rendered multiline
+    assert _reparses(out) == {"xs": [1, 2]}
+
+
+def test_collapse_multiline_with_nested_array_comment_raises() -> None:
+    src = td(
+        """
+        xs = [
+            [1, 2, # nested-eol
+            ],
+            [3, 4],
+        ]
+        """,
+    )
+    doc = tomlrt.loads(src)
+    arr = doc.array("xs")
+    with pytest.raises(tomlrt.TOMLError):
+        arr.set_multiline(multiline=False)
+
+
+def test_collapse_multiline_with_nested_inline_table_comment_raises() -> None:
+    src = td(
+        """
+        xs = [
+            { a = 1, # eol-in-inline
+              b = 2,
+            },
+            { a = 3, b = 4 },
+        ]
+        """,
+    )
+    doc = tomlrt.loads(src)
+    arr = doc.array("xs")
+    with pytest.raises(tomlrt.TOMLError):
+        arr.set_multiline(multiline=False)
