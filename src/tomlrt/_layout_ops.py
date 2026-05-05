@@ -2642,6 +2642,16 @@ def renormalise_aot_order(aot: object, new_logical_order: list[Any]) -> None:
     # Each ancestor holds entry-header refs (one per entry, filed under
     # the relevant path component); after splicing, those refs are out
     # of doc-stream order. Sort by slot's new doc-stream position.
+    chain: list[Container] = []
+    anc: Container | None = aot._parent  # noqa: SLF001
+    while anc is not None:
+        chain.append(anc)
+        anc = anc._parent  # noqa: SLF001
+    _resort_refs_by_doc_order(chain, doc)
+
+
+def _resort_refs_by_doc_order(containers: list[Container], doc: Document) -> None:
+    """Resort each container's ``_refs`` and ``_index[k]`` by linked-list position."""
     position: dict[int, int] = {}
     cur = doc._head  # noqa: SLF001
     idx = 0
@@ -2649,16 +2659,116 @@ def renormalise_aot_order(aot: object, new_logical_order: list[Any]) -> None:
         position[id(cur)] = idx
         idx += 1
         cur = cur._next  # noqa: SLF001
+    for c in containers:
+        c._refs.sort(key=lambda r: position.get(id(r.slot), 0))  # noqa: SLF001
+        for refs in c._index.values():  # noqa: SLF001
+            refs.sort(key=lambda r: position.get(id(r.slot), 0))
+
+
+def _gather_value_owned_slots(val: object) -> list[Slot]:
+    """Return all physical slots logically owned by ``val`` in doc-stream order.
+
+    For a section Table: header + body + nested sub-section slots.
+    For an AoT: every entry's ``entry_slots``, in entry order.
+    For anything else (scalar, inline, empty AoT): the empty list.
+    """
+    from tomlrt._array import AoT  # noqa: PLC0415
+    from tomlrt._container import Container as ContainerType  # noqa: PLC0415
+
+    if isinstance(val, AoT):
+        out: list[Slot] = []
+        for et in val:
+            e = et._owner_aot_entry  # noqa: SLF001
+            if e is not None:
+                out.extend(e.entry_slots)
+        return out
+    if (
+        isinstance(val, ContainerType)
+        and not val._inline  # noqa: SLF001
+        and val._header_ref is not None  # noqa: SLF001
+    ):
+        return list(_gather_section_slots(val))
+    return []
+
+
+def move_slots_to_anchor(
+    parent: Container,
+    key: str,
+    saved_anchor_prev: Slot | None,
+    saved_leading_pieces: list[Any],
+) -> None:
+    """Move ``parent[key]``'s owned slots to ``saved_anchor_prev``.
+
+    Splices the slot block immediately after ``saved_anchor_prev`` (or
+    to doc head if None), applies ``saved_leading_pieces`` to the new
+    head, and resorts the affected ancestor ``_refs``. Used by the
+    ``Container.__setitem__`` position-preserving structural replace
+    path: capture old position + leading before the replacement is
+    installed at end-of-doc, then move it back.
+    """
+    doc = parent._layout_root  # noqa: SLF001
+    if doc is None:
+        return
+    val = dict.__getitem__(parent, key)
+    slots = _gather_value_owned_slots(val)
+    if not slots:
+        # Empty AoT or other slotless binding — nothing to move.
+        return
+    head = slots[0]
+    tail = slots[-1]
+
+    if head._prev is saved_anchor_prev:  # noqa: SLF001
+        # Already at the saved position — only the leading needs fixing.
+        head.leading.pieces = list(saved_leading_pieces)
+        return
+
+    # Detach [head .. tail] from its current position in the linked list.
+    p = head._prev  # noqa: SLF001
+    n = tail._next  # noqa: SLF001
+    if p is not None:
+        p._next = n  # noqa: SLF001
+    else:
+        doc._head = n  # noqa: SLF001
+    if n is not None:
+        n._prev = p  # noqa: SLF001
+    else:
+        doc._tail = p  # noqa: SLF001
+
+    # Splice [head .. tail] in after saved_anchor_prev (or at doc head).
+    if saved_anchor_prev is None:
+        next_after = doc._head  # noqa: SLF001
+        head._prev = None  # noqa: SLF001
+        tail._next = next_after  # noqa: SLF001
+        if next_after is not None:
+            next_after._prev = tail  # noqa: SLF001
+        else:
+            doc._tail = tail  # noqa: SLF001
+        doc._head = head  # noqa: SLF001
+    else:
+        next_after = saved_anchor_prev._next  # noqa: SLF001
+        head._prev = saved_anchor_prev  # noqa: SLF001
+        saved_anchor_prev._next = head  # noqa: SLF001
+        tail._next = next_after  # noqa: SLF001
+        if next_after is not None:
+            next_after._prev = tail  # noqa: SLF001
+        else:
+            doc._tail = tail  # noqa: SLF001
+
+    head.leading.pieces = list(saved_leading_pieces)
+
+    # Resort ancestor refs by linked-list position; also recompute
+    # _body_tail on each (the move may have invalidated the cached
+    # tail when the moved slot block was the staging-tail of any
+    # ancestor body).
     chain: list[Container] = []
-    anc: Container | None = aot._parent  # noqa: SLF001
+    anc: Container | None = parent
     while anc is not None:
         chain.append(anc)
         anc = anc._parent  # noqa: SLF001
+    _resort_refs_by_doc_order(chain, doc)
     for c in chain:
-        c._refs.sort(key=lambda r: position[id(r.slot)])  # noqa: SLF001
-        for k, refs in c._index.items():  # noqa: SLF001
-            refs.sort(key=lambda r: position[id(r.slot)])
-            del k
+        if c._body_tail is not None:  # noqa: SLF001
+            c._body_tail = _recompute_body_tail(c)  # noqa: SLF001
 
 
 __all__ = [
@@ -2671,6 +2781,7 @@ __all__ = [
     "insert_after",
     "insert_before",
     "insert_before_head",
+    "move_slots_to_anchor",
     "remove_aot_entry",
     "renormalise_aot_order",
     "replace_aot_entry",

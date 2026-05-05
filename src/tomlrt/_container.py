@@ -313,27 +313,20 @@ class Container(dict[str, Any]):
                 and current._header_ref is not None  # noqa: SLF001
                 and isinstance(value, Mapping)
                 and not isinstance(value, AoT)
-            ):
-                # Section → any Mapping (typed Table.section, plain dict, ...).
-                current.clear()
-                for k, v in value.items():
-                    current[k] = v
-                return
-            if isinstance(current, AoT) and isinstance(value, (AoT, list)):
-                current.clear()
-                for entry in value:
-                    if not isinstance(entry, Mapping):
-                        msg = "AoT entries must be mappings"
-                        raise TypeError(msg)
-                    current.append(dict(entry))
-                return
-            # Mixed-flavour structural overwrite: delete the existing
-            # binding (which tears down its slots and dict entry) and
-            # re-enter __setitem__ at the new-key path. Position
-            # fidelity is sacrificed (the new binding lands at the
-            # tail of `self`'s body region rather than where the old
-            # binding used to live) — acceptable for Phase 4
-            # first-cut; revisit if golden tests demand it.
+            ) or (isinstance(current, AoT) and isinstance(value, (AoT, list))):
+                # Same-flavour structural replace falls through to the
+                # mixed-flavour del+set+move path below: the old view
+                # must be detached (user references must stop reaching
+                # the live doc) and the replacement re-installed at the
+                # captured position.
+                pass
+            # Mixed-flavour (and same-flavour) structural overwrite:
+            # capture position + leading of the existing primary,
+            # delete the binding (which detaches the old view into a
+            # PrivateRoot), then re-enter __setitem__ at the new-key
+            # path. After the new value is installed (at end-of-doc by
+            # default), move its slot block back to the captured
+            # position with the saved leading.
             #
             # Preflight: only accept value shapes the new-key path
             # actually supports today, so a deletion doesn't go
@@ -346,8 +339,45 @@ class Container(dict[str, Any]):
                 or (isinstance(value, Container) and not value._inline)  # noqa: SLF001
                 or isinstance(value, Mapping)
             ):
+                from tomlrt import _layout_ops  # noqa: PLC0415
+
+                primary_refs = self._index.get(key, [])
+                saved_anchor_prev = None
+                saved_leading_pieces: list[Any] = []
+                successor_slot = None
+                successor_leading: list[Any] | None = None
+                if primary_refs:
+                    old_primary = primary_refs[0].slot
+                    saved_anchor_prev = old_primary._prev  # noqa: SLF001
+                    saved_leading_pieces = list(old_primary.leading.pieces)
+                    owned = _layout_ops._gather_value_owned_slots(current)  # noqa: SLF001
+                    if owned:
+                        successor_slot = owned[-1]._next  # noqa: SLF001
+                        if successor_slot is not None:
+                            successor_leading = list(successor_slot.leading.pieces)
                 del self[key]
                 self[key] = value
+                if primary_refs and (
+                    isinstance(value, AoT)
+                    or (isinstance(value, Container) and not value._inline)  # noqa: SLF001
+                    or isinstance(value, Mapping)
+                ):
+                    _layout_ops.move_slots_to_anchor(
+                        self, key, saved_anchor_prev, saved_leading_pieces
+                    )
+                    # Restore the successor's leading only if it's
+                    # still the live slot immediately following the
+                    # moved block — otherwise we'd risk overwriting
+                    # a detached/orphaned slot's trivia or the wrong
+                    # boundary.
+                    if successor_slot is not None and successor_leading is not None:
+                        new_owned = _layout_ops._gather_value_owned_slots(  # noqa: SLF001
+                            dict.__getitem__(self, key)
+                        )
+                        if (
+                            new_owned and new_owned[-1]._next is successor_slot  # noqa: SLF001
+                        ):
+                            successor_slot.leading.pieces = list(successor_leading)
                 return
             # Unsupported value type — TypeError, not NIE.
             msg = (
