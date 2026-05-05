@@ -20,6 +20,13 @@ else:
 from copy import deepcopy
 
 from tomlrt import _layout_ops
+from tomlrt._array_comments import (
+    ArrayEolView,
+    ArrayLeadingView,
+    apply_comments,
+    clear_all_comments,
+    snapshot_comments,
+)
 from tomlrt._errors import TOMLError
 from tomlrt._trivia import CommentNode, NewlineNode, Trivia, WhitespaceNode
 from tomlrt._values import (
@@ -41,7 +48,6 @@ if TYPE_CHECKING:
     else:
         from typing_extensions import Self
 
-    from tomlrt._array_comments import ArrayEolView, ArrayLeadingView
     from tomlrt._container import Container, Document, Table
 
 
@@ -181,15 +187,11 @@ class Array(list[Any]):
     @property
     def comments(self) -> ArrayEolView:
         """EOL comment view, indexed by item position."""
-        from tomlrt._array_comments import ArrayEolView  # noqa: PLC0415
-
         return ArrayEolView(self)
 
     @property
     def leading_comments(self) -> ArrayLeadingView:
         """Leading-comment view, indexed by item position."""
-        from tomlrt._array_comments import ArrayLeadingView  # noqa: PLC0415
-
         return ArrayLeadingView(self)
 
     def set_multiline(self, *, multiline: bool, indent: str | None = None) -> Array:
@@ -338,12 +340,6 @@ class Array(list[Any]):
         if self._value is None:
             msg = "Array.pop on detached Array"
             raise NotImplementedError(msg)
-        from tomlrt._array_comments import (  # noqa: PLC0415
-            apply_comments,
-            clear_all_comments,
-            snapshot_comments,
-        )
-
         n = len(self)
         i = int(index)
         if i < 0:
@@ -389,12 +385,6 @@ class Array(list[Any]):
         if self._value is None:
             msg = "Array.insert on detached Array"
             raise NotImplementedError(msg)
-        from tomlrt._array_comments import (  # noqa: PLC0415
-            apply_comments,
-            clear_all_comments,
-            snapshot_comments,
-        )
-
         cst, decoded = self._synth_cst(value)
         i = int(index)
         n = len(self)
@@ -489,12 +479,6 @@ class Array(list[Any]):
         if self._value is None:
             list.reverse(self)
             return
-        from tomlrt._array_comments import (  # noqa: PLC0415
-            apply_comments,
-            clear_all_comments,
-            snapshot_comments,
-        )
-
         items = self._value.items
         # Snapshot bracket padding + style before reorder; the leading
         # of items[0] and the trailing of items[-1] are bracket-padding
@@ -516,12 +500,6 @@ class Array(list[Any]):
         if self._value is None:
             list.sort(self, key=key, reverse=reverse)
             return
-        from tomlrt._array_comments import (  # noqa: PLC0415
-            apply_comments,
-            clear_all_comments,
-            snapshot_comments,
-        )
-
         n = len(self)
         if key is None:
             order = sorted(range(n), key=lambda i: self[i], reverse=reverse)
