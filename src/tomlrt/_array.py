@@ -1059,7 +1059,7 @@ class AoT(list["Table"]):
     def __deepcopy__(self, memo: dict[int, Any]) -> AoT:
         return AoT(self.to_list())
 
-    def add(self, body: object | None = None) -> Table:
+    def add(self, body: Mapping[str, Any] | None = None) -> Table:
         """Append a fresh ``[[path]]`` entry and return its `Table` view.
 
         ``body`` may be a Mapping (initial body content) or ``None``
@@ -1230,7 +1230,7 @@ class AoT(list["Table"]):
         assert isinstance(value, Mapping)
         if self._layout_root is None:
             assert isinstance(value, dict)
-            list.__setitem__(self, index, _make_unattached_entry(value))
+            list.__setitem__(self, index, _make_unattached_entry(value))  # ty: ignore[invalid-argument-type]
             return
         self._replace_entry_attached(operator.index(index), value)  # ty: ignore[invalid-argument-type]
 
@@ -1326,13 +1326,12 @@ class AoT(list["Table"]):
         return self
 
 
-def _make_unattached_entry(body: object | None) -> Table:
+def _make_unattached_entry(body: Mapping[str, Any] | None) -> Table:
     """Build a fresh unattached `Table` view as an AoT-entry placeholder."""
     from tomlrt._container import Table  # noqa: PLC0415
 
     t = Table()
     if body is not None:
-        assert isinstance(body, dict)
         for k, v in body.items():
             dict.__setitem__(t, k, v)
     return t

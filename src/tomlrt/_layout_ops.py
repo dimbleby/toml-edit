@@ -31,7 +31,6 @@ from __future__ import annotations
 import contextlib
 import copy
 import re
-from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Literal
 
 from tomlrt._slots import AoTEntry, KVSlot, SlotRef, StructuralHeaderSlot
@@ -41,10 +40,10 @@ from tomlrt._values import KeyPart
 HeaderKind = Literal["table", "aot-entry"]
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping, Sequence
 
     from tomlrt._array import AoT
-    from tomlrt._container import Container, Document
+    from tomlrt._container import Container, Document, Table
     from tomlrt._slots import Slot
     from tomlrt._values import Value
 
@@ -400,7 +399,7 @@ def delete_key(c: Container, key: str) -> None:
 def _collect_subtree(
     val: object,
     containers_out: list[Container],
-    aots_out: list[Any],
+    aots_out: list[AoT],
     add_ref: Callable[[SlotRef], None],
 ) -> None:
     """Walk ``val``'s container subtree, collecting containers, AoTs and refs."""
@@ -1324,18 +1323,13 @@ def _build_section_leading(doc: Document) -> Trivia:
     return Trivia()
 
 
-def attach_empty_aot(parent: Container, key: str, source_aot: object) -> object:
+def attach_empty_aot(parent: Container, key: str, source_aot: AoT) -> AoT:
     """Bind an empty AoT under ``parent[key]``.
 
     No physical slots are created; subsequent ``aot.add(...)`` calls
     will materialise the first ``[[path]]`` header. The ``source_aot``
     is rehomed in place (identity preserved).
     """
-    from tomlrt._array import AoT  # noqa: PLC0415
-    from tomlrt._container import Container as ContainerType  # noqa: PLC0415
-
-    assert isinstance(source_aot, AoT)
-    assert isinstance(parent, ContainerType)
     if len(source_aot) > 0:
         msg = "non-empty AoT live-attach has its own routing"
         raise AssertionError(msg)
@@ -1364,7 +1358,9 @@ def _aot_separator(aot: AoT, doc: Document) -> Trivia:
     return Trivia()
 
 
-def add_aot_entry(aot: object, body: object, *, rehome: object | None = None) -> object:
+def add_aot_entry(
+    aot: AoT, body: Mapping[str, Any] | None, *, rehome: Container | None = None
+) -> Container:
     """Append a ``[[path]]`` entry to ``aot`` and return its `Table` view.
 
     If ``rehome`` is supplied (must be an unattached ``Table``), it is
@@ -1373,7 +1369,6 @@ def add_aot_entry(aot: object, body: object, *, rehome: object | None = None) ->
     storage is used as the source body and is cleared/repopulated
     in place.
     """
-    from tomlrt._array import AoT  # noqa: PLC0415
     from tomlrt._container import (  # noqa: PLC0415
         Table,
         _is_scalar,
@@ -1381,7 +1376,6 @@ def add_aot_entry(aot: object, body: object, *, rehome: object | None = None) ->
         _synth_value,
     )
 
-    assert isinstance(aot, AoT)
     parent = aot._parent  # noqa: SLF001
     layout_root = aot._layout_root  # noqa: SLF001
     path = aot._path  # noqa: SLF001
@@ -1468,11 +1462,11 @@ def add_aot_entry(aot: object, body: object, *, rehome: object | None = None) ->
 
 
 def clone_aot_entry(
-    aot: object,
-    src_entry_table: object,
+    aot: AoT,
+    src_entry_table: Container,
     *,
     dst_path: tuple[str, ...] | None = None,
-) -> object:
+) -> Container:
     """Append a deep CST clone of ``src_entry_table`` to ``aot``.
 
     Preserves the source entry's per-slot leading / EOL / lexeme bytes
@@ -1489,9 +1483,6 @@ def clone_aot_entry(
 
     Returns the new ``Table`` view.
     """
-    from tomlrt._container import Table  # noqa: PLC0415
-
-    assert isinstance(src_entry_table, Table)
     src_entry = src_entry_table._owner_aot_entry  # noqa: SLF001
     if src_entry is None:
         msg = "Source entry has no owning AoTEntry"
@@ -1506,7 +1497,7 @@ def clone_aot_entry(
     )
 
 
-def clone_aot_entry_from(aot: object, src_entry: AoTEntry) -> object:
+def clone_aot_entry_from(aot: AoT, src_entry: AoTEntry) -> Container:
     """Like ``clone_aot_entry`` but driven by a bare ``AoTEntry``.
 
     Used by the AoT private-orphan rehome path where the source entry
@@ -1527,17 +1518,15 @@ def clone_aot_entry_from(aot: object, src_entry: AoTEntry) -> object:
 
 
 def _clone_aot_entry_impl(
-    aot: object,
+    aot: AoT,
     src_entry: AoTEntry,
     *,
-    src_layout_root: object | None,
-    src_entry_table: object | None,  # noqa: ARG001
+    src_layout_root: Document | None,
+    src_entry_table: Container | None,  # noqa: ARG001
     dst_path: tuple[str, ...] | None,
-) -> object:
-    from tomlrt._array import AoT  # noqa: PLC0415
+) -> Container:
     from tomlrt._container import Table  # noqa: PLC0415
 
-    assert isinstance(aot, AoT)
     parent = aot._parent  # noqa: SLF001
     layout_root = aot._layout_root  # noqa: SLF001
     path = aot._path  # noqa: SLF001
@@ -1627,8 +1616,8 @@ def _clone_aot_entry_impl(
 def clone_aot_entry_as_table(
     parent: Container,
     key: str,
-    src_entry_table: object,
-) -> object:
+    src_entry_table: Container,
+) -> Container:
     """Install an AoT entry under ``parent[key]`` as a standard ``[key]`` table.
 
     Used by ``parent[key] = some_aot_entry`` and ``install`` paths.
@@ -1636,11 +1625,8 @@ def clone_aot_entry_as_table(
     ``[[..]]`` to ``[..]``, rebasing all paths from the source's
     AoT prefix to ``parent._path + (key,)``.
     """
-    from tomlrt._container import Container as ContainerType  # noqa: PLC0415
     from tomlrt._container import Table  # noqa: PLC0415
 
-    assert isinstance(parent, ContainerType)
-    assert isinstance(src_entry_table, Table)
     layout_root = parent._layout_root  # noqa: SLF001
     if layout_root is None:
         msg = "clone_aot_entry_as_table requires parent attached to a document"
@@ -1733,9 +1719,9 @@ def _gather_section_slots(src_table: Container) -> list[Slot]:
 
 
 def clone_table_as_aot_entry(
-    aot: object,
-    src_table: object,
-) -> object:
+    aot: AoT,
+    src_table: Container,
+) -> Container:
     """Append ``src_table`` (a standard ``[k]`` section) to ``aot`` as an entry.
 
     Deep-clones the source section's slots, rewriting the head from
@@ -1743,12 +1729,8 @@ def clone_table_as_aot_entry(
     section path to ``aot._path``. Preserves per-slot leading / EOL
     / lexeme bytes (so per-section comments survive).
     """
-    from tomlrt._array import AoT  # noqa: PLC0415
-    from tomlrt._container import Container as ContainerType  # noqa: PLC0415
     from tomlrt._container import Table  # noqa: PLC0415
 
-    assert isinstance(aot, AoT)
-    assert isinstance(src_table, ContainerType)
     parent = aot._parent  # noqa: SLF001
     layout_root = aot._layout_root  # noqa: SLF001
     path = aot._path  # noqa: SLF001
@@ -1825,8 +1807,8 @@ def clone_table_as_aot_entry(
 def clone_section_as_section(
     parent: Container,
     key: str,
-    src_table: object,
-) -> object:
+    src_table: Container,
+) -> Container:
     """Install a deep clone of a standard section under ``parent[key]``.
 
     Used for cross-doc table assignment / same-doc clone of an
@@ -1835,11 +1817,8 @@ def clone_section_as_section(
     by deep-cloning every owned slot and rebasing paths from
     ``src_table._path`` to ``parent._path + (key,)``.
     """
-    from tomlrt._container import Container as ContainerType  # noqa: PLC0415
     from tomlrt._container import Table  # noqa: PLC0415
 
-    assert isinstance(parent, ContainerType)
-    assert isinstance(src_table, ContainerType)
     layout_root = parent._layout_root  # noqa: SLF001
     if layout_root is None:
         msg = "clone_section_as_section requires parent attached to a document"
@@ -1897,18 +1876,15 @@ def clone_section_as_section(
 def clone_aot(
     parent: Container,
     key: str,
-    src_aot: object,
-) -> object:
+    src_aot: AoT,
+) -> AoT:
     """Install ``src_aot`` (an attached AoT) under ``parent[key]``.
 
     Each entry is deep-cloned with path-rebasing so any nested
     sub-sections stay logically inside the new key.
     """
     from tomlrt._array import AoT  # noqa: PLC0415
-    from tomlrt._container import Container as ContainerType  # noqa: PLC0415
 
-    assert isinstance(parent, ContainerType)
-    assert isinstance(src_aot, AoT)
     layout_root = parent._layout_root  # noqa: SLF001
     assert layout_root is not None
     target_path = (*parent._path, key)  # noqa: SLF001
@@ -2112,7 +2088,7 @@ def _populate_entry_views(
 
 def _validate_clonable_aot_entry(
     src_entry: AoTEntry,
-    src_entry_table: object,  # noqa: ARG001
+    src_entry_table: Container | None,  # noqa: ARG001
 ) -> list[Slot]:
     """Validate the source entry can be cloned; return its slot list.
 
@@ -2137,18 +2113,13 @@ def _validate_clonable_aot_entry(
     return src_slots
 
 
-def check_clone_aot_entry(aot: object, src_entry_table: object) -> None:
+def check_clone_aot_entry(aot: AoT, src_entry_table: Container) -> None:
     """Raise NotImplementedError/RuntimeError if `clone_aot_entry` would.
 
     Same preconditions as `clone_aot_entry`, but without any side
     effects. Used by `AoT.__imul__` to preflight every source entry
     so a failure on entry N does not leave entries 0..N-1 cloned.
     """
-    from tomlrt._array import AoT  # noqa: PLC0415
-    from tomlrt._container import Table  # noqa: PLC0415
-
-    assert isinstance(aot, AoT)
-    assert isinstance(src_entry_table, Table)
     if (
         aot._layout_root is None  # noqa: SLF001
         or aot._parent is None  # noqa: SLF001
@@ -2166,7 +2137,7 @@ def check_clone_aot_entry(aot: object, src_entry_table: object) -> None:
 def attach_section_at(
     parent: Container,
     sub_path: tuple[str, ...] | list[str],
-    source: object | None = None,
+    source: Mapping[str, Any] | Container | None = None,
 ) -> Any:
     """Synthesise ``[parent_path.sub_path]`` (multi-component) at end-of-doc.
 
@@ -2184,7 +2155,6 @@ def attach_section_at(
         _synth_value,
     )
 
-    assert isinstance(parent, ContainerType)
     sub = tuple(sub_path)
     if not sub:
         msg = "sub_path must not be empty"
@@ -2290,15 +2260,14 @@ def attach_section_at(
     return section
 
 
-def attach_section(parent: Container, key: str, source: object | None = None) -> object:
+def attach_section(
+    parent: Container, key: str, source: Mapping[str, Any] | Container | None = None
+) -> Container:
     """Synthesise ``[parent_path.key]`` at end-of-doc and attach.
 
     ``source`` may be ``None`` (empty section) or a Mapping (initial body).
     Returns the live `Table` view.
     """
-    from tomlrt._container import (  # noqa: PLC0415
-        Container as ContainerType,
-    )
     from tomlrt._container import (  # noqa: PLC0415
         Table,
         _is_scalar,
@@ -2306,7 +2275,6 @@ def attach_section(parent: Container, key: str, source: object | None = None) ->
         _synth_value,
     )
 
-    assert isinstance(parent, ContainerType)
     layout_root = parent._layout_root  # noqa: SLF001
     if layout_root is None:
         msg = "internal: parent has no layout root"
@@ -2394,19 +2362,13 @@ def attach_section(parent: Container, key: str, source: object | None = None) ->
     return section
 
 
-def _items_for_synth(source: object) -> list[tuple[Any, Any]]:
+def _items_for_synth(source: Mapping[str, Any] | Container) -> list[tuple[Any, Any]]:
     """Iterate items of a Mapping/dict/Container source as (key, value)."""
-    if isinstance(source, Mapping):
-        return list(source.items())
-    msg = f"cannot iterate items from {type(source).__name__}"
-    raise TypeError(msg)
+    return list(source.items())
 
 
-def _last_aot_slot(aot: object) -> Slot | None:
+def _last_aot_slot(aot: AoT) -> Slot | None:
     """Return the last doc-stream slot owned by any entry of ``aot``."""
-    from tomlrt._array import AoT  # noqa: PLC0415
-
-    assert isinstance(aot, AoT)
     last: Slot | None = None
     for entry_table in aot:
         e = entry_table._owner_aot_entry  # noqa: SLF001
@@ -2457,17 +2419,15 @@ def _scrub_refs_to_owned_slots(c: Container, owned: set[Slot]) -> None:
             pass
 
 
-def remove_aot_entry(aot: object, index: int) -> object:
+def remove_aot_entry(aot: AoT, index: int) -> Container:
     """Remove ``aot[index]``, unlink its slots, and return a snapshot.
 
     The snapshot is a fresh unattached `Table` populated from the
     removed entry's dict storage (deep-copied for plain values; nested
     live typed containers are not detached).
     """
-    from tomlrt._array import AoT  # noqa: PLC0415
     from tomlrt._container import Table  # noqa: PLC0415
 
-    assert isinstance(aot, AoT)
     n = len(aot)
     if not -n <= index < n:
         msg = f"AoT index {index} out of range (len {n})"
@@ -2553,9 +2513,9 @@ def remove_aot_entry(aot: object, index: int) -> object:
 
 
 def replace_aot_entry_with_clone(
-    aot: object,
+    aot: AoT,
     index: int,
-    src_entry_table: object,
+    src_entry_table: Container,
 ) -> None:
     """Replace ``aot[index]`` with a deep clone of ``src_entry_table``.
 
@@ -2567,11 +2527,6 @@ def replace_aot_entry_with_clone(
 
     Both entries must be attached AoT-entry tables.
     """
-    from tomlrt._array import AoT  # noqa: PLC0415
-    from tomlrt._container import Table  # noqa: PLC0415
-
-    assert isinstance(aot, AoT)
-    assert isinstance(src_entry_table, Table)
     n = len(aot)
     if not -n <= index < n:
         msg = f"AoT index {index} out of range (len {n})"
@@ -2655,7 +2610,7 @@ def replace_aot_entry_with_clone(
     )
 
 
-def replace_aot_entry(aot: object, index: int, body: Mapping[str, Any] | None) -> None:
+def replace_aot_entry(aot: AoT, index: int, body: Mapping[str, Any] | None) -> None:
     """Replace ``aot[index]`` in place.
 
     Keeps the entry's header slot and live `Table` view; just clears
@@ -2665,9 +2620,6 @@ def replace_aot_entry(aot: object, index: int, body: Mapping[str, Any] | None) -
     document size. Header position and `_refs` ordering are preserved
     by construction (no slot splicing involved).
     """
-    from tomlrt._array import AoT  # noqa: PLC0415
-
-    assert isinstance(aot, AoT)
     n = len(aot)
     if not -n <= index < n:
         msg = f"AoT index {index} out of range (len {n})"
@@ -2683,7 +2635,7 @@ def replace_aot_entry(aot: object, index: int, body: Mapping[str, Any] | None) -
         entry_table[k] = v
 
 
-def renormalise_aot_order(aot: object, new_logical_order: list[Any]) -> None:
+def renormalise_aot_order(aot: AoT, new_logical_order: Sequence[Table]) -> None:
     """Re-order an attached AoT's entries to ``new_logical_order``.
 
     Implements the locked-in "normalise on reorder" policy from the
@@ -2696,9 +2648,6 @@ def renormalise_aot_order(aot: object, new_logical_order: list[Any]) -> None:
     ``new_logical_order`` must be a permutation of the AoT's current
     entries (same set of `Table` objects, possibly reordered).
     """
-    from tomlrt._array import AoT  # noqa: PLC0415
-
-    assert isinstance(aot, AoT)
     if len(aot) <= 1:
         # Reverse / sort on 0 or 1 elements is a no-op.
         list.clear(aot)
