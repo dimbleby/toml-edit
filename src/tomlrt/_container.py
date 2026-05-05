@@ -433,16 +433,21 @@ class Container(dict[str, Any]):
             if src_root is not None and not src_root._is_private:  # noqa: SLF001
                 # Cross-doc / same-doc attached section source: deep-
                 # clone slots so trivia + nested sub-sections survive.
-                # Only applies when the source has its own structural
-                # header — implicit-source / whole-Document cases fall
-                # through to the snapshot path below.
                 if value._header_ref is not None:  # noqa: SLF001
                     if key in self:
                         del self[key]
                     _layout_ops.clone_section_as_section(self, key, value)
                     return
-                value = Table.section(value.to_dict())
-            elif src_root is not None and src_root._is_private:  # noqa: SLF001
+                # Implicit source / whole-Document: walk recursively
+                # and re-install each structural child via tuple-path
+                # `install`, preserving sections / AoTs as such (no
+                # flatten-to-inline) and keeping implicit chains
+                # implicit when there are no direct KVs to host.
+                if key in self:
+                    del self[key]
+                _install_attached_subtree(self, (key,), value)
+                return
+            if src_root is not None and src_root._is_private:  # noqa: SLF001
                 _reset_table_for_rehome(value)
             _layout_ops.attach_section(self, key, value)
             return
@@ -1114,6 +1119,48 @@ def _reset_table_for_rehome(t: Container) -> None:
     t._index = {}  # noqa: SLF001
     t._header_ref = None  # noqa: SLF001
     t._body_tail = None  # noqa: SLF001
+
+
+def _install_attached_subtree(
+    dst_parent: Container, dst_path: tuple[str, ...], src_table: Container
+) -> None:
+    """Recursively install an attached implicit / Document source.
+
+    Walks ``src_table.items()`` and re-installs each entry under
+    ``dst_parent`` using tuple-path :meth:`Container.install` so that
+    attached sections clone via ``clone_section_as_section`` and
+    AoTs clone via ``clone_aot``. Implicit chains stay implicit
+    (no ``[k]`` header is synthesised unless there are direct KVs to
+    host); when there *are* direct scalar / inline KVs at this level,
+    a ``Table.section`` snapshot is installed at ``dst_path`` to
+    carry them.
+    """
+    from tomlrt._array import AoT  # noqa: PLC0415
+
+    direct_kvs: list[tuple[str, Any]] = []
+    structural: list[tuple[str, Any]] = []
+    for k, v in src_table.items():
+        if isinstance(v, AoT) or (
+            isinstance(v, Container) and not v._inline  # noqa: SLF001
+        ):
+            structural.append((k, v))
+        else:
+            direct_kvs.append((k, v))
+
+    if direct_kvs:
+        snapshot = Table.section()
+        for k, v in direct_kvs:
+            snapshot[k] = _to_python(v)
+        dst_parent.install(dst_path, snapshot)
+
+    for k, v in structural:
+        sub_path = (*dst_path, k)
+        if isinstance(v, AoT) or (
+            isinstance(v, Container) and v._header_ref is not None  # noqa: SLF001
+        ):
+            dst_parent.install(sub_path, v)
+        elif isinstance(v, Container):
+            _install_attached_subtree(dst_parent, sub_path, v)
 
 
 def _split_path(path: str | Sequence[str]) -> list[str]:
