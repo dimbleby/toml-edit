@@ -268,106 +268,100 @@ class Container(dict[str, Any]):
             self._inline_setitem(key, value)
             return
         if key in self:
-            current = dict.__getitem__(self, key)
-            # Fast-path: pure scalar → scalar (cheap, no synth alloc).
-            if is_scalar(current) and is_scalar(value):
-                self._scalar_replace(key, value)
-                return
-            # Single-direct-KV-slot current → any synth-able value
-            # (scalar or inline). The slot's `value` field is swapped
-            # in place; ordering, comments, key spelling are preserved.
-            if (
-                is_scalar(current)
-                or _is_inline_table(current)
-                or isinstance(current, Array)
-            ) and (is_scalar(value) or _is_synth_inline(value)):
-                self._inline_typed_replace(key, value)
-                return
-            # Same-flavour structural replace: mutate existing in
-            # place. Preserves position, header trivia, leading
-            # comments. Identity of the *destination* container is
-            # preserved; the assigned `value` is *not* used as the
-            # live view (matches the dict-snapshot contract for the
-            # same-flavour case). Restricted to header-bearing
-            # current containers — purely implicit ones go through
-            # the delete+insert fallback so the new explicit header
-            # lands where the implicit subtree used to be.
-            if (
-                _is_section(current)
-                and current._header_ref is not None  # noqa: SLF001
-                and isinstance(value, Mapping)
-                and not isinstance(value, AoT)
-            ) or (isinstance(current, AoT) and isinstance(value, (AoT, list))):
-                # Same-flavour structural replace falls through to the
-                # mixed-flavour del+set+move path below: the old view
-                # must be detached (user references must stop reaching
-                # the live doc) and the replacement re-installed at the
-                # captured position.
-                pass
-            # Mixed-flavour (and same-flavour) structural overwrite:
-            # capture position + leading of the existing primary,
-            # delete the binding (which detaches the old view into a
-            # PrivateRoot), then re-enter __setitem__ at the new-key
-            # path. After the new value is installed (at end-of-doc by
-            # default), move its slot block back to the captured
-            # position with the saved leading.
-            #
-            # Preflight: only accept value shapes the new-key path
-            # actually supports today, so a deletion doesn't go
-            # through followed by an unsupported-insert raise that
-            # leaves the doc partially mutated.
-            if (
-                is_scalar(value)
-                or _is_synth_inline(value)
-                or isinstance(value, AoT)
-                or _is_section(value)
-                or isinstance(value, Mapping)
-            ):
-                primary_refs = self._index.get(key, [])
-                saved_anchor_prev = None
-                saved_leading_pieces: list[TriviaPiece] = []
-                successor_slot = None
-                successor_leading: list[TriviaPiece] | None = None
-                if primary_refs:
-                    old_primary = primary_refs[0].slot
-                    saved_anchor_prev = old_primary._prev  # noqa: SLF001
-                    saved_leading_pieces = list(old_primary.leading.pieces)
-                    owned = _layout_ops._gather_value_owned_slots(current)  # noqa: SLF001
-                    if owned:
-                        successor_slot = owned[-1]._next  # noqa: SLF001
-                        if successor_slot is not None:
-                            successor_leading = list(successor_slot.leading.pieces)
-                del self[key]
-                self[key] = value
-                if primary_refs and (
-                    isinstance(value, AoT)
-                    or _is_section(value)
-                    or isinstance(value, Mapping)
-                ):
-                    _layout_ops.move_slots_to_anchor(
-                        self, key, saved_anchor_prev, saved_leading_pieces
-                    )
-                    # Restore the successor's leading only if it's
-                    # still the live slot immediately following the
-                    # moved block — otherwise we'd risk overwriting
-                    # a detached/orphaned slot's trivia or the wrong
-                    # boundary.
-                    if successor_slot is not None and successor_leading is not None:
-                        new_owned = _layout_ops._gather_value_owned_slots(  # noqa: SLF001
-                            dict.__getitem__(self, key)
-                        )
-                        if (
-                            new_owned and new_owned[-1]._next is successor_slot  # noqa: SLF001
-                        ):
-                            successor_slot.leading.pieces = list(successor_leading)
-                return
-            # Unsupported value type — TypeError, not NIE.
-            msg = (
-                f"Cannot convert value of type {type(value).__name__!r} "
-                f"for TOML key {key!r}"
-            )
-            raise TypeError(msg)
-        # New direct-KV insert.
+            self._overwrite_existing(key, value)
+            return
+        self._insert_new(key, value)
+
+    def _overwrite_existing(self, key: str, value: Any) -> None:
+        """Replace the value at an already-bound key.
+
+        Tries cheap in-place strategies first (scalar swap, single-slot
+        typed replace) and falls through to the structural-overwrite
+        delete + reinsert + move-to-anchor path when the new value is
+        a different flavour — or the same flavour but section-shaped
+        (where in-place mutation would lose Python identity semantics
+        for the new view).
+        """
+        current = dict.__getitem__(self, key)
+        # Fast-path: pure scalar → scalar (cheap, no synth alloc).
+        if is_scalar(current) and is_scalar(value):
+            self._scalar_replace(key, value)
+            return
+        # Single-direct-KV-slot current → any synth-able value
+        # (scalar or inline). The slot's `value` field is swapped
+        # in place; ordering, comments, key spelling are preserved.
+        if (
+            is_scalar(current)
+            or _is_inline_table(current)
+            or isinstance(current, Array)
+        ) and (is_scalar(value) or _is_synth_inline(value)):
+            self._inline_typed_replace(key, value)
+            return
+        # Structural overwrite: capture position + leading of the
+        # existing primary, delete the binding (which detaches the old
+        # view into a PrivateRoot), then re-enter __setitem__ at the
+        # new-key path. After the new value is installed (at end-of-doc
+        # by default), move its slot block back to the captured
+        # position with the saved leading.
+        #
+        # Same-flavour structural (header-bearing section ← Mapping,
+        # AoT ← AoT/list) also falls through here so the old view's
+        # user references stop reaching the live doc.
+        if (
+            is_scalar(value)
+            or _is_synth_inline(value)
+            or isinstance(value, AoT)
+            or _is_section(value)
+            or isinstance(value, Mapping)
+        ):
+            self._structural_overwrite(key, value, current)
+            return
+        # Unsupported value type — TypeError, not NIE.
+        msg = (
+            f"Cannot convert value of type {type(value).__name__!r} "
+            f"for TOML key {key!r}"
+        )
+        raise TypeError(msg)
+
+    def _structural_overwrite(self, key: str, value: Any, current: Any) -> None:
+        """Replace ``key`` by deleting then reinstalling at the saved anchor."""
+        primary_refs = self._index.get(key, [])
+        saved_anchor_prev = None
+        saved_leading_pieces: list[TriviaPiece] = []
+        successor_slot = None
+        successor_leading: list[TriviaPiece] | None = None
+        if primary_refs:
+            old_primary = primary_refs[0].slot
+            saved_anchor_prev = old_primary._prev  # noqa: SLF001
+            saved_leading_pieces = list(old_primary.leading.pieces)
+            owned = _layout_ops._gather_value_owned_slots(current)  # noqa: SLF001
+            if owned:
+                successor_slot = owned[-1]._next  # noqa: SLF001
+                if successor_slot is not None:
+                    successor_leading = list(successor_slot.leading.pieces)
+        del self[key]
+        self[key] = value
+        if not primary_refs or not (
+            isinstance(value, AoT) or _is_section(value) or isinstance(value, Mapping)
+        ):
+            return
+        _layout_ops.move_slots_to_anchor(
+            self, key, saved_anchor_prev, saved_leading_pieces
+        )
+        # Restore the successor's leading only if it's still the live
+        # slot immediately following the moved block — otherwise we'd
+        # risk overwriting a detached/orphaned slot's trivia or the
+        # wrong boundary.
+        if successor_slot is None or successor_leading is None:
+            return
+        new_owned = _layout_ops._gather_value_owned_slots(  # noqa: SLF001
+            dict.__getitem__(self, key)
+        )
+        if new_owned and new_owned[-1]._next is successor_slot:  # noqa: SLF001
+            successor_slot.leading.pieces = list(successor_leading)
+
+    def _insert_new(self, key: str, value: Any) -> None:
+        """Bind ``key`` for the first time at the document tail."""
         if is_scalar(value):
             _layout_ops.append_direct_kv(self, key, coerce_scalar(value))
             dict.__setitem__(self, key, value)
@@ -383,101 +377,11 @@ class Container(dict[str, Any]):
             _layout_ops.append_direct_kv(self, key, cst)
             dict.__setitem__(self, key, decoded)
             return
-        # Fall-through: typed section Container / AoT live-attach.
         if isinstance(value, AoT):
-            # If `value` is attached to a live doc — or to a private
-            # orphan with intact entry_slots (i.e. the user just
-            # deleted its old binding via the structural-overwrite
-            # del+set path) — route through clone_aot to preserve
-            # per-entry trivia + nested sub-sections. The to_list()
-            # snapshot path drops both.
-            src_root = value._layout_root  # noqa: SLF001
-            if (
-                src_root is not None and not src_root._is_private  # noqa: SLF001
-            ):
-                if key in self:
-                    del self[key]
-                _layout_ops.clone_aot(self, key, value)
-                return
-            # Snapshot existing entry tables. If their `_owner_aot_entry`
-            # records still hold intact `entry_slots` (e.g. the user
-            # just deleted the old binding via the structural-overwrite
-            # `del+set` path, which preserves slots into a private
-            # orphan), capture them so we can deep-clone the CST into
-            # the rehomed AoT — preserving per-KV trivia, nested
-            # sub-section slots, and inter-entry separator style. The
-            # generic `add_aot_entry(rehome=)` path is lossy: it
-            # rebuilds slots from dict storage and drops all of that.
-            existing_entries: list[Table] = list(value)
-            preserved_entries: list[AoTEntry | None] = [
-                et._owner_aot_entry  # noqa: SLF001
-                if et._owner_aot_entry is not None  # noqa: SLF001
-                and et._owner_aot_entry.entry_slots  # noqa: SLF001
-                else None
-                for et in existing_entries
-            ]
-            can_clone = preserved_entries and all(
-                e is not None for e in preserved_entries
-            )
-            for et in existing_entries:
-                _reset_table_for_rehome(et)
-            list.clear(value)
-            value._layout_root = None  # noqa: SLF001
-            value._parent = None  # noqa: SLF001
-            value._path = ()  # noqa: SLF001
-            attached = _layout_ops.attach_empty_aot(self, key, value)
-            dict.__setitem__(self, key, attached)
-            if can_clone:
-                # Deep-clone CST from intact orphan slots. Sacrifices
-                # per-entry-table Python identity (the rehomed AoT
-                # will hold fresh entry tables) in exchange for
-                # trivia preservation. AoT object identity is still
-                # preserved.
-                for src_entry in preserved_entries:
-                    assert src_entry is not None
-                    _layout_ops.clone_aot_entry_from(value, src_entry)
-            else:
-                for entry_table in existing_entries:
-                    _layout_ops.add_aot_entry(value, None, rehome=entry_table)
+            self._attach_aot(key, value)
             return
         if _is_section(value):
-            # Section-flavoured Table — synthesise [path] header.
-            # Already-attached Table (live doc): clone via snapshot.
-            # Detached/private: rehome in place.
-            src_root = value._layout_root  # noqa: SLF001
-            # AoT-entry source assigned as a standard table: route via
-            # entry-cloner with head_kind="table" so trivia survives
-            # and the head normalises from [[..]] to [..].
-            if (
-                src_root is not None
-                and not src_root._is_private  # noqa: SLF001
-                and value._owner_aot_entry is not None  # noqa: SLF001
-                and self._layout_root is not None
-            ):
-                if key in self:
-                    del self[key]
-                _layout_ops.clone_aot_entry_as_table(self, key, value)
-                return
-            if src_root is not None and not src_root._is_private:  # noqa: SLF001
-                # Cross-doc / same-doc attached section source: deep-
-                # clone slots so trivia + nested sub-sections survive.
-                if value._header_ref is not None:  # noqa: SLF001
-                    if key in self:
-                        del self[key]
-                    _layout_ops.clone_section_as_section(self, key, value)
-                    return
-                # Implicit source / whole-Document: walk recursively
-                # and re-install each structural child via tuple-path
-                # `install`, preserving sections / AoTs as such (no
-                # flatten-to-inline) and keeping implicit chains
-                # implicit when there are no direct KVs to host.
-                if key in self:
-                    del self[key]
-                _install_attached_subtree(self, (key,), value)
-                return
-            if src_root is not None and src_root._is_private:  # noqa: SLF001
-                _reset_table_for_rehome(value)
-            _layout_ops.attach_section(self, key, value)
+            self._attach_section(key, value)
             return
         # Unknown type → TypeError via _synth_value.
         _synth_value(
@@ -489,6 +393,106 @@ class Container(dict[str, Any]):
         )
         msg = "internal: unexpected fall-through in __setitem__"
         raise AssertionError(msg)
+
+    def _attach_aot(self, key: str, value: AoT) -> None:
+        """Install ``value`` (an AoT) under ``key``.
+
+        Live-attached sources or private orphans with intact entry
+        slots route through :func:`clone_aot` to preserve per-entry
+        trivia + nested sub-sections (the ``to_list()`` snapshot path
+        drops both). Detached AoTs without preserved slots are
+        rehomed entry-by-entry.
+        """
+        # If `value` is attached to a live doc, route through clone_aot
+        # to preserve per-entry trivia + nested sub-sections.
+        src_root = value._layout_root  # noqa: SLF001
+        if src_root is not None and not src_root._is_private:  # noqa: SLF001
+            if key in self:
+                del self[key]
+            _layout_ops.clone_aot(self, key, value)
+            return
+        # Snapshot existing entry tables. If their `_owner_aot_entry`
+        # records still hold intact `entry_slots` (e.g. the user just
+        # deleted the old binding via the structural-overwrite
+        # `del+set` path, which preserves slots into a private orphan),
+        # capture them so we can deep-clone the CST into the rehomed
+        # AoT — preserving per-KV trivia, nested sub-section slots,
+        # and inter-entry separator style. The generic
+        # `add_aot_entry(rehome=)` path is lossy: it rebuilds slots
+        # from dict storage and drops all of that.
+        existing_entries: list[Table] = list(value)
+        preserved_entries: list[AoTEntry | None] = [
+            et._owner_aot_entry  # noqa: SLF001
+            if et._owner_aot_entry is not None  # noqa: SLF001
+            and et._owner_aot_entry.entry_slots  # noqa: SLF001
+            else None
+            for et in existing_entries
+        ]
+        can_clone = bool(preserved_entries) and all(
+            e is not None for e in preserved_entries
+        )
+        for et in existing_entries:
+            _reset_table_for_rehome(et)
+        list.clear(value)
+        value._layout_root = None  # noqa: SLF001
+        value._parent = None  # noqa: SLF001
+        value._path = ()  # noqa: SLF001
+        attached = _layout_ops.attach_empty_aot(self, key, value)
+        dict.__setitem__(self, key, attached)
+        if can_clone:
+            # Deep-clone CST from intact orphan slots. Sacrifices
+            # per-entry-table Python identity (the rehomed AoT
+            # holds fresh entry tables) in exchange for trivia
+            # preservation. AoT object identity is still preserved.
+            for src_entry in preserved_entries:
+                assert src_entry is not None
+                _layout_ops.clone_aot_entry_from(value, src_entry)
+        else:
+            for entry_table in existing_entries:
+                _layout_ops.add_aot_entry(value, None, rehome=entry_table)
+
+    def _attach_section(self, key: str, value: Container) -> None:
+        """Install ``value`` (a section-flavoured Table) under ``key``.
+
+        Routing:
+          * AoT-entry source → entry-cloner with ``head_kind="table"``
+            so trivia survives and the head normalises from ``[[..]]``
+            to ``[..]``.
+          * Cross-doc / same-doc attached header-bearing source →
+            deep-clone slots via ``clone_section_as_section``.
+          * Implicit attached source → recursive walk via
+            ``_install_attached_subtree``.
+          * Detached / private source → rehome in place.
+        """
+        src_root = value._layout_root
+        if (
+            src_root is not None
+            and not src_root._is_private  # noqa: SLF001
+            and value._owner_aot_entry is not None
+            and self._layout_root is not None
+        ):
+            if key in self:
+                del self[key]
+            _layout_ops.clone_aot_entry_as_table(self, key, value)
+            return
+        if src_root is not None and not src_root._is_private:  # noqa: SLF001
+            if value._header_ref is not None:
+                if key in self:
+                    del self[key]
+                _layout_ops.clone_section_as_section(self, key, value)
+                return
+            # Implicit source / whole-Document: walk recursively
+            # and re-install each structural child via tuple-path
+            # `install`, preserving sections / AoTs as such (no
+            # flatten-to-inline) and keeping implicit chains
+            # implicit when there are no direct KVs to host.
+            if key in self:
+                del self[key]
+            _install_attached_subtree(self, (key,), value)
+            return
+        if src_root is not None and src_root._is_private:  # noqa: SLF001
+            _reset_table_for_rehome(value)
+        _layout_ops.attach_section(self, key, value)
 
     def _scalar_replace(self, key: str, value: Any) -> None:
         refs = self._index.get(key)
