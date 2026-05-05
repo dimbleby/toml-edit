@@ -39,7 +39,12 @@ from tomlrt._comments import (
 from tomlrt._errors import TOMLError
 from tomlrt._render import render
 from tomlrt._slots import KVSlot, StructuralHeaderSlot
-from tomlrt._trivia import CommentNode, NewlineNode, Trivia, WhitespaceNode
+from tomlrt._trivia import (
+    CommentNode,
+    NewlineNode,
+    Trivia,
+    WhitespaceNode,
+)
 from tomlrt._values import (
     ArrayItem,
     ArrayValue,
@@ -59,6 +64,7 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
     from tomlrt._slots import AoTEntry, Slot, SlotRef
+    from tomlrt._trivia import TriviaPiece
     from tomlrt._values import (
         DateLikeKind,
         Value,
@@ -339,9 +345,9 @@ class Container(dict[str, Any]):
             ):
                 primary_refs = self._index.get(key, [])
                 saved_anchor_prev = None
-                saved_leading_pieces: list[Any] = []
+                saved_leading_pieces: list[TriviaPiece] = []
                 successor_slot = None
-                successor_leading: list[Any] | None = None
+                successor_leading: list[TriviaPiece] | None = None
                 if primary_refs:
                     old_primary = primary_refs[0].slot
                     saved_anchor_prev = old_primary._prev  # noqa: SLF001
@@ -1775,7 +1781,7 @@ def _synth_inline_table(
 
 
 def _synth_inline_array(
-    items: list[Any],
+    items: Sequence[object],
     *,
     layout_root: Document | None,
     owner: AoTEntry | None,
