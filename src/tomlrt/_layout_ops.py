@@ -1636,6 +1636,83 @@ def clone_table_as_aot_entry(
     return entry_table
 
 
+def clone_section_as_section(
+    parent: Container,
+    key: str,
+    src_table: object,
+) -> object:
+    """Install a deep clone of a standard section under ``parent[key]``.
+
+    Used for cross-doc table assignment / same-doc clone of an
+    attached standard ``[k]`` section. Preserves per-slot trivia
+    (header leading, KV leading / EOL) and any nested sub-sections
+    by deep-cloning every owned slot and rebasing paths from
+    ``src_table._path`` to ``parent._path + (key,)``.
+    """
+    from tomlrt._container import Container as ContainerType  # noqa: PLC0415
+    from tomlrt._container import Table  # noqa: PLC0415
+
+    assert isinstance(parent, ContainerType)
+    assert isinstance(src_table, ContainerType)
+    layout_root = parent._layout_root  # noqa: SLF001
+    if layout_root is None:
+        msg = "clone_section_as_section requires parent attached to a document"
+        raise RuntimeError(msg)
+    doc = layout_root
+    target_path = (*parent._path, key)  # noqa: SLF001
+
+    src_slots = _gather_section_slots(src_table)
+    if not isinstance(src_slots[0], StructuralHeaderSlot):
+        msg = "Source section's first owned slot is not a header"
+        raise AssertionError(msg)  # noqa: TRY004
+    src_prefix = src_table._path  # noqa: SLF001
+
+    cloned_slots = _clone_entry_slots(
+        src_slots,
+        new_entry=None,
+        body_owner=parent._owner_aot_entry,  # noqa: SLF001
+        src_prefix=src_prefix,
+        target_prefix=target_path,
+        head_kind="table",
+    )
+
+    head = cloned_slots[0]
+    assert isinstance(head, StructuralHeaderSlot)
+    cloned_header: StructuralHeaderSlot = head
+    cloned_header.leading = _build_section_leading(doc)
+
+    section = Table.section()
+    section._layout_root = doc  # noqa: SLF001
+    section._path = target_path  # noqa: SLF001
+    section._parent = parent  # noqa: SLF001
+    section._owner_aot_entry = parent._owner_aot_entry  # noqa: SLF001
+    own_ref = SlotRef(slot=cloned_header, container=section, local_key=None)
+    section._refs.append(own_ref)  # noqa: SLF001
+    section._header_ref = own_ref  # noqa: SLF001
+
+    _splice_at_end(cloned_header, doc)
+    prev: Slot = cloned_header
+    for s in cloned_slots[1:]:
+        _ensure_terminator(prev, doc)
+        insert_after(prev, s, doc)
+        prev = s
+
+    parent_ref = SlotRef(slot=cloned_header, container=parent, local_key=key)
+    parent._refs.append(parent_ref)  # noqa: SLF001
+    parent._index.setdefault(key, []).append(parent_ref)  # noqa: SLF001
+
+    _populate_entry_views(
+        entry_table=section,
+        cloned_slots=cloned_slots[1:],
+        target_prefix=target_path,
+        body_owner=parent._owner_aot_entry,  # noqa: SLF001
+        doc=doc,
+    )
+
+    dict.__setitem__(parent, key, section)
+    return section
+
+
 def clone_aot(
     parent: Container,
     key: str,

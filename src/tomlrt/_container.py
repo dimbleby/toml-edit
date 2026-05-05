@@ -431,6 +431,16 @@ class Container(dict[str, Any]):
                 _layout_ops.clone_aot_entry_as_table(self, key, value)
                 return
             if src_root is not None and not src_root._is_private:  # noqa: SLF001
+                # Cross-doc / same-doc attached section source: deep-
+                # clone slots so trivia + nested sub-sections survive.
+                # Only applies when the source has its own structural
+                # header — implicit-source / whole-Document cases fall
+                # through to the snapshot path below.
+                if value._header_ref is not None:  # noqa: SLF001
+                    if key in self:
+                        del self[key]
+                    _layout_ops.clone_section_as_section(self, key, value)
+                    return
                 value = Table.section(value.to_dict())
             elif src_root is not None and src_root._is_private:  # noqa: SLF001
                 _reset_table_for_rehome(value)
