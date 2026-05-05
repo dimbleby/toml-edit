@@ -22,7 +22,20 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override
 
-from tomlrt import _layout_ops
+from tomlrt import _inline_ops, _layout_ops
+from tomlrt._comments import (
+    EolCommentView,
+    LeadingCommentView,
+    _direct_kv_slot,
+    _doc_epilogue_get,
+    _doc_epilogue_set,
+    _doc_preamble_get,
+    _doc_preamble_set,
+    _header_comment_get,
+    _header_comment_set,
+    _header_leading_get,
+    _header_leading_set,
+)
 from tomlrt._errors import TOMLError
 from tomlrt._render import render
 from tomlrt._slots import KVSlot
@@ -45,7 +58,6 @@ if TYPE_CHECKING:
 
     from typing_extensions import Self
 
-    from tomlrt._comments import EolCommentView, LeadingCommentView
     from tomlrt._slots import AoTEntry, Slot, SlotRef
     from tomlrt._values import (
         Value,
@@ -93,8 +105,6 @@ class Container(dict[str, Any]):
     @property
     def comments(self) -> EolCommentView:
         """Mapping view of EOL comments on this container's direct keys."""
-        from tomlrt._comments import EolCommentView  # noqa: PLC0415
-
         if self._inline:
             msg = "comment API is not available on inline tables"
             raise TOMLError(msg)
@@ -103,8 +113,6 @@ class Container(dict[str, Any]):
     @property
     def leading_comments(self) -> LeadingCommentView:
         """Mapping view of leading-comment blocks on this container's direct keys."""
-        from tomlrt._comments import LeadingCommentView  # noqa: PLC0415
-
         if self._inline:
             msg = "comment API is not available on inline tables"
             raise TOMLError(msg)
@@ -113,39 +121,27 @@ class Container(dict[str, Any]):
     @property
     def header_comment(self) -> str | None:
         """The EOL comment on this container's section header, or None."""
-        from tomlrt._comments import _header_comment_get  # noqa: PLC0415
-
         return _header_comment_get(self)
 
     @header_comment.setter
     def header_comment(self, value: str | None) -> None:
-        from tomlrt._comments import _header_comment_set  # noqa: PLC0415
-
         _header_comment_set(self, value)
 
     @header_comment.deleter
     def header_comment(self) -> None:
-        from tomlrt._comments import _header_comment_set  # noqa: PLC0415
-
         _header_comment_set(self, None)
 
     @property
     def header_leading_comments(self) -> tuple[str, ...]:
         """The leading comment block immediately above this container's header."""
-        from tomlrt._comments import _header_leading_get  # noqa: PLC0415
-
         return _header_leading_get(self)
 
     @header_leading_comments.setter
     def header_leading_comments(self, value: tuple[str, ...]) -> None:
-        from tomlrt._comments import _header_leading_set  # noqa: PLC0415
-
         _header_leading_set(self, value)
 
     @header_leading_comments.deleter
     def header_leading_comments(self) -> None:
-        from tomlrt._comments import _header_leading_set  # noqa: PLC0415
-
         _header_leading_set(self, ())
 
     @property
@@ -644,8 +640,6 @@ class Container(dict[str, Any]):
     # ------------------------------------------------------------------
 
     def _inline_setitem(self, key: str, value: Any) -> None:
-        from tomlrt import _inline_ops  # noqa: PLC0415
-
         if isinstance(value, AoT):
             msg = "Cannot store an array-of-tables inside an inline table"
             raise TOMLError(msg)
@@ -691,8 +685,6 @@ class Container(dict[str, Any]):
         dict.__setitem__(self, key, decoded)
 
     def _inline_delitem(self, key: str) -> None:
-        from tomlrt import _inline_ops  # noqa: PLC0415
-
         if key not in self:
             raise KeyError(key)
         ok = _inline_ops.delete_entry(self, key)
@@ -894,8 +886,6 @@ class Container(dict[str, Any]):
             raise TOMLError(msg)
         # Capture leading + eol from the existing KV slot so we can
         # transfer them onto the new section header.
-        from tomlrt._comments import _direct_kv_slot  # noqa: PLC0415
-
         old_slot = _direct_kv_slot(self, key)
         saved_leading = old_slot.leading if old_slot is not None else None
         saved_eol = old_slot.eol if old_slot is not None else None
@@ -968,8 +958,6 @@ class Container(dict[str, Any]):
         # Capture the original KV slot's leading + eol so we can carry
         # them onto the first new ``[[..]]`` header and the last
         # entry's tail.
-        from tomlrt._comments import _direct_kv_slot  # noqa: PLC0415
-
         old_slot = _direct_kv_slot(self, key)
         saved_leading = old_slot.leading if old_slot is not None else None
         saved_eol = old_slot.eol if old_slot is not None else None
@@ -1194,20 +1182,14 @@ class Document(Container):
         leading ``#``) and replaces the current preamble; assign ``()``
         to remove. Newlines inside any line are rejected.
         """
-        from tomlrt._comments import _doc_preamble_get  # noqa: PLC0415
-
         return _doc_preamble_get(self)
 
     @preamble.setter
     def preamble(self, value: tuple[str, ...]) -> None:
-        from tomlrt._comments import _doc_preamble_set  # noqa: PLC0415
-
         _doc_preamble_set(self, value)
 
     @preamble.deleter
     def preamble(self) -> None:
-        from tomlrt._comments import _doc_preamble_set  # noqa: PLC0415
-
         _doc_preamble_set(self, ())
 
     @property
@@ -1224,20 +1206,14 @@ class Document(Container):
         Raises [`TOMLError`][tomlrt.TOMLError] if called with a
         non-empty value on a document with no structural content.
         """
-        from tomlrt._comments import _doc_epilogue_get  # noqa: PLC0415
-
         return _doc_epilogue_get(self)
 
     @epilogue.setter
     def epilogue(self, value: tuple[str, ...]) -> None:
-        from tomlrt._comments import _doc_epilogue_set  # noqa: PLC0415
-
         _doc_epilogue_set(self, value)
 
     @epilogue.deleter
     def epilogue(self) -> None:
-        from tomlrt._comments import _doc_epilogue_set  # noqa: PLC0415
-
         _doc_epilogue_set(self, ())
 
     @override
