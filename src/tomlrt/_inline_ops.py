@@ -31,13 +31,11 @@ import re
 from typing import TYPE_CHECKING
 
 from tomlrt._trivia import CommentNode, Trivia, WhitespaceNode
-from tomlrt._values import InlineTableEntry
+from tomlrt._values import InlineTableEntry, KeyPart
 
 if TYPE_CHECKING:
     from tomlrt._container import Container
-    from tomlrt._values import InlineTableValue, KeyPart, Value
-else:
-    from tomlrt._values import KeyPart  # runtime: instantiated below
+    from tomlrt._values import InlineTableValue, Value
 
 
 _RE_BARE_KEY = re.compile(r"\A[A-Za-z0-9_\-]+\Z")
