@@ -453,23 +453,65 @@ def delete_key(c: Container, key: str) -> None:
 
     for cc in chain:
         old_refs = cc._refs  # noqa: SLF001
-        kept: list[SlotRef] = [r for r in old_refs if id(r.slot) not in owned_ids]
-        if len(kept) != len(old_refs):
-            cc._refs = kept  # noqa: SLF001
-            cc._index = {}  # noqa: SLF001
-            for r in kept:
-                if r.local_key is not None:
-                    cc._index.setdefault(r.local_key, []).append(r)  # noqa: SLF001
-            if (
-                cc._header_ref is not None  # noqa: SLF001
-                and id(cc._header_ref.slot) in owned_ids  # noqa: SLF001
-            ):
-                cc._header_ref = None  # noqa: SLF001
-            if (
-                cc._body_tail is not None  # noqa: SLF001
-                and id(cc._body_tail) in owned_ids  # noqa: SLF001
-            ):
-                cc._body_tail = _recompute_body_tail(cc)  # noqa: SLF001
+        # Identify which buckets in cc._index point at owned slots.
+        # Only buckets named by an owned slot's local_key in cc are
+        # candidates — the rest of cc._index is untouched. This keeps
+        # bulk deletion O(num_owned_slots), not O(len(cc._refs)).
+        candidate_keys: set[str] = set()
+        for s in owned_slots:
+            if isinstance(s, KVSlot):
+                # KVSlot at host_path H with key parts K contributes a
+                # ref into container H+K[:j] under local_key K[j], for
+                # j in 0..len(K)-1. cc is in chain (cc._path is a
+                # prefix of len(H)+len(K)); the contributing local_key
+                # at cc is the next path step.
+                j = len(cc._path) - len(s.host_path)  # noqa: SLF001
+                if 0 <= j < len(s.key_parts):
+                    candidate_keys.add(s.key_parts[j].value)
+            elif isinstance(s, StructuralHeaderSlot):
+                # StructuralHeaderSlot at path P contributes binding
+                # refs at every prefix container; the local_key at cc
+                # is P[len(cc._path)] when cc is a strict prefix.
+                if len(cc._path) < len(s.path):  # noqa: SLF001
+                    candidate_keys.add(s.path[len(cc._path)])  # noqa: SLF001
+        to_remove: list[SlotRef] = []
+        empty_buckets: list[str] = []
+        for lk in candidate_keys:
+            bucket = cc._index.get(lk)  # noqa: SLF001
+            if bucket is None:
+                continue
+            kept_bucket = [r for r in bucket if id(r.slot) not in owned_ids]
+            if len(kept_bucket) == len(bucket):
+                continue
+            to_remove.extend(r for r in bucket if id(r.slot) in owned_ids)
+            if kept_bucket:
+                cc._index[lk] = kept_bucket  # noqa: SLF001
+            else:
+                empty_buckets.append(lk)
+        for lk in empty_buckets:
+            del cc._index[lk]  # noqa: SLF001
+        if not to_remove:
+            continue
+        if len(to_remove) == len(old_refs):
+            cc._refs = []  # noqa: SLF001
+        elif len(to_remove) * 8 < len(old_refs):
+            # A few removals from a large list — list.remove is a C
+            # loop and beats rebuilding the whole list in Python.
+            for r in to_remove:
+                old_refs.remove(r)
+        else:
+            removed_ids = {id(r) for r in to_remove}
+            cc._refs = [r for r in old_refs if id(r) not in removed_ids]  # noqa: SLF001
+        if (
+            cc._header_ref is not None  # noqa: SLF001
+            and id(cc._header_ref.slot) in owned_ids  # noqa: SLF001
+        ):
+            cc._header_ref = None  # noqa: SLF001
+        if (
+            cc._body_tail is not None  # noqa: SLF001
+            and id(cc._body_tail) in owned_ids  # noqa: SLF001
+        ):
+            cc._body_tail = _recompute_body_tail(cc)  # noqa: SLF001
 
     # 4. Defensive: no live container retains a ref to any owned slot.
     if __debug__:

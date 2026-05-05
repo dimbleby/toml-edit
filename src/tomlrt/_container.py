@@ -325,7 +325,9 @@ class Container(dict[str, Any]):
 
     def _structural_overwrite(self, key: str, value: Any, current: Any) -> None:
         """Replace ``key`` by deleting then reinstalling at the saved anchor."""
-        primary_refs = self._index.get(key, [])
+        # Snapshot rather than alias the live index list — the
+        # ``del self[key]`` below mutates ``self._index[key]`` in place.
+        primary_refs = list(self._index.get(key, ()))
         saved_anchor_prev = None
         saved_leading_pieces: list[TriviaPiece] = []
         successor_slot = None
