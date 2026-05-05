@@ -266,9 +266,13 @@ def delete_key(c: Container, key: str) -> None:
        owned slot.
     5. Unlink each owned slot from the doc linked list.
     6. Drop the dict entry on ``c``.
-    7. Recursively prune empty implicit super-tables on the ancestor
-       chain (those with no header, no refs, and an empty dict body)
-       so the cache invariants stay clean.
+
+    No cascade-prune of emptied implicit super-tables: ``del c[k]``
+    follows Python-dict semantics, removing exactly ``k`` and
+    leaving any now-emptied implicit ancestor chain reachable as
+    nested empty ``Table`` views. Such slotless implicit tables
+    have no rendering presence (no header_ref, no refs), so dumps
+    stays byte-correct without the walk.
 
     No live-detach: held views of the deleted subtree retain stale
     ``_layout_root`` / ``_path``; mutating them through their old
@@ -388,8 +392,13 @@ def delete_key(c: Container, key: str) -> None:
     # 6. Drop the dict entry.
     dict.__delitem__(c, key)
 
-    # 7. Prune empty implicit super-tables walking up the chain.
-    _prune_empty_implicit_ancestors(c)
+    # No cascade-prune of emptied implicit ancestors: per plan v17,
+    # tomlrt presents Python-dict semantics — `del c[k]` removes
+    # exactly `k`, leaving emptied implicit super-tables reachable
+    # as empty `Table` views just like a plain `dict` would. Any
+    # such purely-implicit empty container has no rendering presence
+    # anyway (no header_ref, no refs), so byte-exact dumps stays
+    # correct without the walk.
 
 
 def _collect_subtree(
@@ -437,50 +446,6 @@ def _surviving_aot_entries(doc: Document) -> set[int]:
 
     visit(doc)
     return surviving
-
-
-def _prune_empty_implicit_ancestors(c: Container) -> None:
-    """Drop implicit-empty containers from their parent's dict storage.
-
-    A container is implicit-empty iff: not the doc root, no
-    ``_header_ref``, empty ``_refs``, empty dict, not inline.
-
-    Such a container has no rendering presence and no slot ownership;
-    leaving it in the parent's dict would violate the
-    "every dict key has an `_index` entry" invariant.
-
-    The walk does NOT need a special stop for AoT-entry root tables
-    or implicit descendants beneath them: AoT-entry root tables are
-    protected by their own ``_header_ref``; implicit descendants
-    inside an AoT entry that become empty must be pruned just as at
-    the doc root, otherwise stale ``foo = {}`` containers would
-    linger inside surviving AoT entries.
-    """
-    cur: Container | None = c
-    while cur is not None:
-        parent = cur._parent  # noqa: SLF001
-        if parent is None:
-            return
-        if (
-            cur._header_ref is not None  # noqa: SLF001
-            or cur._refs  # noqa: SLF001
-            or len(cur) > 0
-            or cur._inline  # noqa: SLF001
-        ):
-            return
-        # Find the local key of cur in parent. If parent stores an
-        # `AoT` under cur's path (cur is an AoT entry root rather
-        # than a dict-keyed sub-container), the identity check below
-        # protects us — entries are never stored directly in the
-        # parent's dict.
-        local_key = cur._path[-1] if cur._path else None  # noqa: SLF001
-        if local_key is None or local_key not in parent:
-            return
-        if dict.__getitem__(parent, local_key) is not cur:
-            return
-        dict.__delitem__(parent, local_key)
-        # parent._index[local_key] should already be gone (no refs remaining).
-        cur = parent
 
 
 # ---------------------------------------------------------------------------
@@ -933,7 +898,15 @@ def _synthesise_header_then_insert_kv_at_doc_tail(
         kind="table",
         owner_aot_entry=owner,
     )
-    if doc._tail is None:  # noqa: SLF001
+    # When ``c`` lives inside an AoT entry, the synthesised header
+    # MUST sit physically inside that entry's slot region (before the
+    # next sibling [[arr]] header), otherwise a re-parse would
+    # attribute it to the next entry. Anchor after the entry's last
+    # slot rather than ``doc._tail``.
+    if owner is not None and owner.entry_slots:
+        anchor = owner.entry_slots[-1]
+        insert_after(anchor, header_slot, doc)
+    elif doc._tail is None:  # noqa: SLF001
         doc._head = header_slot  # noqa: SLF001
         doc._tail = header_slot  # noqa: SLF001
         # Empty doc → no preceding header → drop the leading.
@@ -950,11 +923,36 @@ def _synthesise_header_then_insert_kv_at_doc_tail(
     while cur is not None:
         ancestors.append(cur)
         cur = cur._parent  # noqa: SLF001
+    # When ``c`` lives inside an AoT entry and was anchored after
+    # ``owner.entry_slots[-1]`` above, the synthesised header sits
+    # in the middle of the doc-stream (between this entry's last
+    # slot and the next sibling [[arr]] entry). Each ancestor's
+    # ``_refs`` is doc-stream-ordered, so we must INSERT the binding
+    # ref at the right position rather than appending. Use the set
+    # of slots already known to belong to this entry as the marker:
+    # find the position just after the last ref whose slot is in
+    # that set, then insert there.
+    entry_slot_set: set[Slot] | None = None
+    if owner is not None and owner.entry_slots:
+        entry_slot_set = set(owner.entry_slots)
     for d, anc in enumerate(ancestors, start=1):
         local_key = c._path[-d]  # noqa: SLF001
         binding_ref = SlotRef(slot=header_slot, container=anc, local_key=local_key)
-        anc._refs.append(binding_ref)  # noqa: SLF001
-        anc._index.setdefault(local_key, []).append(binding_ref)  # noqa: SLF001
+        if entry_slot_set is not None:
+            insert_idx = len(anc._refs)  # noqa: SLF001
+            for i in range(len(anc._refs) - 1, -1, -1):  # noqa: SLF001
+                if anc._refs[i].slot in entry_slot_set:  # noqa: SLF001
+                    insert_idx = i + 1
+                    break
+            anc._refs.insert(insert_idx, binding_ref)  # noqa: SLF001
+            anc._index[local_key] = [  # noqa: SLF001
+                r
+                for r in anc._refs  # noqa: SLF001
+                if r.local_key == local_key
+            ]
+        else:
+            anc._refs.append(binding_ref)  # noqa: SLF001
+            anc._index.setdefault(local_key, []).append(binding_ref)  # noqa: SLF001
 
     new_kv = KVSlot(
         leading=Trivia(),
@@ -2478,12 +2476,27 @@ def attach_section(parent: Container, key: str, source: object | None = None) ->
 
     _maybe_demote_synthetic_empty_header(parent)
 
+    # Process scalars (and synth-inlines) before nested structural
+    # children. TOML semantics require all direct KVs of a section to
+    # appear before any sub-section header — re-opening a section
+    # after a child header is illegal. Re-ordering here also avoids
+    # a subtle bug: the recursive ``section[k] = v`` path may demote
+    # ``section``'s synthetic empty header on its first sub-section
+    # attach, leaving subsequent scalar siblings with no header to
+    # bind to and triggering ``_synthesise_header_then_insert_kv``,
+    # whose ancestor-binding walk does not maintain ``parent_ref``
+    # entries on the grand-ancestor chain that attach_section would
+    # have skipped. Process all scalars first so the section's KV
+    # body is fully populated (and the header is no longer empty)
+    # before any sub-section attach can demote it.
+    scalars: list[tuple[Any, Any]] = []
+    structurals: list[tuple[Any, Any]] = []
     for k, v in pending:
-        if not (_is_scalar(v) or _is_synth_inline(v)):
-            # Nested structural — recurse via the live __setitem__
-            # path now that `section` is fully attached.
-            section[k] = v
-            continue
+        if _is_scalar(v) or _is_synth_inline(v):
+            scalars.append((k, v))
+        else:
+            structurals.append((k, v))
+    for k, v in scalars:
         cst, dec = _synth_value(
             v,
             layout_root=doc,
@@ -2493,6 +2506,8 @@ def attach_section(parent: Container, key: str, source: object | None = None) ->
         )
         append_direct_kv(section, k, cst)
         dict.__setitem__(section, k, dec)
+    for k, v in structurals:
+        section[k] = v
     return section
 
 

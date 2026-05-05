@@ -179,13 +179,30 @@ def _compare_inline_shape(
 
 
 def _check_section_caches(c: Container) -> None:
-    # Every dict key must have an _index entry, except empty AoTs which
-    # have a logical binding but zero physical slots.
+    # Every dict key must have an _index entry, except (a) empty AoTs
+    # which have a logical binding but zero physical slots, and (b)
+    # slotless implicit `Table` views — containers with no header_ref,
+    # no refs, and not inline. These have no direct slot binding in
+    # the parent so the parent has no _index entry; they may still
+    # contain further slotless implicit descendants (i.e. ``len(v)``
+    # is not necessarily zero — a deep chain of empty implicits all
+    # qualifies).
     for k, v in c.items():
         if isinstance(v, AoT) and len(v) == 0:
             if k in c._index:  # noqa: SLF001
                 _fail(
                     f"empty AoT {c._path}.{k} has unexpected _index entry"  # noqa: SLF001
+                )
+            continue
+        if (
+            isinstance(v, Container)
+            and v._header_ref is None  # noqa: SLF001
+            and not v._refs  # noqa: SLF001
+            and not v._inline  # noqa: SLF001
+        ):
+            if k in c._index:  # noqa: SLF001
+                _fail(
+                    f"slotless implicit Table {c._path}.{k} has unexpected _index entry"  # noqa: SLF001
                 )
             continue
         if k not in c._index:  # noqa: SLF001

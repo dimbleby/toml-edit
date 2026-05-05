@@ -143,10 +143,12 @@ def test_delete_subsection_via_parent_view() -> None:
     )
 
 
-def test_delete_only_subsection_drops_implicit_parent() -> None:
+def test_delete_only_subsection_keeps_implicit_parent() -> None:
     # `a` is implicit (no [a] header). Deleting its only [a.b]
-    # leaves nothing referencing `a`; pruning drops `a` from the
-    # doc dict to keep cache invariants clean.
+    # leaves `a` reachable as an empty implicit table — Python-dict
+    # semantics: `del` removes only the named key. The implicit
+    # parent has no rendering presence (no header, no refs) so
+    # byte-exact dumps stays empty.
     src = td("""
         [a.b]
         x = 1
@@ -155,7 +157,8 @@ def test_delete_only_subsection_drops_implicit_parent() -> None:
     del doc.table("a")["b"]
     check(doc)
     assert dumps(doc) == ""
-    assert "a" not in doc
+    assert "a" in doc
+    assert dict(doc.table("a")) == {}
 
 
 def test_delete_one_of_two_implicit_subsections_keeps_parent() -> None:
@@ -277,17 +280,41 @@ def test_section_delete_then_dump_reparses_to_expected() -> None:
     assert loads(out).to_dict() == {"b": {"y": 2}}
 
 
-def test_delete_deep_implicit_inside_aot_prunes() -> None:
-    # Regression: prune walk must run inside AoT entries too. The
-    # initial implementation stopped at any container with
-    # `_owner_aot_entry`, which protected the entry root (correctly)
-    # but also blocked pruning of ordinary implicit descendants
-    # below it, leaving stale `foo = {}` containers behind.
+def test_delete_deep_implicit_inside_aot_keeps_implicit_chain() -> None:
+    # Per Python-dict semantics: `del` removes exactly the named
+    # key. Implicit ancestors (`foo`, `bar`) inside an AoT entry
+    # stay as empty `Table` views — they have no rendering presence
+    # (no header, no refs), so the AoT entry serialises as just its
+    # own header.
     doc = loads("[[arr]]\nfoo.bar.baz = 1\n")
     del doc.aot("arr")[0].table("foo")["bar"]
     check(doc)
     assert dumps(doc) == "[[arr]]\n"
-    assert doc.to_dict() == {"arr": [{}]}
+    # `foo` survives in the entry's dict storage as an empty
+    # implicit table; `to_dict()` reflects that.
+    assert doc.to_dict() == {"arr": [{"foo": {}}]}
+
+
+def test_readd_into_emptied_aot_implicit_anchors_inside_entry() -> None:
+    # Regression: after deleting the only descendant of an
+    # AoT-owned implicit chain, re-adding under that chain must
+    # synthesise the [arr.foo] header INSIDE the owning entry's
+    # slot region — not at doc tail. Otherwise a re-parse would
+    # attribute the resurrected sub-section to the wrong (later)
+    # AoT entry.
+    doc = loads("[[arr]]\nfoo.bar.baz = 1\n\n[[arr]]\nname = 2\n")
+    foo = doc.aot("arr")[0].table("foo")
+    del foo["bar"]
+    foo["new"] = 1
+    check(doc)
+    out = dumps(doc)
+    # Synthetic [arr.foo] sits between the two [[arr]] entries,
+    # belonging to the first.
+    assert "[arr.foo]\nnew = 1" in out
+    # Round-trip through the parser preserves the logical tree.
+    assert loads(out).to_dict() == doc.to_dict() == {
+        "arr": [{"foo": {"new": 1}}, {"name": 2}],
+    }
 
 
 def test_delete_header_only_section() -> None:
@@ -315,15 +342,18 @@ def test_delete_inline_array_with_inline_table_inside() -> None:
     )
 
 
-def test_delete_deep_non_aot_implicit_prune() -> None:
-    # `[a.b.c.d]\nx=1` → a, b, c are all implicit. Deleting d
-    # empties c which empties b which empties a. The walk must
-    # prune them all.
+def test_delete_deep_non_aot_implicit_keeps_chain() -> None:
+    # `[a.b.c.d]\nx=1` → a, b, c are all implicit. Deleting `d`
+    # under Python-dict semantics removes only `d`; the implicit
+    # chain `a.b.c` survives as nested empty `Table` views. None of
+    # the implicit ancestors render (no header, no refs), so dumps
+    # is byte-empty.
     doc = loads("[a.b.c.d]\nx = 1\n")
     del doc.table("a").table("b").table("c")["d"]
     check(doc)
     assert dumps(doc) == ""
-    assert "a" not in doc
+    assert "a" in doc
+    assert dict(doc.table("a").table("b").table("c")) == {}
 
 
 def test_held_deleted_section_view_has_clean_orphan_state() -> None:
