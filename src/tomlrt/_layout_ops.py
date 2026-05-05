@@ -34,7 +34,13 @@ import re
 from typing import TYPE_CHECKING, Any, Literal
 
 from tomlrt._slots import AoTEntry, KVSlot, SlotRef, StructuralHeaderSlot
-from tomlrt._trivia import CommentNode, EolTrivia, NewlineNode, Trivia, WhitespaceNode
+from tomlrt._trivia import (
+    CommentNode,
+    EolTrivia,
+    NewlineNode,
+    Trivia,
+    WhitespaceNode,
+)
 from tomlrt._values import KeyPart
 
 HeaderKind = Literal["table", "aot-entry"]
@@ -45,6 +51,7 @@ if TYPE_CHECKING:
     from tomlrt._array import AoT
     from tomlrt._container import Container, Document, Table
     from tomlrt._slots import Slot
+    from tomlrt._trivia import TriviaPiece
     from tomlrt._values import Value
 
 
@@ -299,7 +306,7 @@ def delete_key(c: Container, key: str) -> None:
 
     # 2. Subtree containers + AoTs + descendant refs.
     subtree_containers: list[Container] = []
-    subtree_aots: list[Any] = []
+    subtree_aots: list[AoT] = []
     _collect_subtree(val, subtree_containers, subtree_aots, _add_ref)
 
     # 3. Scrub ancestor chain only — subtree containers will be
@@ -556,7 +563,7 @@ def _kv_leading_from_prior(
     add_blank = len(kvs) >= 2 and all(
         _leading_has_blank_line(kv.leading) for kv in kvs[1:]
     )
-    pieces: list[Any] = []
+    pieces: list[TriviaPiece] = []
     if add_blank:
         pieces.append(NewlineNode(text=doc._newline))  # noqa: SLF001
     if indent_text:
@@ -1390,7 +1397,7 @@ def add_aot_entry(
     entry.entry_slots.append(header)
 
     # Build entry-root container (or rehome an existing one).
-    body_items: list[tuple[Any, Any]]
+    body_items: list[tuple[str, object]]
     if rehome is not None:
         assert isinstance(rehome, Table)
         assert rehome._layout_root is None  # noqa: SLF001
@@ -1435,9 +1442,6 @@ def add_aot_entry(
 
     # Populate body.
     for k, v in body_items:
-        if not isinstance(k, str):
-            msg = f"AoT entry key must be str, got {type(k).__name__}"
-            raise TypeError(msg)
         if not (_is_scalar(v) or _is_synth_inline(v)):
             entry_table[k] = v
             continue
@@ -1692,7 +1696,7 @@ def _gather_section_slots(src_table: Container) -> list[Slot]:
         owned.add(id(r.slot))
 
     containers_out: list[Container] = []
-    aots_out: list[Any] = []
+    aots_out: list[AoT] = []
     _collect_subtree(src_table, containers_out, aots_out, _add_ref)
 
     head_slot: Slot = src_table._header_ref.slot  # noqa: SLF001
@@ -2185,7 +2189,7 @@ def attach_section_at(
 
     if isinstance(source, Table) and source._layout_root is None:  # noqa: SLF001
         section = source
-        pending: list[tuple[Any, Any]] = list(source.items())
+        pending: list[tuple[str, object]] = list(source.items())
         dict.clear(section)
     else:
         section = Table()
@@ -2279,7 +2283,7 @@ def attach_section(
     # Rehome the source if it is an unattached Table; otherwise build new.
     if isinstance(source, Table) and source._layout_root is None:  # noqa: SLF001
         section = source
-        pending: list[tuple[Any, Any]] = list(source.items())
+        pending: list[tuple[str, object]] = list(source.items())
         dict.clear(section)
     else:
         section = Table()
@@ -2324,8 +2328,8 @@ def attach_section(
     # have skipped. Process all scalars first so the section's KV
     # body is fully populated (and the header is no longer empty)
     # before any sub-section attach can demote it.
-    scalars: list[tuple[Any, Any]] = []
-    structurals: list[tuple[Any, Any]] = []
+    scalars: list[tuple[str, object]] = []
+    structurals: list[tuple[str, object]] = []
     for k, v in pending:
         if _is_scalar(v) or _is_synth_inline(v):
             scalars.append((k, v))
@@ -2346,7 +2350,7 @@ def attach_section(
     return section
 
 
-def _items_for_synth(source: Mapping[str, Any] | Container) -> list[tuple[Any, Any]]:
+def _items_for_synth(source: Mapping[str, Any] | Container) -> list[tuple[str, object]]:
     """Iterate items of a Mapping/dict/Container source as (key, value)."""
     return list(source.items())
 
@@ -2780,7 +2784,7 @@ def move_slots_to_anchor(
     parent: Container,
     key: str,
     saved_anchor_prev: Slot | None,
-    saved_leading_pieces: list[Any],
+    saved_leading_pieces: list[TriviaPiece],
 ) -> None:
     """Move ``parent[key]``'s owned slots to ``saved_anchor_prev``.
 
