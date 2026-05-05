@@ -117,7 +117,7 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
     iv = root._value  # noqa: SLF001
     assert iv is not None
     key_path = _entry_key_path(t, key)
-    if _find_entry(iv, key_path) is not None:
+    if __debug__ and _find_entry(iv, key_path) is not None:
         msg = f"internal: append_entry called for existing key {key!r}"
         raise AssertionError(msg)
 

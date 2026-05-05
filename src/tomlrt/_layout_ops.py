@@ -110,6 +110,9 @@ def _file_synthetic_header_and_kv(
     c._refs.insert(header_ref_index + 1, kv_ref)  # noqa: SLF001
     c._index.setdefault(key, []).append(kv_ref)  # noqa: SLF001
     c._body_tail = new_kv  # noqa: SLF001
+    # Synthesised header just opened c; its first body KV is by
+    # construction the only (and therefore last) direct KV of c.
+    _set_last_direct_kv(c, new_kv)
     return new_kv
 
 
@@ -365,6 +368,9 @@ def append_direct_kv(c: Container, key: str, value: Value) -> None:
         c._refs.append(new_ref)  # noqa: SLF001
     c._index.setdefault(key, []).append(new_ref)  # noqa: SLF001
     c._body_tail = new_slot  # noqa: SLF001
+    # New direct KV is appended after the previous body tail — by
+    # invariant it is now the last direct KV of c.
+    _set_last_direct_kv(c, new_slot)
 
 
 def delete_key(c: Container, key: str) -> None:
@@ -512,6 +518,7 @@ def delete_key(c: Container, key: str) -> None:
             and id(cc._body_tail) in owned_ids  # noqa: SLF001
         ):
             cc._body_tail = _recompute_body_tail(cc)  # noqa: SLF001
+        _invalidate_last_direct_kv_if(cc, owned_ids)
 
     # 4. Defensive: no live container retains a ref to any owned slot.
     if __debug__:
@@ -640,25 +647,58 @@ def _surviving_aot_entries(doc: Document, candidates: set[int]) -> set[int]:
 # ---------------------------------------------------------------------------
 
 
+def _is_direct_kv(c: Container, s: Slot) -> bool:
+    """True iff ``s`` is a direct (single-key-part, host=c) KV of ``c``."""
+    return (
+        isinstance(s, KVSlot)
+        and s.host_path == c._path  # noqa: SLF001
+        and len(s.key_parts) == 1
+        and s.owner_aot_entry is c._owner_aot_entry  # noqa: SLF001
+    )
+
+
 def _last_direct_kv(c: Container) -> KVSlot | None:
     """Return the most-recent direct KV slot of ``c`` in doc-stream order.
 
-    Walks ``c._refs`` from the end so the typical "append after a KV
-    body" case is O(1) — the last ref is usually the target. Bounded
-    by the count of trailing non-KV refs (sub-section headers /
-    dotted descendants), not by container size.
+    O(1) hot path via ``c._last_direct_kv_slot`` cache; on miss falls
+    back to a reversed walk of ``c._refs`` and refreshes the cache.
     """
-    same_owner = c._owner_aot_entry  # noqa: SLF001
+    cached = c._last_direct_kv_slot  # noqa: SLF001
+    if cached is not None:
+        if __debug__:
+            assert _is_direct_kv(c, cached), (
+                "internal: stale _last_direct_kv_slot — slot no longer matches "
+                "the direct-KV predicate (host_path / owner_aot_entry / "
+                "key_parts changed?)"
+            )
+        return cached
     for ref in reversed(c._refs):  # noqa: SLF001
         s = ref.slot
-        if (
-            isinstance(s, KVSlot)
-            and s.host_path == c._path  # noqa: SLF001
-            and len(s.key_parts) == 1
-            and s.owner_aot_entry is same_owner
-        ):
+        if _is_direct_kv(c, s):
+            assert isinstance(s, KVSlot)
+            c._last_direct_kv_slot = s  # noqa: SLF001
             return s
     return None
+
+
+def _set_last_direct_kv(c: Container, s: KVSlot) -> None:
+    """Note that ``s`` is now the most-recent direct KV of ``c``.
+
+    Caller must ensure ``s`` is a direct KV of ``c`` AND that no later
+    direct KV exists in ``c._refs`` (i.e. ``s`` was just appended at
+    the body tail). ``__debug__`` asserts both.
+    """
+    assert _is_direct_kv(c, s), (
+        "internal: _set_last_direct_kv called with non-direct KV"
+    )
+    c._last_direct_kv_slot = s  # noqa: SLF001
+
+
+def _invalidate_last_direct_kv_if(c: Container, dropped_slots: set[int]) -> None:
+    """Drop the cache if it points at a slot in ``dropped_slots``."""
+    cached = c._last_direct_kv_slot  # noqa: SLF001
+    if cached is not None and id(cached) in dropped_slots:
+        c._last_direct_kv_slot = None  # noqa: SLF001
 
 
 def _extract_indent(leading: Trivia) -> str:
@@ -1147,6 +1187,7 @@ def _append_kv_in_aot_entry(c: Container, key: str, value: Value) -> None:
         c._refs.append(new_ref)  # noqa: SLF001
     c._index.setdefault(key, []).append(new_ref)  # noqa: SLF001
     c._body_tail = new_slot  # noqa: SLF001
+    _set_last_direct_kv(c, new_slot)
 
     # Maintain entry_slots in doc-stream order. Insert after the anchor
     # if it is in the list, else append.
@@ -1192,19 +1233,24 @@ def _ensure_leading_blank_line(slot: Slot, doc: Document) -> None:
 
 
 def _find_ref_index_by_slot(c: Container, slot: Slot) -> int:
-    """Locate ``slot``'s ref in ``c._refs``, walking from the end.
+    """Locate ``slot``'s ref in ``c._refs``, scanning from both ends.
 
-    Callers pass body-tail / anchor slots that sit near the end of
-    ``c._refs`` (any trailing entries are sub-section / dotted-
-    descendant refs, of which there are typically few). Walking
-    from the end keeps the typical case O(K) for small K, instead
-    of O(N) for a forward scan over a long body.
+    Callers pass body-tail / anchor slots whose position in ``c._refs``
+    is either near the end (typical: body sits before a few trailing
+    sub-section header refs) or near the start (e.g. doc-root with a
+    handful of top-level KVs preceding many section headers, as in
+    bulk ``doc[k] = inline`` patterns). A two-pronged scan converges
+    in O(min(P, N-P)) instead of always degrading to O(N) at one end.
     """
     refs = c._refs  # noqa: SLF001
-    n = len(refs)
-    for j in range(n - 1, -1, -1):
-        if refs[j].slot is slot:
-            return j
+    lo, hi = 0, len(refs) - 1
+    while lo <= hi:
+        if refs[hi].slot is slot:
+            return hi
+        if refs[lo].slot is slot:
+            return lo
+        lo += 1
+        hi -= 1
     msg = "internal: anchor slot not found in c._refs"
     raise AssertionError(msg)
 
@@ -2428,6 +2474,7 @@ def _scrub_refs_to_owned_slots(c: Container, owned: set[Slot]) -> None:
         # Clear body_tail if it pointed at an owned slot.
         if c._body_tail is not None and c._body_tail in owned:  # noqa: SLF001
             c._body_tail = None  # noqa: SLF001
+        _invalidate_last_direct_kv_if(c, {id(s) for s in owned})
     # Recurse.
     for v in list(dict.values(c)):
         if isinstance(v, Container):
