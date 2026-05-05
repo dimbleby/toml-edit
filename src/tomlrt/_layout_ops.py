@@ -802,11 +802,14 @@ def _synthesise_header_then_insert_kv(
     doc = layout_root
 
     if not c._refs:  # noqa: SLF001
-        msg = (
-            "structural-only implicit container with no contributors — "
-            "likely a held view of a deleted subtree (Phase 3e detach)"
-        )
-        raise NotImplementedError(msg)
+        # No descendants left — typically the position-preserving
+        # structural-replace path: the previous binding's slots
+        # were just deleted, leaving ``c`` purely implicit and
+        # empty. Append at end of doc; the outer caller's
+        # ``move_slots_to_anchor`` will reposition the synthesised
+        # block at the captured anchor.
+        _synthesise_header_then_insert_kv_at_doc_tail(c, key, value)
+        return
     anchor_slot = c._refs[0].slot  # noqa: SLF001
     owner = c._owner_aot_entry  # noqa: SLF001
 
@@ -891,6 +894,78 @@ def _synthesise_header_then_insert_kv(
         else:
             owner.entry_slots.insert(anchor_idx, header_slot)
             owner.entry_slots.insert(anchor_idx + 1, new_kv)
+
+
+def _synthesise_header_then_insert_kv_at_doc_tail(
+    c: Container, key: str, value: Value
+) -> None:
+    """Append ``[c._path]`` + ``key = value`` at the end of the doc.
+
+    Used by the structural-replace path when ``c``'s previous
+    contributors were just deleted, leaving ``c`` empty and implicit.
+    The outer caller (typically ``move_slots_to_anchor``) is
+    responsible for repositioning the resulting block to the captured
+    anchor when one exists.
+    """
+    layout_root = c._layout_root  # noqa: SLF001
+    assert layout_root is not None
+    doc = layout_root
+    owner = c._owner_aot_entry  # noqa: SLF001
+
+    header_slot = _new_section_header(
+        c._path,  # noqa: SLF001
+        leading=_build_section_leading(doc),
+        doc=doc,
+        kind="table",
+        owner_aot_entry=owner,
+    )
+    if doc._tail is None:  # noqa: SLF001
+        doc._head = header_slot  # noqa: SLF001
+        doc._tail = header_slot  # noqa: SLF001
+        # Empty doc → no preceding header → drop the leading.
+        header_slot.leading = Trivia()
+    else:
+        insert_after(doc._tail, header_slot, doc)  # noqa: SLF001
+
+    own_header_ref = SlotRef(slot=header_slot, container=c, local_key=None)
+    c._refs.append(own_header_ref)  # noqa: SLF001
+    c._header_ref = own_header_ref  # noqa: SLF001
+
+    ancestors: list[Container] = []
+    cur: Container | None = c._parent  # noqa: SLF001
+    while cur is not None:
+        ancestors.append(cur)
+        cur = cur._parent  # noqa: SLF001
+    for d, anc in enumerate(ancestors, start=1):
+        local_key = c._path[-d]  # noqa: SLF001
+        binding_ref = SlotRef(slot=header_slot, container=anc, local_key=local_key)
+        anc._refs.append(binding_ref)  # noqa: SLF001
+        anc._index.setdefault(local_key, []).append(binding_ref)  # noqa: SLF001
+
+    new_kv = KVSlot(
+        leading=Trivia(),
+        host_path=c._path,  # noqa: SLF001
+        key_parts=[_make_keypart(key)],
+        key_seps=[],
+        pre_eq=" ",
+        post_eq=" ",
+        value=value,
+        eol=EolTrivia(
+            trailing_ws=None,
+            comment=None,
+            newline=NewlineNode(text=doc._newline),  # noqa: SLF001
+        ),
+        owner_aot_entry=owner,
+    )
+    insert_after(header_slot, new_kv, doc)
+    kv_ref = SlotRef(slot=new_kv, container=c, local_key=key)
+    c._refs.append(kv_ref)  # noqa: SLF001
+    c._index.setdefault(key, []).append(kv_ref)  # noqa: SLF001
+    c._body_tail = new_kv  # noqa: SLF001
+
+    if owner is not None:
+        owner.entry_slots.append(header_slot)
+        owner.entry_slots.append(new_kv)
 
 
 def _insert_dotted_kv_before_descendants(c: Container, key: str, value: Value) -> None:
