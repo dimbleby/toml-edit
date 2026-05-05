@@ -30,14 +30,16 @@ from __future__ import annotations
 
 import contextlib
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from tomlrt._slots import AoTEntry, KVSlot, SlotRef, StructuralHeaderSlot
 from tomlrt._trivia import CommentNode, EolTrivia, NewlineNode, Trivia, WhitespaceNode
 from tomlrt._values import KeyPart
 
+HeaderKind = Literal["table", "aot-entry"]
+
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     from tomlrt._array import AoT
     from tomlrt._container import Container, Document
@@ -1227,13 +1229,13 @@ def _new_section_header(
     *,
     leading: Trivia,
     doc: Document,
-    kind: str = "table",
+    kind: HeaderKind = "table",
     entry: AoTEntry | None = None,
     owner_aot_entry: AoTEntry | None = None,
 ) -> StructuralHeaderSlot:
     return StructuralHeaderSlot(
         leading=leading,
-        kind=kind,  # type: ignore[arg-type]
+        kind=kind,
         path=path,
         key_parts=_build_header_keyparts(path),
         key_seps=["."] * (len(path) - 1),
@@ -2048,7 +2050,7 @@ def _clone_entry_slots(
     body_owner: AoTEntry | None,
     src_prefix: tuple[str, ...],
     target_prefix: tuple[str, ...],
-    head_kind: str,
+    head_kind: HeaderKind,
     has_header: bool = True,
 ) -> list[Slot]:
     """Deep-clone an entry's slot list with path/owner rebasing.
@@ -2090,7 +2092,7 @@ def _clone_entry_slots(
         return cloned
     head = cloned[0]
     assert isinstance(head, StructuralHeaderSlot)
-    head.kind = head_kind  # type: ignore[assignment]
+    head.kind = head_kind
     if head_kind == "aot-entry":
         head.entry = new_entry
         head.owner_aot_entry = new_entry
@@ -2779,7 +2781,7 @@ def replace_aot_entry_with_clone(
     )
 
 
-def replace_aot_entry(aot: object, index: int, body: object) -> None:
+def replace_aot_entry(aot: object, index: int, body: Mapping[str, Any] | None) -> None:
     """Replace ``aot[index]`` in place.
 
     Keeps the entry's header slot and live `Table` view; just clears
@@ -2789,8 +2791,6 @@ def replace_aot_entry(aot: object, index: int, body: object) -> None:
     document size. Header position and `_refs` ordering are preserved
     by construction (no slot splicing involved).
     """
-    from collections.abc import Mapping  # noqa: PLC0415
-
     from tomlrt._array import AoT  # noqa: PLC0415
 
     assert isinstance(aot, AoT)
@@ -2800,9 +2800,6 @@ def replace_aot_entry(aot: object, index: int, body: object) -> None:
         raise IndexError(msg)
     if index < 0:
         index += n
-    if body is not None and not isinstance(body, Mapping):
-        msg = f"AoT entry replacement body must be Mapping, got {type(body).__name__}"
-        raise TypeError(msg)
     entry_table = aot[index]
     if body is entry_table:
         return

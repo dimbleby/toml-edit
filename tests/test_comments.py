@@ -1483,7 +1483,7 @@ def test_preamble_setter_rejects_str() -> None:
     """Same str-as-Sequence footgun applies to the document preamble."""
     doc = tomlrt.loads("x = 1\n")
     with pytest.raises(TypeError, match="iterable of comment strings"):
-        doc.preamble = "# top"  # type: ignore[assignment]
+        doc.preamble = "# top"  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
 
 
 def test_header_leading_comments_setter_rejects_str() -> None:
@@ -1495,7 +1495,7 @@ def test_header_leading_comments_setter_rejects_str() -> None:
 def test_epilogue_setter_rejects_str() -> None:
     doc = tomlrt.loads("x = 1\n")
     with pytest.raises(TypeError, match="iterable of comment strings"):
-        doc.epilogue = "# bottom"  # type: ignore[assignment]
+        doc.epilogue = "# bottom"  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
 
 
 # ---------------------------------------------------------------------------

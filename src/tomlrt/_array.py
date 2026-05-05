@@ -1189,7 +1189,6 @@ class AoT(list["Table"]):
         while len(self) > 0:
             _layout_ops.remove_aot_entry(self, -1)
 
-    @override
     @overload
     def __setitem__(self, index: SupportsIndex, value: Mapping[str, Any]) -> None: ...
     @overload
@@ -1223,13 +1222,15 @@ class AoT(list["Table"]):
             # mutating the AoT (atomicity preflight).
             from collections.abc import Mapping  # noqa: PLC0415
 
+            typed_values: list[Mapping[str, Any]] = []
             for v in values:
                 if not isinstance(v, Mapping):
                     msg = f"AoT entries must be Mapping/Table; got {type(v).__name__}"
                     raise TypeError(msg)
+                typed_values.append(v)  # ty: ignore[invalid-argument-type]
             if self._layout_root is None:
                 list.__setitem__(
-                    self, index, [_make_unattached_entry(v) for v in values]
+                    self, index, [_make_unattached_entry(v) for v in typed_values]
                 )
                 return
             # For contiguous step == 1: replace by delete-range then
@@ -1243,7 +1244,7 @@ class AoT(list["Table"]):
                 # Add new entries at the end then renormalise into
                 # position.
                 new_entries = []
-                for v in values:
+                for v in typed_values:
                     e = _layout_ops.add_aot_entry(self, v)
                     new_entries.append(e)
                 # Now reorder so the new block lives at `start`.
@@ -1257,9 +1258,12 @@ class AoT(list["Table"]):
             # Extended slice with step != 1 and matching length:
             # replace each entry in place by remove + add at end + reorder.
             # Simpler: replace via the existing single-entry path.
-            for i, v in zip(indices, values, strict=True):
+            for i, v in zip(indices, typed_values, strict=True):
                 _layout_ops.replace_aot_entry(self, i, v)
             return
+        from collections.abc import Mapping  # noqa: PLC0415
+
+        assert isinstance(value, Mapping)
         if self._layout_root is None:
             assert isinstance(value, dict)
             list.__setitem__(self, index, _make_unattached_entry(value))
@@ -1274,7 +1278,7 @@ class AoT(list["Table"]):
         ):
             _layout_ops.replace_aot_entry_with_clone(self, i, value)
             return
-        _layout_ops.replace_aot_entry(self, i, value)
+        _layout_ops.replace_aot_entry(self, i, value)  # ty: ignore[invalid-argument-type]
 
     @override
     def append(self, value: Table | Mapping[str, Any]) -> None:
