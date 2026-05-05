@@ -10,7 +10,7 @@ from __future__ import annotations
 import operator
 import sys
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, SupportsIndex, overload
+from typing import TYPE_CHECKING, Any, SupportsIndex, TypeVar, overload
 
 if sys.version_info >= (3, 12):
     from typing import override
@@ -57,6 +57,9 @@ if TYPE_CHECKING:
         from typing_extensions import Self
 
     from tomlrt._container import Container, Document, Table
+
+
+_T = TypeVar("_T")
 
 
 class Array(list[Any]):
@@ -134,21 +137,13 @@ class Array(list[Any]):
 
     def array(self, index: int) -> Array:
         """Return ``self[index]`` typed as a nested `Array`."""
-        v = self[index]
-        if not isinstance(v, Array):
-            msg = f"item at {index} is {type(v).__name__}, not an Array"
-            raise TypeError(msg)
-        return v
+        return self._typed_item(index, Array, "an Array")
 
     def table(self, index: int) -> Table:
         """Return ``self[index]`` typed as a `Table`."""
         from tomlrt._container import Table  # noqa: PLC0415
 
-        v = self[index]
-        if not isinstance(v, Table):
-            msg = f"item at {index} is {type(v).__name__}, not a Table"
-            raise TypeError(msg)
-        return v
+        return self._typed_item(index, Table, "a Table")
 
     def get_array(self, index: int, default: Any = None) -> Any:
         """Like `array(index)` but returns ``default`` for out-of-range."""
@@ -161,6 +156,13 @@ class Array(list[Any]):
         if index < -len(self) or index >= len(self):
             return default
         return self.table(index)
+
+    def _typed_item(self, index: int, cls: type[_T], label: str) -> _T:
+        v = self[index]
+        if not isinstance(v, cls):
+            msg = f"item at {index} is {type(v).__name__}, not {label}"
+            raise TypeError(msg)
+        return v
 
     # ---- mutation -----------------------------------------------------
 
