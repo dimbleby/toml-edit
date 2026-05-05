@@ -83,7 +83,7 @@ class Array(list[Any]):
         """
         super().__init__()
 
-        self._value: ArrayValue | None = ArrayValue()
+        self._value: ArrayValue = ArrayValue()
         self._multiline: bool = multiline
         self._attached: bool = False
         if items is None:
@@ -183,8 +183,6 @@ class Array(list[Any]):
     @property
     def multiline(self) -> bool:
         """True iff this array is rendered in multi-line form."""
-        if self._value is None:
-            return self._multiline
         return self._style().is_multiline
 
     @multiline.setter
@@ -212,9 +210,6 @@ class Array(list[Any]):
         Returns ``self`` for chaining.
         """
         ind = "    " if indent is None else indent
-        if self._value is None:
-            self._multiline = multiline
-            return self
         items = self._value.items
         if not multiline:
             # Recursively probe for CommentNodes anywhere inside an item
@@ -277,9 +272,6 @@ class Array(list[Any]):
         if isinstance(value, AoT):
             msg = "Cannot store an array-of-tables inside an inline array"
             raise TOMLError(msg)
-        if self._value is None:
-            msg = "Array.append on detached Array (no backing CST)"
-            raise NotImplementedError(msg)
         cst, decoded = self._synth_cst(value)
         items = self._value.items
         style = self._style()
@@ -336,17 +328,13 @@ class Array(list[Any]):
 
     @override
     def clear(self) -> None:
-        if self._value is not None:
-            self._value.items.clear()
-            # Drop any inter-item trivia clutter; preserve the bracket
-            # leading captured in final_trivia.
+        self._value.items.clear()
+        # Drop any inter-item trivia clutter; preserve the bracket
+        # leading captured in final_trivia.
         list.clear(self)
 
     @override
     def pop(self, index: SupportsIndex = -1) -> Any:
-        if self._value is None:
-            msg = "Array.pop on detached Array"
-            raise NotImplementedError(msg)
         n = len(self)
         i = int(index)
         if i < 0:
@@ -389,9 +377,6 @@ class Array(list[Any]):
 
     @override
     def insert(self, index: SupportsIndex, value: Any) -> None:
-        if self._value is None:
-            msg = "Array.insert on detached Array"
-            raise NotImplementedError(msg)
         cst, decoded = self._synth_cst(value)
         i = int(index)
         n = len(self)
@@ -483,16 +468,10 @@ class Array(list[Any]):
 
     @override
     def reverse(self) -> None:
-        if self._value is None:
-            list.reverse(self)
-            return
         self._reorder(list(reversed(range(len(self)))))
 
     @override
     def sort(self, *, key: Any = None, reverse: bool = False) -> None:
-        if self._value is None:
-            list.sort(self, key=key, reverse=reverse)
-            return
         n = len(self)
         if key is None:
             order = sorted(range(n), key=lambda i: self[i], reverse=reverse)
@@ -502,7 +481,6 @@ class Array(list[Any]):
 
     def _reorder(self, order: list[int]) -> None:
         """Apply index permutation to items, decoded list, and per-item comments."""
-        assert self._value is not None
         items = self._value.items
         # Bracket padding (leading of items[0], trailing of items[-1]) belongs
         # to *the array* — snapshot before reorder so it stays put.
@@ -532,9 +510,6 @@ class Array(list[Any]):
         key: SupportsIndex | slice,
         value: Any,
     ) -> None:
-        if self._value is None:
-            msg = "Array.__setitem__ on detached Array"
-            raise NotImplementedError(msg)
         if isinstance(key, slice):
             try:
                 values = list(value)
@@ -580,9 +555,6 @@ class Array(list[Any]):
 
     @override
     def __delitem__(self, key: SupportsIndex | slice) -> None:
-        if self._value is None:
-            list.__delitem__(self, key)
-            return
         items = self._value.items
         # Snapshot bracket padding + style before mutation so a delete
         # at index 0 doesn't strip the leading-bracket padding (which
@@ -632,7 +604,7 @@ class Array(list[Any]):
         if count <= 0:
             self.clear()
             return self
-        if count == 1 or self._value is None:
+        if count == 1:
             return self
         # Snapshot original items + values, then append count-1 copies.
         original_items = list(self._value.items)

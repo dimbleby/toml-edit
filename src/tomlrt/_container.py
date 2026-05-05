@@ -1543,7 +1543,6 @@ def _live_attach_array(a: Array) -> tuple[ArrayValue, Array]:
     initialises one); just mark it attached and hand back the value.
     """
     a._attached = True  # noqa: SLF001
-    assert a._value is not None  # noqa: SLF001
     return a._value, a  # noqa: SLF001
 
 

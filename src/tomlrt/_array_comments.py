@@ -46,7 +46,6 @@ from tomlrt._comments import (
     _validate_comment_seq,
     _validate_comment_str,
 )
-from tomlrt._errors import TOMLError
 from tomlrt._trivia import (
     CommentNode,
     NewlineNode,
@@ -77,9 +76,6 @@ def _newline_text(arr: Array) -> str:
 
 
 def _items_or_raise(arr: Array) -> list[ArrayItem]:
-    if arr._value is None:  # noqa: SLF001
-        msg = "comment API is not available on detached Arrays"
-        raise TOMLError(msg)
     return arr._value.items  # noqa: SLF001
 
 
@@ -179,8 +175,6 @@ def _render_comment_lines(
 
 def _slot_indent(arr: Array) -> str:
     """Best-effort indent string for this array's items."""
-    if arr._value is None:  # noqa: SLF001
-        return "  "
     items = arr._value.items  # noqa: SLF001
     if items:
         # Prefer item 0's leading whitespace immediately before the value.
@@ -479,8 +473,6 @@ def snapshot_comments(
     arr: Array,
 ) -> tuple[list[tuple[str, ...]], list[str | None]]:
     """Return per-item (raw-leading-lines, raw-eol-text) snapshots."""
-    if arr._value is None:  # noqa: SLF001
-        return [], []
     items = arr._value.items  # noqa: SLF001
     leadings = [
         _raw_comment_lines(_leading_pieces(items, i)) for i in range(len(items))
@@ -491,8 +483,6 @@ def snapshot_comments(
 
 def clear_all_comments(arr: Array) -> None:
     """Strip per-item comments from all items via the canonical deleters."""
-    if arr._value is None:  # noqa: SLF001
-        return
     items = arr._value.items  # noqa: SLF001
     n = len(items)
     leading = ArrayLeadingView(arr)
@@ -568,8 +558,6 @@ def apply_comments(
     canonical EOL section out of the prev item's post_comma_trivia),
     then leading blocks. Skips empty entries.
     """
-    if arr._value is None:  # noqa: SLF001
-        return
     items = arr._value.items  # noqa: SLF001
     n = len(items)
     any_comment = any(eols[i] is not None for i in range(n)) or any(
