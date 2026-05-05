@@ -23,7 +23,7 @@ Implementation notes:
 from __future__ import annotations
 
 import sys
-from collections.abc import MutableMapping
+from collections.abc import Iterable, MutableMapping
 from typing import TYPE_CHECKING
 
 if sys.version_info >= (3, 12):
@@ -64,6 +64,15 @@ def _validate_comment_text(text: str) -> None:
         if cp < 0x20 or cp == 0x7F:
             msg = f"comment may not contain control character U+{cp:04X}"
             raise TOMLError(msg)
+
+
+def _validate_comment_str(value: object, name: str) -> str:
+    """Type-check ``value`` is a str and validate its content; return it."""
+    if not isinstance(value, str):
+        msg = f"{name} must be str, got {type(value).__name__}"
+        raise TypeError(msg)
+    _validate_comment_text(value)
+    return value
 
 
 def _decode_comment(raw: str) -> str:
@@ -135,11 +144,7 @@ class EolCommentView(MutableMapping[str, str]):
         if slot is None:
             msg = f"key {key!r} not in container"
             raise KeyError(msg)
-        v: object = value
-        if not isinstance(v, str):
-            msg = f"comment must be str, got {type(v).__name__}"
-            raise TypeError(msg)
-        _validate_comment_text(value)
+        _validate_comment_str(value, "comment")
         # Ensure trailing whitespace separator before the new comment.
         if slot.eol.trailing_ws is None:
             slot.eol.trailing_ws = WhitespaceNode(" ")
@@ -298,17 +303,7 @@ class LeadingCommentView(MutableMapping[str, tuple[str, ...]]):
         if slot is None:
             msg = f"key {key!r} not in container"
             raise KeyError(msg)
-        v: object = value
-        if isinstance(v, str):
-            msg = "leading_comments must be an iterable of comment strings"
-            raise TypeError(msg)
-        comments = tuple(value)
-        for c in comments:
-            cv: object = c
-            if not isinstance(cv, str):
-                msg = "leading comments must be strings"
-                raise TypeError(msg)
-            _validate_comment_text(c)
+        comments = _validate_comment_seq(value, "leading_comments")
         from tomlrt._container import Document  # noqa: PLC0415
 
         lr = self._c._layout_root  # noqa: SLF001
@@ -410,11 +405,7 @@ def _header_comment_set(c: Container, value: str | None) -> None:
                 # Drop the gap whitespace that preceded the comment.
                 eol.trailing_ws = None
         return
-    v: object = value
-    if not isinstance(v, str):
-        msg = f"header_comment must be str or None, got {type(v).__name__}"
-        raise TypeError(msg)
-    _validate_comment_text(value)
+    _validate_comment_str(value, "header_comment")
     if eol.trailing_ws is None:
         eol.trailing_ws = WhitespaceNode(" ")
     elif eol.trailing_ws.text == "":
@@ -442,17 +433,7 @@ def _header_leading_set(c: Container, value: tuple[str, ...]) -> None:
     if h is None:
         msg = "container has no header to attach leading comments to"
         raise TOMLError(msg)
-    v: object = value
-    if isinstance(v, str):
-        msg = "header_leading_comments must be an iterable of comment strings"
-        raise TypeError(msg)
-    comments = tuple(value)
-    for cm in comments:
-        cv: object = cm
-        if not isinstance(cv, str):
-            msg = "header_leading_comments must be strings"
-            raise TypeError(msg)
-        _validate_comment_text(cm)
+    comments = _validate_comment_seq(value, "header_leading_comments")
     from tomlrt._container import Document  # noqa: PLC0415
 
     lr = c._layout_root  # noqa: SLF001
@@ -471,28 +452,24 @@ def _header_leading_set(c: Container, value: tuple[str, ...]) -> None:
     leading.pieces = [*kept, *new_pieces]
 
 
-def _validate_comment_seq(value: tuple[str, ...], name: str) -> tuple[str, ...]:
-    v: object = value
-    if isinstance(v, str):
+def _validate_comment_seq(value: object, name: str) -> tuple[str, ...]:
+    if isinstance(value, str):
         msg = f"{name} must be an iterable of comment strings"
         raise TypeError(msg)
-    out = tuple(value)
-    for c in out:
-        cv: object = c
-        if not isinstance(cv, str):
+    if not isinstance(value, Iterable):
+        msg = f"{name} must be an iterable of comment strings"
+        raise TypeError(msg)
+    out: list[str] = []
+    for c in value:
+        if not isinstance(c, str):
             msg = f"{name} entries must be strings"
             raise TypeError(msg)
         if "\n" in c or "\r" in c:
             msg = "preamble lines must not contain a line terminator"
             raise TOMLError(msg)
-        for ch in c:
-            cp = ord(ch)
-            if cp == 0x09:
-                continue
-            if cp < 0x20 or cp == 0x7F:
-                msg = f"{name} may not contain control character U+{cp:04X}"
-                raise TOMLError(msg)
-    return out
+        _validate_comment_text(c)
+        out.append(c)
+    return tuple(out)
 
 
 def _trivia_attached_split(
