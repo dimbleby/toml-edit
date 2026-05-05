@@ -1607,33 +1607,29 @@ def _clone_aot_entry_impl(
     return entry_table
 
 
-def clone_aot_entry_as_table(
+def _install_cloned_section(
     parent: Container,
     key: str,
-    src_entry_table: Container,
+    src_slots: list[Slot],
+    src_prefix: tuple[str, ...],
 ) -> Table:
-    """Install an AoT entry under ``parent[key]`` as a standard ``[key]`` table.
+    """Common installer for ``parent[key] = <cloned section>``.
 
-    Used by ``parent[key] = some_aot_entry`` and ``install`` paths.
-    Deep-clones the source entry's slots, rewriting the head from
-    ``[[..]]`` to ``[..]``, rebasing all paths from the source's
-    AoT prefix to ``parent._path + (key,)``.
+    Deep-clones ``src_slots`` (rewriting head from ``[..]`` / ``[[..]]``
+    to ``[<key>]``, rebasing paths from ``src_prefix`` to
+    ``parent._path + (key,)``), wires the section container, splices
+    the slots in at the parent's subtree anchor, files the parent
+    binding ref, and populates child views. Used by both
+    ``clone_aot_entry_as_table`` and ``clone_section_as_section``.
     """
     from tomlrt._container import Table  # noqa: PLC0415
 
     layout_root = parent._layout_root  # noqa: SLF001
     if layout_root is None:
-        msg = "clone_aot_entry_as_table requires parent attached to a document"
+        msg = "cloned-section install requires parent attached to a document"
         raise RuntimeError(msg)
     doc = layout_root
     target_path = (*parent._path, key)  # noqa: SLF001
-
-    src_entry = src_entry_table._owner_aot_entry  # noqa: SLF001
-    if src_entry is None:
-        msg = "Source entry has no owning AoTEntry"
-        raise RuntimeError(msg)
-    src_slots = _validate_clonable_aot_entry(src_entry)
-    src_prefix = src_entry.path
 
     cloned_slots = _clone_entry_slots(
         src_slots,
@@ -1674,6 +1670,26 @@ def clone_aot_entry_as_table(
 
     dict.__setitem__(parent, key, section)
     return section
+
+
+def clone_aot_entry_as_table(
+    parent: Container,
+    key: str,
+    src_entry_table: Container,
+) -> Table:
+    """Install an AoT entry under ``parent[key]`` as a standard ``[key]`` table.
+
+    Used by ``parent[key] = some_aot_entry`` and ``install`` paths.
+    Deep-clones the source entry's slots, rewriting the head from
+    ``[[..]]`` to ``[..]``, rebasing all paths from the source's
+    AoT prefix to ``parent._path + (key,)``.
+    """
+    src_entry = src_entry_table._owner_aot_entry  # noqa: SLF001
+    if src_entry is None:
+        msg = "Source entry has no owning AoTEntry"
+        raise RuntimeError(msg)
+    src_slots = _validate_clonable_aot_entry(src_entry)
+    return _install_cloned_section(parent, key, src_slots, src_entry.path)
 
 
 def _gather_section_slots(src_table: Container) -> list[Slot]:
@@ -1811,60 +1827,11 @@ def clone_section_as_section(
     by deep-cloning every owned slot and rebasing paths from
     ``src_table._path`` to ``parent._path + (key,)``.
     """
-    from tomlrt._container import Table  # noqa: PLC0415
-
-    layout_root = parent._layout_root  # noqa: SLF001
-    if layout_root is None:
-        msg = "clone_section_as_section requires parent attached to a document"
-        raise RuntimeError(msg)
-    doc = layout_root
-    target_path = (*parent._path, key)  # noqa: SLF001
-
     src_slots = _gather_section_slots(src_table)
     if not isinstance(src_slots[0], StructuralHeaderSlot):
         msg = "Source section's first owned slot is not a header"
         raise AssertionError(msg)  # noqa: TRY004
-    src_prefix = src_table._path  # noqa: SLF001
-
-    cloned_slots = _clone_entry_slots(
-        src_slots,
-        new_entry=None,
-        body_owner=parent._owner_aot_entry,  # noqa: SLF001
-        src_prefix=src_prefix,
-        target_prefix=target_path,
-        head_kind="table",
-    )
-
-    head = cloned_slots[0]
-    assert isinstance(head, StructuralHeaderSlot)
-    cloned_header: StructuralHeaderSlot = head
-    cloned_header.leading = _build_section_leading(doc)
-
-    section = Table.section()
-    _wire_section_container(
-        section,
-        doc=doc,
-        path=target_path,
-        parent=parent,
-        owner=parent._owner_aot_entry,  # noqa: SLF001
-        header=cloned_header,
-    )
-
-    _splice_block_at_parent_anchor(cloned_slots, parent, doc)
-
-    parent_ref = SlotRef(slot=cloned_header, container=parent, local_key=key)
-    _file_ref_at_tail(parent, parent_ref)
-
-    _populate_entry_views(
-        entry_table=section,
-        cloned_slots=cloned_slots[1:],
-        target_prefix=target_path,
-        body_owner=parent._owner_aot_entry,  # noqa: SLF001
-        doc=doc,
-    )
-
-    dict.__setitem__(parent, key, section)
-    return section
+    return _install_cloned_section(parent, key, src_slots, src_table._path)  # noqa: SLF001
 
 
 def clone_aot(
