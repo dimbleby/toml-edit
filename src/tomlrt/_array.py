@@ -17,6 +17,7 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override
 
+from tomlrt import _layout_ops
 from tomlrt._errors import TOMLError
 from tomlrt._trivia import CommentNode, NewlineNode, Trivia, WhitespaceNode
 from tomlrt._values import (
@@ -1065,8 +1066,6 @@ class AoT(list["Table"]):
         ``body`` may be a Mapping (initial body content) or ``None``
         (empty entry). The AoT must be attached to a document.
         """
-        from tomlrt import _layout_ops  # noqa: PLC0415
-
         if self._layout_root is None:
             list.append(self, _make_unattached_entry(body))
             return self[-1]
@@ -1080,7 +1079,6 @@ class AoT(list["Table"]):
         AoT entry or attached standard section, otherwise falls
         through to ``add_aot_entry``.
         """
-        from tomlrt import _layout_ops  # noqa: PLC0415
         from tomlrt._container import Table as TableType  # noqa: PLC0415
 
         if isinstance(value, TableType) and value._layout_root is not None:  # noqa: SLF001
@@ -1094,7 +1092,6 @@ class AoT(list["Table"]):
         self, index: int, value: Mapping[str, Any] | None
     ) -> None:
         """Dispatch in-place replacement of an attached AoT entry."""
-        from tomlrt import _layout_ops  # noqa: PLC0415
         from tomlrt._container import Table as TableType  # noqa: PLC0415
 
         if (
@@ -1114,8 +1111,6 @@ class AoT(list["Table"]):
 
     @override
     def pop(self, index: SupportsIndex = -1) -> Table:
-        from tomlrt import _layout_ops  # noqa: PLC0415
-
         idx = int(index)
         n = len(self)
         if not -n <= idx < n:
@@ -1127,8 +1122,6 @@ class AoT(list["Table"]):
 
     @override
     def __delitem__(self, key: SupportsIndex | slice) -> None:
-        from tomlrt import _layout_ops  # noqa: PLC0415
-
         if isinstance(key, slice):
             if self._layout_root is None:
                 list.__delitem__(self, key)
@@ -1144,8 +1137,6 @@ class AoT(list["Table"]):
 
     @override
     def clear(self) -> None:
-        from tomlrt import _layout_ops  # noqa: PLC0415
-
         if self._layout_root is None:
             list.clear(self)
             return
@@ -1162,8 +1153,6 @@ class AoT(list["Table"]):
         index: SupportsIndex | slice,
         value: Mapping[str, Any] | Iterable[Mapping[str, Any]],
     ) -> None:
-        from tomlrt import _layout_ops  # noqa: PLC0415
-
         if isinstance(index, slice):
             try:
                 values = list(value)
@@ -1238,8 +1227,6 @@ class AoT(list["Table"]):
 
     @override
     def insert(self, index: SupportsIndex, value: Table | Mapping[str, Any]) -> None:
-        from tomlrt import _layout_ops  # noqa: PLC0415
-
         if self._layout_root is None:
             assert isinstance(value, dict)
             list.insert(self, index, _make_unattached_entry(value))
@@ -1267,8 +1254,6 @@ class AoT(list["Table"]):
 
     @override
     def reverse(self) -> None:
-        from tomlrt import _layout_ops  # noqa: PLC0415
-
         if self._layout_root is None:
             list.reverse(self)
             return
@@ -1277,8 +1262,6 @@ class AoT(list["Table"]):
 
     @override
     def sort(self, *args: Any, **kwargs: Any) -> None:
-        from tomlrt import _layout_ops  # noqa: PLC0415
-
         new_order = sorted(self, *args, **kwargs)
         if self._layout_root is None:
             list.clear(self)
@@ -1294,8 +1277,6 @@ class AoT(list["Table"]):
 
     @override
     def __imul__(self, n: SupportsIndex) -> Self:
-        from tomlrt import _layout_ops  # noqa: PLC0415
-
         count = int(n)
         if count <= 0:
             self.clear()

@@ -22,6 +22,7 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override
 
+from tomlrt import _layout_ops
 from tomlrt._errors import TOMLError
 from tomlrt._render import render
 from tomlrt._slots import KVSlot
@@ -339,8 +340,6 @@ class Container(dict[str, Any]):
                 or (isinstance(value, Container) and not value._inline)  # noqa: SLF001
                 or isinstance(value, Mapping)
             ):
-                from tomlrt import _layout_ops  # noqa: PLC0415
-
                 primary_refs = self._index.get(key, [])
                 saved_anchor_prev = None
                 saved_leading_pieces: list[Any] = []
@@ -387,14 +386,10 @@ class Container(dict[str, Any]):
             raise TypeError(msg)
         # New direct-KV insert.
         if _is_scalar(value):
-            from tomlrt import _layout_ops  # noqa: PLC0415
-
             _layout_ops.append_direct_kv(self, key, _coerce_scalar(value))
             dict.__setitem__(self, key, value)
             return
         if _is_synth_inline(value):
-            from tomlrt import _layout_ops  # noqa: PLC0415
-
             cst, decoded = _synth_value(
                 value,
                 layout_root=self._layout_root,
@@ -407,8 +402,6 @@ class Container(dict[str, Any]):
             return
         # Fall-through: typed section Container / AoT live-attach.
         if isinstance(value, AoT):
-            from tomlrt import _layout_ops  # noqa: PLC0415
-
             # If `value` is attached to a live doc — or to a private
             # orphan with intact entry_slots (i.e. the user just
             # deleted its old binding via the structural-overwrite
@@ -466,8 +459,6 @@ class Container(dict[str, Any]):
             return
         if isinstance(value, Container) and not value._inline:  # noqa: SLF001
             # Section-flavoured Table — synthesise [path] header.
-            from tomlrt import _layout_ops  # noqa: PLC0415
-
             # Already-attached Table (live doc): clone via snapshot.
             # Detached/private: rehome in place.
             src_root = value._layout_root  # noqa: SLF001
@@ -575,8 +566,6 @@ class Container(dict[str, Any]):
             return
         if key not in self:
             raise KeyError(key)
-        from tomlrt import _layout_ops  # noqa: PLC0415
-
         _layout_ops.delete_key(self, key)
 
     # ------------------------------------------------------------------
@@ -800,8 +789,6 @@ class Container(dict[str, Any]):
             if i == len(parts) - 1:
                 cur[parts[-1]] = value
                 return cur[parts[-1]]
-            from tomlrt import _layout_ops  # noqa: PLC0415
-
             if is_aot:
                 # Multi-component AoT install: build implicit chain via
                 # ensure_table on the prefix-of-leaf, then bind the AoT.
@@ -876,8 +863,6 @@ class Container(dict[str, Any]):
                 cur = child
             assert isinstance(cur, Table)
             return cur
-        from tomlrt import _layout_ops  # noqa: PLC0415
-
         new_section = Table.section()
         attached = _layout_ops.attach_section_at(cur, parts[i:], new_section)
         assert isinstance(attached, Table)
@@ -932,10 +917,9 @@ class Container(dict[str, Any]):
             # turns a KV (originally inline, no separator) into a
             # section header (deserves visual separation).
             if self._body_tail is not None and new_header._prev is self._body_tail:  # noqa: SLF001
-                from tomlrt import _layout_ops as _lop  # noqa: PLC0415
                 from tomlrt._trivia import NewlineNode as _NewlineNode  # noqa: PLC0415
 
-                if not _lop._leading_has_blank_line(new_header.leading):  # noqa: SLF001
+                if not _layout_ops._leading_has_blank_line(new_header.leading):  # noqa: SLF001
                     layout_root = self._layout_root
                     nl = layout_root._newline if layout_root else "\n"  # noqa: SLF001
                     new_header.leading.pieces.insert(0, _NewlineNode(text=nl))
