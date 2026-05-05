@@ -484,21 +484,7 @@ class Array(list[Any]):
         if self._value is None:
             list.reverse(self)
             return
-        items = self._value.items
-        # Snapshot bracket padding + style before reorder; the leading
-        # of items[0] and the trailing of items[-1] are bracket-padding
-        # that belong to *the array*, not to those particular items.
-        style = self._style()
-        bracket_leading = clone_trivia(items[0].leading) if items else Trivia()
-        leadings, eols = snapshot_comments(self)
-        items.reverse()
-        list.reverse(self)
-        leadings.reverse()
-        eols.reverse()
-        _normalise_for_renormalise(items, bracket_leading)
-        _renormalise_commas(items, style, self._value)
-        clear_all_comments(self)
-        apply_comments(self, leadings, eols)
+        self._reorder(list(reversed(range(len(self)))))
 
     @override
     def sort(self, *, key: Any = None, reverse: bool = False) -> None:
@@ -510,8 +496,14 @@ class Array(list[Any]):
             order = sorted(range(n), key=lambda i: self[i], reverse=reverse)
         else:
             order = sorted(range(n), key=lambda i: key(self[i]), reverse=reverse)
+        self._reorder(order)
+
+    def _reorder(self, order: list[int]) -> None:
+        """Apply index permutation to items, decoded list, and per-item comments."""
+        assert self._value is not None
         items = self._value.items
-        # See `reverse` — capture style + bracket padding before reorder.
+        # Bracket padding (leading of items[0], trailing of items[-1]) belongs
+        # to *the array* — snapshot before reorder so it stays put.
         style = self._style()
         bracket_leading = clone_trivia(items[0].leading) if items else Trivia()
         leadings, eols = snapshot_comments(self)
