@@ -204,7 +204,6 @@ class Array(list[Any]):
         """
         from tomlrt._errors import TOMLError  # noqa: PLC0415
         from tomlrt._trivia import (  # noqa: PLC0415
-            CommentNode,
             NewlineNode,
             Trivia,
             WhitespaceNode,
@@ -216,11 +215,16 @@ class Array(list[Any]):
             return self
         items = self._value.items
         if not multiline:
+            # Recursively probe for CommentNodes anywhere inside an item
+            # (its own trivia *and* nested inline values), since collapse
+            # would have nowhere to put them.
             for it in items:
-                for piece in (*it.leading.pieces, *it.post_comma_trivia.pieces):
-                    if isinstance(piece, CommentNode):
-                        msg = "cannot collapse multi-line array with comments"
-                        raise TOMLError(msg)
+                if _item_has_any_comment(it):
+                    msg = (
+                        "cannot collapse multi-line array: "
+                        "items contain EOL or leading comments"
+                    )
+                    raise TOMLError(msg)
             for it in items:
                 it.leading = Trivia()
                 it.post_comma_trivia = Trivia()
@@ -968,6 +972,44 @@ def _trivia_empty() -> Any:
     from tomlrt._trivia import Trivia  # noqa: PLC0415
 
     return Trivia()
+
+
+def _trivia_has_comment(trivia: Any) -> bool:
+    from tomlrt._trivia import CommentNode  # noqa: PLC0415
+
+    return any(isinstance(p, CommentNode) for p in trivia.pieces)
+
+
+def _value_has_any_comment(val: Any) -> bool:
+    from tomlrt._values import ArrayValue, InlineTableValue  # noqa: PLC0415
+
+    if isinstance(val, ArrayValue):
+        if _trivia_has_comment(val.final_trivia):
+            return True
+        return any(_item_has_any_comment(it) for it in val.items)
+    if isinstance(val, InlineTableValue):
+        if _trivia_has_comment(val.final_trivia):
+            return True
+        return any(_entry_has_any_comment(e) for e in val.entries)
+    return False
+
+
+def _item_has_any_comment(item: Any) -> bool:
+    if (
+        _trivia_has_comment(item.leading)
+        or _trivia_has_comment(item.trailing)
+        or _trivia_has_comment(item.post_comma_trivia)
+    ):
+        return True
+    return _value_has_any_comment(item.value)
+
+
+def _entry_has_any_comment(entry: Any) -> bool:
+    if _trivia_has_comment(entry.leading) or _trivia_has_comment(entry.trailing):
+        return True
+    if _trivia_has_comment(entry.post_comma_trivia):
+        return True
+    return _value_has_any_comment(entry.value)
 
 
 def _renormalise_commas(
