@@ -11,7 +11,6 @@ dict from there.
 from __future__ import annotations
 
 import math
-import re
 import sys
 from collections.abc import Mapping
 from datetime import date, datetime, time
@@ -54,8 +53,8 @@ from tomlrt._values import (
     InlineTableEntry,
     InlineTableValue,
     IntegerValue,
-    KeyPart,
     StringValue,
+    make_keypart,
 )
 
 if TYPE_CHECKING:
@@ -1581,13 +1580,6 @@ def _is_synth_inline(v: object) -> bool:
     return type(v) is list or (isinstance(v, list) and not isinstance(v, Array))
 
 
-def _make_keypart(name: str) -> KeyPart:
-    """Build a `KeyPart` for a synthesised key, choosing bare vs basic."""
-    if re.match(r"\A[A-Za-z0-9_\-]+\Z", name):
-        return KeyPart(raw=name, value=name, kind="bare")
-    return KeyPart(raw=_basic_string_lexeme(name), value=name, kind="basic")
-
-
 def _synth_value(
     v: object,
     *,
@@ -1685,7 +1677,7 @@ def _live_attach_inline_table(
         is_last = i == len(items) - 1
         entry = InlineTableEntry(
             leading=Trivia([WhitespaceNode(text=" ")]),
-            key_parts=[_make_keypart(k)],
+            key_parts=[make_keypart(k)],
             key_seps=[],
             pre_eq=" ",
             post_eq=" ",
@@ -1744,7 +1736,7 @@ def _synth_inline_table(
         is_last = i == len(items) - 1
         entry = InlineTableEntry(
             leading=Trivia([WhitespaceNode(text=" ")]),
-            key_parts=[_make_keypart(k)],
+            key_parts=[make_keypart(k)],
             key_seps=[],
             pre_eq=" ",
             post_eq=" ",
