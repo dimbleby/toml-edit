@@ -31,7 +31,7 @@ import re
 from typing import TYPE_CHECKING
 
 from tomlrt._trivia import CommentNode, Trivia, WhitespaceNode, clone_trivia
-from tomlrt._values import InlineTableEntry, KeyPart
+from tomlrt._values import InlineTableEntry, KeyPart, quote_basic_key
 
 if TYPE_CHECKING:
     from tomlrt._container import Container
@@ -95,24 +95,10 @@ def _make_key_parts(path: tuple[str, ...]) -> list[KeyPart]:
         if _RE_BARE_KEY.match(p):
             out.append(KeyPart(raw=p, value=p, kind="bare"))
         else:
-            out.append(KeyPart(raw=_quote_basic(p), value=p, kind="basic"))
+            out.append(KeyPart(raw=quote_basic_key(p), value=p, kind="basic"))
     return out
 
 
-def _quote_basic(s: str) -> str:
-    out = ['"']
-    for ch in s:
-        c = ord(ch)
-        if ch == "\\":
-            out.append("\\\\")
-        elif ch == '"':
-            out.append('\\"')
-        elif c < 0x20 or c == 0x7F:
-            out.append(f"\\u{c:04X}")
-        else:
-            out.append(ch)
-    out.append('"')
-    return "".join(out)
 
 
 def _ws(text: str) -> Trivia:

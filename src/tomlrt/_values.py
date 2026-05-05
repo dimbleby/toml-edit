@@ -135,6 +135,23 @@ class KeyPart:
         return self.raw
 
 
+def quote_basic_key(s: str) -> str:
+    """Encode ``s`` as a basic-quoted TOML key (escaping where required)."""
+    out = ['"']
+    for ch in s:
+        c = ord(ch)
+        if ch == "\\":
+            out.append("\\\\")
+        elif ch == '"':
+            out.append('\\"')
+        elif c < 0x20 or c == 0x7F:
+            out.append(f"\\u{c:04X}")
+        else:
+            out.append(ch)
+    out.append('"')
+    return "".join(out)
+
+
 @dataclass(slots=True, eq=False)
 class InlineTableEntry:
     """One ``key = value`` slot inside an inline table."""

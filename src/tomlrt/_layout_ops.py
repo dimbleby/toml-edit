@@ -41,7 +41,7 @@ from tomlrt._trivia import (
     Trivia,
     WhitespaceNode,
 )
-from tomlrt._values import KeyPart
+from tomlrt._values import KeyPart, quote_basic_key
 
 HeaderKind = Literal["table", "aot-entry"]
 
@@ -624,7 +624,7 @@ def _build_kv_slot(c: Container, key: str, value: Value, doc: Document) -> KVSlo
     kp = (
         KeyPart(raw=key, value=key, kind="bare")
         if _RE_BARE_KEY.match(key)
-        else KeyPart(raw=_quote_basic(key), value=key, kind="basic")
+        else KeyPart(raw=quote_basic_key(key), value=key, kind="basic")
     )
     return KVSlot(
         leading=_kv_separator_leading(c, doc),
@@ -647,7 +647,7 @@ def _make_keypart(name: str) -> KeyPart:
     """Build a `KeyPart` for an inserted key, choosing bare vs basic-quoted."""
     if _RE_BARE_KEY.match(name):
         return KeyPart(raw=name, value=name, kind="bare")
-    return KeyPart(raw=_quote_basic(name), value=name, kind="basic")
+    return KeyPart(raw=quote_basic_key(name), value=name, kind="basic")
 
 
 def _append_dotted_kv_under_implicit(c: Container, key: str, value: Value) -> None:
@@ -1080,20 +1080,6 @@ def _recompute_body_tail(c: Container) -> Slot | None:
     return None
 
 
-def _quote_basic(s: str) -> str:
-    out = ['"']
-    for ch in s:
-        c = ord(ch)
-        if ch == "\\":
-            out.append("\\\\")
-        elif ch == '"':
-            out.append('\\"')
-        elif c < 0x20 or c == 0x7F:
-            out.append(f"\\u{c:04X}")
-        else:
-            out.append(ch)
-    out.append('"')
-    return "".join(out)
 
 
 # ---------------------------------------------------------------------------
@@ -1107,7 +1093,7 @@ def _build_header_keyparts(path: tuple[str, ...]) -> list[KeyPart]:
         if _RE_BARE_KEY.match(p):
             out.append(KeyPart(raw=p, value=p, kind="bare"))
         else:
-            out.append(KeyPart(raw=_quote_basic(p), value=p, kind="basic"))
+            out.append(KeyPart(raw=quote_basic_key(p), value=p, kind="basic"))
     return out
 
 
