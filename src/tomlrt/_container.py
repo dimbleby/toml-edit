@@ -465,30 +465,21 @@ class Container(dict[str, Any]):
           * Detached / private source → rehome in place.
         """
         src_root = value._layout_root
-        if (
-            src_root is not None
-            and not src_root._is_private  # noqa: SLF001
-            and value._owner_aot_entry is not None
-            and self._layout_root is not None
-        ):
+        live_source = src_root is not None and not src_root._is_private  # noqa: SLF001
+        if live_source:
             if key in self:
                 del self[key]
-            _layout_ops.clone_aot_entry_as_table(self, key, value)
-            return
-        if src_root is not None and not src_root._is_private:  # noqa: SLF001
-            if value._header_ref is not None:
-                if key in self:
-                    del self[key]
+            if value._owner_aot_entry is not None and self._layout_root is not None:
+                _layout_ops.clone_aot_entry_as_table(self, key, value)
+            elif value._header_ref is not None:
                 _layout_ops.clone_section_as_section(self, key, value)
-                return
-            # Implicit source / whole-Document: walk recursively
-            # and re-install each structural child via tuple-path
-            # `install`, preserving sections / AoTs as such (no
-            # flatten-to-inline) and keeping implicit chains
-            # implicit when there are no direct KVs to host.
-            if key in self:
-                del self[key]
-            _install_attached_subtree(self, (key,), value)
+            else:
+                # Implicit source / whole-Document: walk recursively
+                # and re-install each structural child via tuple-path
+                # ``install``, preserving sections / AoTs as such (no
+                # flatten-to-inline) and keeping implicit chains
+                # implicit when there are no direct KVs to host.
+                _install_attached_subtree(self, (key,), value)
             return
         if src_root is not None and src_root._is_private:  # noqa: SLF001
             _reset_table_for_rehome(value)
