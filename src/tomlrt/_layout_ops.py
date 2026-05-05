@@ -1049,6 +1049,46 @@ def _doc_tail_anchor(doc: Document) -> Slot | None:
     return doc._tail  # noqa: SLF001
 
 
+def _slot_in_subtree(slot: Slot, base_path: tuple[str, ...]) -> bool:
+    """True iff ``slot``'s logical position is within ``base_path``.
+
+    A slot is "within" if its host (KVSlot) or path (StructuralHeaderSlot)
+    starts with ``base_path``.
+    """
+    from tomlrt._slots import KVSlot, StructuralHeaderSlot  # noqa: PLC0415
+
+    if isinstance(slot, KVSlot):
+        path = slot.host_path
+    elif isinstance(slot, StructuralHeaderSlot):
+        path = slot.path
+    else:
+        return False
+    return len(path) >= len(base_path) and path[: len(base_path)] == base_path
+
+
+def _parent_subtree_tail(parent: Container) -> Slot | None:
+    """Return the last slot in ``parent``'s physical subtree.
+
+    Walks forward in the doc-stream linked list from ``parent._refs[-1]``
+    while subsequent slots are still descendants of ``parent``'s logical
+    path (and share its AoT-entry owner).
+    """
+    refs = parent._refs  # noqa: SLF001
+    if not refs:
+        return None
+    base_path = parent._path  # noqa: SLF001
+    base_owner = parent._owner_aot_entry  # noqa: SLF001
+    cur = refs[-1].slot
+    while cur._next is not None:  # noqa: SLF001
+        nxt = cur._next  # noqa: SLF001
+        if getattr(nxt, "owner_aot_entry", None) is not base_owner:
+            break
+        if not _slot_in_subtree(nxt, base_path):
+            break
+        cur = nxt
+    return cur
+
+
 def _splice_at_end(slot: Slot, doc: Document) -> None:
     """Insert ``slot`` at the end of the doc-stream."""
     anchor = _doc_tail_anchor(doc)
@@ -1058,6 +1098,28 @@ def _splice_at_end(slot: Slot, doc: Document) -> None:
     else:
         _ensure_terminator(anchor, doc)
         insert_after(anchor, slot, doc)
+
+
+def _splice_block_at_parent_anchor(
+    slots: list[Slot], parent: Container, doc: Document
+) -> None:
+    """Splice a contiguous block immediately after parent's subtree tail.
+
+    Used by attach / clone primitives when installing a new structural
+    block under ``parent``. Falls back to splice-at-end if ``parent``
+    has no contributing slots yet (so anchor would be None).
+    """
+    anchor = _parent_subtree_tail(parent)
+    if anchor is None:
+        _splice_at_end(slots[0], doc)
+    else:
+        _ensure_terminator(anchor, doc)
+        insert_after(anchor, slots[0], doc)
+    prev: Slot = slots[0]
+    for s in slots[1:]:
+        _ensure_terminator(prev, doc)
+        insert_after(prev, s, doc)
+        prev = s
 
 
 def _maybe_demote_synthetic_empty_header(parent: Container) -> None:
@@ -1487,12 +1549,7 @@ def clone_aot_entry_as_table(
     section._refs.append(own_ref)  # noqa: SLF001
     section._header_ref = own_ref  # noqa: SLF001
 
-    _splice_at_end(cloned_header, doc)
-    prev: Slot = cloned_header
-    for s in cloned_slots[1:]:
-        _ensure_terminator(prev, doc)
-        insert_after(prev, s, doc)
-        prev = s
+    _splice_block_at_parent_anchor(cloned_slots, parent, doc)
 
     parent_ref = SlotRef(slot=cloned_header, container=parent, local_key=key)
     parent._refs.append(parent_ref)  # noqa: SLF001
@@ -1690,12 +1747,7 @@ def clone_section_as_section(
     section._refs.append(own_ref)  # noqa: SLF001
     section._header_ref = own_ref  # noqa: SLF001
 
-    _splice_at_end(cloned_header, doc)
-    prev: Slot = cloned_header
-    for s in cloned_slots[1:]:
-        _ensure_terminator(prev, doc)
-        insert_after(prev, s, doc)
-        prev = s
+    _splice_block_at_parent_anchor(cloned_slots, parent, doc)
 
     parent_ref = SlotRef(slot=cloned_header, container=parent, local_key=key)
     parent._refs.append(parent_ref)  # noqa: SLF001
@@ -2178,7 +2230,7 @@ def attach_section(parent: Container, key: str, source: object | None = None) ->
         owner.entry_slots.append(header)
         section._owner_aot_entry = owner  # noqa: SLF001
     else:
-        _splice_at_end(header, doc)
+        _splice_block_at_parent_anchor([header], parent, doc)
 
     parent_ref = SlotRef(slot=header, container=parent, local_key=key)
     parent._refs.append(parent_ref)  # noqa: SLF001
