@@ -376,9 +376,9 @@ def delete_key(c: Container, key: str) -> None:
         unlink_slot(slot, doc)
 
     if subtree_containers or subtree_aots:
-        from tomlrt._container import Document as _Document  # noqa: PLC0415
+        from tomlrt._container import Document  # noqa: PLC0415
 
-        orphan = _Document()
+        orphan = Document()
         orphan._newline = doc._newline  # noqa: SLF001
         orphan._is_private = True  # noqa: SLF001
         for slot in owned_slots:
@@ -1232,9 +1232,9 @@ def _maybe_demote_synthetic_empty_header(parent: Container) -> None:
             return
         s = s._next  # noqa: SLF001
     layout_root = parent._layout_root  # noqa: SLF001
-    from tomlrt._container import Document as _Document  # noqa: PLC0415
+    from tomlrt._container import Document  # noqa: PLC0415
 
-    assert isinstance(layout_root, _Document)
+    assert isinstance(layout_root, Document)
     doc = layout_root
     # Remove the header from the doc stream and from all caches.
     unlink_slot(header, doc, strip_new_head_leading=True)
@@ -2132,9 +2132,7 @@ def attach_section_at(
     a `Table` (rehomed) or a Mapping (snapshotted) or ``None``.
     """
     from tomlrt._container import (  # noqa: PLC0415
-        Container as ContainerType,
-    )
-    from tomlrt._container import (  # noqa: PLC0415
+        Container,
         Table,
         _is_scalar,
         _is_synth_inline,
@@ -2172,7 +2170,7 @@ def attach_section_at(
         cur = chain[-1]
         if comp in cur:
             nxt = dict.__getitem__(cur, comp)
-            if not isinstance(nxt, ContainerType):
+            if not isinstance(nxt, Container):
                 msg = f"intermediate {comp!r} is not a table"
                 raise TypeError(msg)
             chain.append(nxt)
@@ -2373,7 +2371,7 @@ def _scrub_refs_to_owned_slots(c: Container, owned: set[Slot]) -> None:
     reference doc-stream slots).
     """
     from tomlrt._array import AoT, Array  # noqa: PLC0415
-    from tomlrt._container import Container as ContainerType  # noqa: PLC0415
+    from tomlrt._container import Container  # noqa: PLC0415
 
     if c._inline:  # noqa: SLF001
         return
@@ -2395,7 +2393,7 @@ def _scrub_refs_to_owned_slots(c: Container, owned: set[Slot]) -> None:
             c._body_tail = None  # noqa: SLF001
     # Recurse.
     for v in list(dict.values(c)):
-        if isinstance(v, ContainerType):
+        if isinstance(v, Container):
             _scrub_refs_to_owned_slots(v, owned)
         elif isinstance(v, AoT):
             for sub in v:
@@ -2435,11 +2433,11 @@ def remove_aot_entry(aot: AoT, index: int) -> Table:
     # those have their own AoTEntry with its own entry_slots, not in
     # `e.entry_slots`, but they must be removed alongside the parent
     # entry so deletion is structurally complete.
-    from tomlrt._array import AoT as _AoT  # noqa: PLC0415
+    from tomlrt._array import AoT  # noqa: PLC0415
 
     def _collect_nested_aot_slots(c: Container) -> None:
         for v in c.values():
-            if isinstance(v, _AoT):
+            if isinstance(v, AoT):
                 for nested_entry_table in v:
                     ne = nested_entry_table._owner_aot_entry  # noqa: SLF001
                     if ne is not None:
@@ -2448,10 +2446,10 @@ def remove_aot_entry(aot: AoT, index: int) -> Table:
                                 owned.add(s)
                                 owned_ordered.append(s)
                     _collect_nested_aot_slots(nested_entry_table)
-            elif isinstance(v, ContainerType) and not v._inline:  # noqa: SLF001
+            elif isinstance(v, Container) and not v._inline:  # noqa: SLF001
                 _collect_nested_aot_slots(v)
 
-    from tomlrt._container import Container as ContainerType  # noqa: PLC0415
+    from tomlrt._container import Container  # noqa: PLC0415
 
     _collect_nested_aot_slots(entry_table)
 
@@ -2760,7 +2758,7 @@ def _gather_value_owned_slots(val: object) -> list[Slot]:
     For anything else (scalar, inline, empty AoT): the empty list.
     """
     from tomlrt._array import AoT  # noqa: PLC0415
-    from tomlrt._container import Container as ContainerType  # noqa: PLC0415
+    from tomlrt._container import Container  # noqa: PLC0415
 
     if isinstance(val, AoT):
         out: list[Slot] = []
@@ -2770,7 +2768,7 @@ def _gather_value_owned_slots(val: object) -> list[Slot]:
                 out.extend(e.entry_slots)
         return out
     if (
-        isinstance(val, ContainerType)
+        isinstance(val, Container)
         and not val._inline  # noqa: SLF001
         and val._header_ref is not None  # noqa: SLF001
     ):
