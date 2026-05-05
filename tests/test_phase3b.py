@@ -1,14 +1,11 @@
-"""Phase 3b invariant + inline-table mutation tests.
+"""Inline-table mutation invariant tests.
 
-These tests pin the inline-table mutation primitives (replace,
-append, delete) and check that the document invariants
-(``check(doc)``) hold after each operation. The three tests in
-``test_mutation.py`` (``test_inline_table_replace``,
-``test_inline_table_append``,
-``test_inline_table_delete_last_clears_trailing_comma``) cover the
-golden-bytes expectations; this file covers the cache invariants
-and a few additional shapes (dotted-inline mutation, empty inline
-table, multiple appends).
+Pin the inline-table mutation primitives (replace, append, delete)
+and check that the document invariants (``check(doc)``) hold after
+each operation. ``test_mutation.py`` covers the golden-bytes
+expectations; this file covers the cache invariants and a few
+additional shapes (dotted-inline mutation, empty inline table,
+multiple appends).
 """
 
 from __future__ import annotations

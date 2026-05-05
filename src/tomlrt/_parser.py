@@ -7,10 +7,6 @@ document's trailing trivia. Drives `_Validator` at three points:
 - when a header has just been parsed,
 - when a key/value line has just been built,
 - when a key inside an inline table is about to be added.
-
-Phase 1 only needs the slot stream; the logical-view layer
-(``_container.Container`` and friends) consumes the same stream
-in later phases.
 """
 
 from __future__ import annotations

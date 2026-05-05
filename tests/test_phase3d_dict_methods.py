@@ -1,4 +1,4 @@
-"""Phase 3d-2 / 3d-5 — dict-method overrides + section-only-doc seam."""
+"""Dict-method overrides + section-only-doc seam."""
 
 from __future__ import annotations
 

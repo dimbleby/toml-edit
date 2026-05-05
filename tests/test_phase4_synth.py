@@ -1,4 +1,4 @@
-"""Phase 4-partial: plain-dict / plain-list synthesis at assignment time."""
+"""Plain-dict / plain-list synthesis at assignment time."""
 
 from __future__ import annotations
 

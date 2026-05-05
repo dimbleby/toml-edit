@@ -116,9 +116,8 @@ def test_set_eol_comment_round_trips_text_with_hash_prefix() -> None:
 
 def test_comment_views_are_idempotent_under_self_assignment() -> None:
     # A comment view's getter and setter must round-trip: writing back
-    # what we read must be a no-op for any present key. Previously the
-    # writer had a 'user already supplied the marker' branch that broke
-    # this for any comment whose content starts with '#'.
+    # what we read must be a no-op for any present key, including
+    # comments whose content starts with '#'.
     src = td("""
             a = 1  # plain
             b = 2  # "quoted"
@@ -1505,9 +1504,8 @@ def test_epilogue_setter_rejects_str() -> None:
 
 
 def test_aot_append_preserves_source_table_comments() -> None:
-    """``aot.append(other_aot[i])`` must carry over per-KV trivia and any
-    sub-section structure from the source entry; it previously rebuilt
-    the entry from raw data and silently dropped comments."""
+    """``aot.append(other_aot[i])`` carries over per-KV trivia and any
+    sub-section structure from the source entry."""
     src = tomlrt.loads(
         "[[a]]\n# inner-leading\nx = 1  # inner-eol\ny = 2\n"
         "\n[a.sub]\n# sub-leading\nz = 3\n",
@@ -1597,12 +1595,7 @@ def test_aot_append_std_section_table_preserves_comments() -> None:
 
 
 def test_aot_entry_assigned_as_std_table_renders_as_table_header() -> None:
-    """``doc[k] = aot[i]`` must produce a ``[k]`` header, not ``[[k]]``.
-
-    Symmetric to the AoT-side fix: ``_clone_table_sections`` previously
-    preserved the source section's header kind, so an AoT entry copied
-    through the standard-table install path kept its ``[[..]]`` header
-    even though the slot's semantic type is ``table``."""
+    """``doc[k] = aot[i]`` must produce a ``[k]`` header, not ``[[k]]``."""
     src = tomlrt.loads(
         td("""
         [[a]]
@@ -1620,10 +1613,9 @@ def test_aot_entry_assigned_as_std_table_renders_as_table_header() -> None:
 
 
 def test_cross_doc_aot_assignment_preserves_subsections() -> None:
-    """``dst[k] = src.aot(k)`` must carry over each entry's owned
+    """``dst[k] = src.aot(k)`` carries over each entry's owned
     sub-sections (``[k.sub]`` etc.) and their data, not just the
-    ``[[k]]`` headers. Previously the cross-doc AoT clone path silently
-    dropped sub-sections, losing both data and comments."""
+    ``[[k]]`` headers."""
     src = tomlrt.loads(
         td("""
             [[a]]

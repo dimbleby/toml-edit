@@ -19,7 +19,10 @@ def loads(text: str) -> Document:
 
 
 def load(fp: IO[bytes]) -> Document:
-    """Parse a TOML document from a *binary* file-like object."""
+    """Parse a TOML document from a *binary* file-like object.
+
+    The file must be opened in binary mode (``open(path, "wb")``).
+    """
     data = fp.read()
     if not isinstance(data, (bytes, bytearray)):
         msg = (  # type: ignore[unreachable]
@@ -36,7 +39,10 @@ def dumps(doc: Document) -> str:
 
 
 def dump(doc: Document, fp: IO[bytes]) -> None:
-    """Serialize a [`Document`][tomlrt.Document] and write to a *binary* stream."""
+    """Serialize a [`Document`][tomlrt.Document] and write it to a *binary* stream.
+
+    The file must be opened in binary mode (``open(path, "wb")``).
+    """
     fp.write(dumps(doc).encode("utf-8"))
 
 

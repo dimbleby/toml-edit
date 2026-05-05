@@ -1582,10 +1582,6 @@ def test_install_table_into_compact_style_doc_stays_compact() -> None:
     """Installing a section into a doc whose existing headers are
     packed flush (no blank lines between them) must not inject a blank
     line before the new header, which would mix styles.
-
-    Regression for parallel evolution in ``_insert_section_block``: it
-    used to unconditionally add a blank when prior content existed,
-    even when the doc's between-header style was compact.
     """
     src = td("""
         [a]

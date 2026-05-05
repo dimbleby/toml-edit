@@ -1,4 +1,4 @@
-"""Phase 3d-1 — structural delete (section / AoT / dotted-subtree)."""
+"""Structural delete (section / AoT / dotted-subtree)."""
 
 from __future__ import annotations
 
@@ -215,9 +215,8 @@ def test_delete_missing_key_raises() -> None:
 
 def test_delete_then_reinsert_at_top_level_after_section_delete() -> None:
     # After dropping section [a], [b] survives and we can append a
-    # new top-level scalar via the doc-root body_tail (previously
-    # body_tail pointed inside [a]'s region — recompute must catch
-    # it correctly).
+    # new top-level scalar via the doc-root body_tail (recompute must
+    # ensure body_tail no longer points inside [a]'s region).
     src = td("""
         x = 1
         [a]
@@ -233,8 +232,8 @@ def test_delete_then_reinsert_at_top_level_after_section_delete() -> None:
 
 
 def test_held_view_after_delete_does_not_corrupt_doc() -> None:
-    # Phase 3e gives held views a private orphan root + live mutation.
-    # Mutating the orphan must not affect the live document.
+    # Held views survive delete via a private orphan root with live
+    # mutation. Mutating the orphan must not affect the live document.
     doc = loads("[a]\nx = 1\n[b]\ny = 2\n")
     held = doc.table("a")
     del doc["a"]
@@ -312,9 +311,13 @@ def test_readd_into_emptied_aot_implicit_anchors_inside_entry() -> None:
     # belonging to the first.
     assert "[arr.foo]\nnew = 1" in out
     # Round-trip through the parser preserves the logical tree.
-    assert loads(out).to_dict() == doc.to_dict() == {
-        "arr": [{"foo": {"new": 1}}, {"name": 2}],
-    }
+    assert (
+        loads(out).to_dict()
+        == doc.to_dict()
+        == {
+            "arr": [{"foo": {"new": 1}}, {"name": 2}],
+        }
+    )
 
 
 def test_delete_header_only_section() -> None:
@@ -358,9 +361,9 @@ def test_delete_deep_non_aot_implicit_keeps_chain() -> None:
 
 def test_held_deleted_section_view_has_clean_orphan_state() -> None:
     # Defence-in-depth: held view is internally consistent after
-    # delete (Phase 3e detaches it into a private orphan root, so
-    # the held view's refs/header/_body_tail still resolve — but
-    # against the orphan, not the live doc).
+    # delete (it is detached into a private orphan root, so the held
+    # view's refs/header/_body_tail still resolve — but against the
+    # orphan, not the live doc).
     doc = loads("[a]\nx = 1\n[b]\ny = 2\n")
     held = doc.table("a")
     del doc["a"]

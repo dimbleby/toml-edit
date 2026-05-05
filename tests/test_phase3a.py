@@ -1,8 +1,7 @@
-"""Phase 3a invariant + scalar-replace tests.
+"""Per-container cache invariant + scalar-replace tests.
 
-These tests exercise the cache-population machinery added in Phase 3a
-on a representative slice of TOML constructs (per duck #12 of the
-Phase 3 plan review):
+Exercise the cache-population machinery on a representative slice of
+TOML constructs:
 
 - top-level dotted KV
 - preamble + later sections

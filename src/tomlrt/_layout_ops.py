@@ -1,4 +1,4 @@
-"""Section-side mutation primitives (Phase 3c onward).
+"""Section-side mutation primitives.
 
 Linked-list and per-container cache updates for direct (non-dotted)
 KV insert and leaf delete. Inline-table mutation lives in
@@ -156,15 +156,13 @@ def append_direct_kv(c: Container, key: str, value: Value) -> None:
     """Append a fresh direct (non-dotted) KV to ``c``.
 
     Updates ``c._refs`` / ``_index`` / ``_body_tail`` and the dict
-    storage. Phase 3c onward.
+    storage.
 
     Routing:
 
     * implicit-headerless non-root container with a body anchor →
-      Phase 3d-4 dotted-KV synthesis under the nearest header-bearing
-      ancestor;
-    * AoT-entry body insert (header-bearing ``c`` with
-      ``_owner_aot_entry is not None``) → still deferred (Phase 4);
+      dotted-KV synthesis under the nearest header-bearing ancestor;
+    * AoT-entry sub-table body → not yet supported;
     * everything else → direct single-keypart KV with anchor =
       body_tail / header_ref / head-of-doc seam.
     """
@@ -199,8 +197,7 @@ def append_direct_kv(c: Container, key: str, value: Value) -> None:
     if layout_root is None:
         msg = "internal: container has no layout root"
         raise AssertionError(msg)
-    doc = layout_root  # PrivateRoot arrives in Phase 3e
-
+    doc = layout_root
     # Capture the anchor *before* mutating any cache.
     body_tail = c._body_tail  # noqa: SLF001
     header_ref = c._header_ref  # noqa: SLF001
@@ -249,8 +246,7 @@ def append_direct_kv(c: Container, key: str, value: Value) -> None:
 def delete_key(c: Container, key: str) -> None:
     """Delete ``key`` from ``c`` — scalar, inline, section, AoT, or dotted-subtree.
 
-    Single primitive that handles every flavour. Steps (mirroring the
-    plan v17 "Slot deletion ordering" recipe):
+    Steps:
 
     1. Compute the owned-slot identity set: every physical slot whose
        refs all live in ``c._index[key]`` plus every descendant
@@ -267,19 +263,15 @@ def delete_key(c: Container, key: str) -> None:
     5. Unlink each owned slot from the doc linked list.
     6. Drop the dict entry on ``c``.
 
-    No cascade-prune of emptied implicit super-tables: ``del c[k]``
-    follows Python-dict semantics, removing exactly ``k`` and
-    leaving any now-emptied implicit ancestor chain reachable as
-    nested empty ``Table`` views. Such slotless implicit tables
-    have no rendering presence (no header_ref, no refs), so dumps
-    stays byte-correct without the walk.
+    Cascade-prune is intentionally *not* performed: ``del c[k]``
+    follows Python-dict semantics, removing exactly ``k`` and leaving
+    any now-emptied implicit ancestor chain reachable as nested empty
+    ``Table`` views. Such slotless implicit tables have no rendering
+    presence (no header_ref, no refs), so dumps stay byte-correct.
 
-    No live-detach: held views of the deleted subtree retain stale
-    ``_layout_root`` / ``_path``; mutating them through their old
-    reference is Phase 3e (PrivateRoot). With Phase 3c's
-    implicit-headerless guard, structural mutation through such a
-    held view raises ``NotImplementedError`` rather than corrupting
-    the live document, which is the safest interim behaviour.
+    Held views of the deleted subtree retain stale ``_layout_root`` /
+    ``_path``; structural mutation through them raises
+    ``NotImplementedError`` rather than corrupting the live document.
     """
     if key not in c:
         raise KeyError(key)
@@ -288,7 +280,7 @@ def delete_key(c: Container, key: str) -> None:
     if layout_root is None:
         msg = "internal: container has no layout root"
         raise AssertionError(msg)
-    doc = layout_root  # PrivateRoot arrives in Phase 3e
+    doc = layout_root
 
     # 1. Owned-slot identity set + retained slot objects (for unlink).
     owned_ids: set[int] = set()
@@ -391,14 +383,6 @@ def delete_key(c: Container, key: str) -> None:
 
     # 6. Drop the dict entry.
     dict.__delitem__(c, key)
-
-    # No cascade-prune of emptied implicit ancestors: per plan v17,
-    # tomlrt presents Python-dict semantics — `del c[k]` removes
-    # exactly `k`, leaving emptied implicit super-tables reachable
-    # as empty `Table` views just like a plain `dict` would. Any
-    # such purely-implicit empty container has no rendering presence
-    # anyway (no header_ref, no refs), so byte-exact dumps stays
-    # correct without the walk.
 
 
 def _collect_subtree(
@@ -655,11 +639,11 @@ def _make_keypart(name: str) -> KeyPart:
 
 
 def _append_dotted_kv_under_implicit(c: Container, key: str, value: Value) -> None:
-    """3d-4: insert into an implicit-headerless container via dotted KV.
+    """Insert into an implicit-headerless container via dotted KV.
 
     Routes through the nearest header-bearing ancestor (or the doc
     root). Files refs on every implicit ancestor between that host
-    and ``c`` per the dotted-KV ref-propagation rule (plan v17).
+    and ``c`` per the dotted-KV ref-propagation rule.
 
     Pre-conditions (checked by caller):
       * ``c._path`` is non-empty (c is not the doc root)
@@ -1005,12 +989,11 @@ def _insert_dotted_kv_before_descendants(c: Container, key: str, value: Value) -
 
     if not c._refs:  # noqa: SLF001
         # Container has no slots and no contributors at all — most
-        # likely a held view of a deleted subtree (Phase 3e
-        # PrivateRoot detach territory). Surface as NIE so callers
-        # can distinguish from internal-bug assertion failures.
+        # likely a held view of a deleted subtree. Surface as NIE so
+        # callers can distinguish from internal-bug assertion failures.
         msg = (
             "structural-only implicit container with no contributors — "
-            "likely a held view of a deleted subtree (Phase 3e detach)"
+            "likely a held view of a deleted subtree"
         )
         raise NotImplementedError(msg)
     anchor_slot = c._refs[0].slot  # noqa: SLF001
@@ -1204,7 +1187,7 @@ def _quote_basic(s: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Structural attach (Phase 4 — section / AoT synthesis)
+# Structural attach — section / AoT synthesis
 # ---------------------------------------------------------------------------
 
 
@@ -2580,9 +2563,8 @@ def remove_aot_entry(aot: object, index: int) -> object:
     """Remove ``aot[index]``, unlink its slots, and return a snapshot.
 
     The snapshot is a fresh unattached `Table` populated from the
-    removed entry's dict storage (via deep-ish copy of plain values
-    only — nested live typed containers in the entry are not yet
-    detached; that lands with Phase 3e).
+    removed entry's dict storage (deep-copied for plain values; nested
+    live typed containers are not detached).
     """
     from tomlrt._array import AoT  # noqa: PLC0415
     from tomlrt._container import Table  # noqa: PLC0415
@@ -2743,7 +2725,7 @@ def replace_aot_entry_with_clone(
     )
     # _clone_entry_slots appended the cloned slots to dst_entry's
     # entry_slots prematurely; we splice them in below, so back them
-    # out for now to keep ownership state consistent during clear().
+    # out to keep ownership state consistent during clear().
     if cloned_body:
         dst_entry.entry_slots = dst_entry.entry_slots[: -len(cloned_body)]
 

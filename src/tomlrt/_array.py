@@ -3,10 +3,6 @@
 `Array(list)` backs an inline-array TOML value (`[1, 2, 3]`). `AoT`
 (array-of-tables) is a `list[Table]` whose entries are individually
 backed by `AoTEntry` records and whose elements are `Table` views.
-
-Phase 2 surface: read-only access (length, indexing, iteration, value
-decoding for plain inline-array elements). Mutation arrives in
-Phase 3 (inline) and Phase 4 (AoT and multi-line array).
 """
 
 from __future__ import annotations
@@ -31,7 +27,7 @@ if TYPE_CHECKING:
 
 
 class Array(list[Any]):
-    """An inline array (`[ ... ]`)."""
+    """An inline TOML array."""
 
     __slots__ = ("_attached", "_multiline", "_value")
 
@@ -42,15 +38,18 @@ class Array(list[Any]):
         multiline: bool = False,
         indent: str = "    ",
     ) -> None:
+        """Construct a standalone inline array.
+
+        ``Array([1, 2, 3])`` builds an inline array;
+        ``Array([1, 2, 3], multiline=True)`` lays it out one item per
+        line with ``indent`` indentation. Such an array is *detached*
+        until assigned into a document (``doc[k] = arr``).
+        """
         super().__init__()
         from tomlrt._values import ArrayValue  # noqa: PLC0415
 
         self._value: ArrayValue | None = ArrayValue()
         self._multiline: bool = multiline
-        # Factory mode: True once the user-facing constructor finishes.
-        # Decoder paths construct an Array() then immediately overwrite
-        # `_value` and clear `_attached` to indicate "this view is owned
-        # by the doc, not a free orphan".
         self._attached: bool = False
         if items is None:
             if multiline:
@@ -1093,16 +1092,12 @@ def _clone_item(item: Any) -> Any:
 
 
 class AoT(list["Table"]):
-    """A `[[name]]`-style array of tables.
-
-    Carries minimal logical-attachment state (`_layout_root`, `_path`,
-    `_parent`) that survives the empty-AoT case (where `self[-1]`
-    cannot be consulted as a fallback parent reference).
-    """
+    """An Array-of-tables, e.g. ``[[products]]`` repeated."""
 
     __slots__ = ("_layout_root", "_parent", "_path")
 
     def __init__(self, entries: Any = None) -> None:
+        """Construct a standalone array-of-tables."""
         super().__init__()
         self._layout_root: Document | None = None
         self._path: tuple[str, ...] = ()
@@ -1138,7 +1133,7 @@ class AoT(list["Table"]):
         return result
 
     # ------------------------------------------------------------------
-    # Supported list-mutator surface (Phase 4-minimal).
+    # Supported list-mutator surface.
     # Anything not implemented here is overridden below to fail closed
     # rather than corrupt the doc-stream via inherited `list` behaviour.
     # ------------------------------------------------------------------

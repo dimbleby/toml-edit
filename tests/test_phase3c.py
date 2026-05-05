@@ -1,4 +1,4 @@
-"""Phase 3c — direct-KV insert + leaf delete in section containers.
+"""Direct-KV insert + leaf delete in section containers.
 
 Each test asserts byte-exact output and runs the invariant checker.
 """
@@ -179,24 +179,23 @@ def test_delete_missing_key_raises_keyerror() -> None:
         del doc["missing"]
 
 
-def test_section_only_doc_top_level_insert_deferred() -> None:
-    # 3d-5 lifted this restriction: inserting a top-level KV into a
-    # section-only doc now works with an inserted blank-line seam.
-    # Test moved to test_phase3d.py.
+def test_section_only_doc_top_level_insert() -> None:
+    # Inserting a top-level KV into a section-only doc inserts a
+    # blank-line seam between the new KV and the first header.
     doc = loads("[s]\nx = 1\n")
     doc["new"] = 1
     assert dumps(doc) == "new = 1\n\n[s]\nx = 1\n"
 
 
-def test_insert_into_implicit_table_now_works() -> None:
-    # `a` exists implicitly via a dotted top-level key; Phase 3d-4
-    # added support for dotted-KV insert under an implicit container.
+def test_insert_into_implicit_table() -> None:
+    # `a` exists implicitly via a dotted top-level key; dotted-KV
+    # insert under an implicit container.
     doc = loads("a.x = 1\n")
     doc.table("a")["y"] = 2
     assert dumps(doc) == "a.x = 1\na.y = 2\n"
 
 
-def test_insert_into_implicit_grandparent_now_works() -> None:
+def test_insert_into_implicit_grandparent() -> None:
     doc = loads("a.b.c = 1\n")
     doc.table("a").table("b")["d"] = 2
     assert dumps(doc) == "a.b.c = 1\na.b.d = 2\n"

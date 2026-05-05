@@ -14,7 +14,11 @@ if TYPE_CHECKING:
 
 
 def document(data: Mapping[str, Any] | None = None) -> Document:
-    """Deprecated alias for ``tomlrt.Document(data)``."""
+    """Deprecated alias for [`Document`][tomlrt.Document].
+
+    Use ``Document(data)`` instead. This wrapper is retained for
+    backwards compatibility and will be removed in a future release.
+    """
     warnings.warn(
         "tomlrt.document() is deprecated; use tomlrt.Document() instead.",
         DeprecationWarning,
@@ -24,7 +28,11 @@ def document(data: Mapping[str, Any] | None = None) -> Document:
 
 
 def parse(src: str) -> Document:
-    """Deprecated alias for ``tomlrt.loads()``."""
+    """Deprecated alias for [`loads`][tomlrt.loads].
+
+    Use ``tomlrt.loads(text)`` instead. This wrapper is retained for
+    backwards compatibility and will be removed in a future release.
+    """
     warnings.warn(
         "tomlrt.parse() is deprecated; use tomlrt.loads() instead.",
         DeprecationWarning,

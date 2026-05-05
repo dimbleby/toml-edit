@@ -1,11 +1,11 @@
 """Logical container layer.
 
 `Container(dict)` is the dict-typed base for both `Document` (the
-root) and `Table` (sections + inline tables). Phase 2 only needs the
-read surface: dict-storage populated in doc-stream-first-occurrence
-order, typed accessors, conversion helpers, and the `render()` entry
-point. The mutation-time scaffolding (`_index`, `_refs`,
-`_header_ref`, `_body_tail`) is deferred to Phase 3.
+root) and `Table` (sections + inline tables). Reads come straight
+from dict storage populated in doc-stream first-occurrence order;
+mutations write to the slot stream via the per-container caches
+(`_index`, `_refs`, `_header_ref`, `_body_tail`) and refresh the
+dict from there.
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ class Container(dict[str, Any]):
     as a derived `@property` over `_refs`. For inline tables
     (`_inline=True`) the slot-stream caches stay empty and `_value`
     points at the backing `InlineTableValue` instead — inline mutation
-    lives in a separate code path (Phase 3b).
+    lives in a separate code path.
     """
 
     __slots__ = (
@@ -260,7 +260,7 @@ class Container(dict[str, Any]):
         return out
 
     # ------------------------------------------------------------------
-    # Mutation (Phase 3a: scalar-replaces-scalar only)
+    # Mutation
     # ------------------------------------------------------------------
 
     @override
@@ -385,7 +385,7 @@ class Container(dict[str, Any]):
                 f"for TOML key {key!r}"
             )
             raise TypeError(msg)
-        # New direct-KV insert (Phase 3c / 3d / 4-partial).
+        # New direct-KV insert.
         if _is_scalar(value):
             from tomlrt import _layout_ops  # noqa: PLC0415
 
@@ -545,15 +545,12 @@ class Container(dict[str, Any]):
         """
         refs = self._index.get(key)
         if not refs or len(refs) != 1:
-            msg = (
-                "structural overwrite (multiple contributing refs) is "
-                "deferred to Phase 4"
-            )
+            msg = "structural overwrite (multiple contributing refs) is not supported"
             raise NotImplementedError(msg)
         primary = refs[0]
         slot = primary.slot
         if not isinstance(slot, KVSlot):
-            msg = "structural overwrite of header-bound binding is deferred to Phase 4"
+            msg = "structural overwrite of header-bound binding is not supported"
             raise NotImplementedError(msg)
         old = dict.__getitem__(self, key)
         cst, decoded = _synth_value(
@@ -583,11 +580,8 @@ class Container(dict[str, Any]):
         _layout_ops.delete_key(self, key)
 
     # ------------------------------------------------------------------
-    # Dict-method overrides (Phase 3d-2)
-    #
-    # All of these route through ``self[k] = v`` / ``del self[k]`` so
-    # the inline-vs-section-vs-headerless dispatch in ``__setitem__`` /
-    # ``__delitem__`` handles both flavours uniformly.
+    # Dict-method overrides — route through ``__setitem__`` /
+    # ``__delitem__`` so inline / section / headerless dispatch is uniform.
     # ------------------------------------------------------------------
 
     @override
@@ -657,7 +651,7 @@ class Container(dict[str, Any]):
         return _deep_section_clone(self)
 
     # ------------------------------------------------------------------
-    # Inline-table dispatch (Phase 3b)
+    # Inline-table dispatch
     # ------------------------------------------------------------------
 
     def _inline_setitem(self, key: str, value: Any) -> None:
@@ -672,8 +666,8 @@ class Container(dict[str, Any]):
             raise TOMLError(msg)
         if not _is_scalar(value) and not _is_synth_inline(value):
             msg = (
-                "live-attach of typed Container/Array/AoT into an inline "
-                "table is Phase 4"
+                "live-attach of typed Container/Array/AoT into an inline table "
+                "is not supported"
             )
             raise NotImplementedError(msg)
         if key in self and isinstance(dict.__getitem__(self, key), Container):
@@ -1047,17 +1041,97 @@ class Container(dict[str, Any]):
 
 
 class Table(Container):
-    """A section table, implicit table, or inline table view."""
+    """A logical TOML table.
+
+    All mapping flavours in tomlrt (top-level document, standard
+    table, inline table, and the synthetic mappings spawned by dotted
+    keys) inherit from [`Table`][tomlrt.Table], which is itself a subclass of
+    `dict`. So values typed as ``Table`` cover every nested
+    mapping you can encounter while walking a document, *and*
+    ``isinstance(t, dict)`` is ``True`` and ``**t`` works.
+
+    **Storage model**
+
+    A [`Table`][tomlrt.Table] is a *view* over the parsed concrete syntax
+    tree (CST) — the physical tree of nodes that records every
+    byte of the original document, including whitespace, comments,
+    quote style and key order. Every mutation writes to the CST
+    first and the dict storage is then refreshed from there. The
+    CST is the single source of truth — `render` and every
+    iteration ultimately read from it; the dict storage is a cache
+    that mirrors the CST data and exists for two reasons:
+
+    * fast ``dict``-style lookup, ``len``, ``in``, iteration, and
+      ``**`` unpacking; and
+    * stable object identity for nested containers, so that
+      ``doc["foo"] is doc["foo"]``.
+
+    Once a [`Table`][tomlrt.Table] is *detached* (see below) the CST link is
+    severed and the dict storage takes over as the only source of
+    truth for that orphan subtree.
+
+    **Held references**
+
+    Held references behave like ordinary Python dict references:
+
+    * If the binding goes away (``del doc['foo']``), the held
+      ``Table`` is *orphaned*: its dict storage is intact and reads
+      still work, but it is no longer connected to the document and
+      mutations through it do not appear in [`Document.render`][tomlrt.Document.render].
+    * Re-binding the path (``doc['foo'] = {...}`` or
+      ``doc.install('foo', Table.section())``) installs a *fresh* ``Table``;
+      held references to the old table are unaffected.
+
+    **Live vs snapshot containers**
+
+    Assignment of a *container* value follows one rule: a container
+    is attached to at most one CST location.
+
+    * Assigning a fresh, unattached [`Array`][tomlrt.Array],
+      [`Table.section`][tomlrt.Table.section] result,
+      [`Table.inline`][tomlrt.Table.inline] result, or
+      [`AoT`][tomlrt.AoT] *attaches in place*: the user's reference
+      becomes the live view at the destination, so later mutations
+      through that reference show up in the document.
+      ``doc[k] is myvalue`` after the assign.
+    * Assigning a container that is already attached somewhere
+      (any document, including ``self``) deep-clones the source.
+      The two slots are independent — mutations to one don't bleed
+      into the other.
+    * Plain `dict` and `list` values are *snapshot* on assignment.
+      Mutations to the original mapping / list after assignment are
+      *not* reflected in the document.
+      Use [`Table.section`][tomlrt.Table.section],
+      [`Table.inline`][tomlrt.Table.inline], or
+      [`Array`][tomlrt.Array] to opt in to live
+      semantics. Typed containers nested inside a plain dict / list
+      still attach live recursively, even though the surrounding
+      plain container is a snapshot.
+    """
 
     __slots__ = ()
 
     @classmethod
     def section(cls, body: Mapping[str, Any] | None = None) -> Table:
-        """Build an unattached section-flavoured `Table` view.
+        """Return a detached ``[k]`` standard-section table.
 
-        Assigning the result into a document (``doc["k"] = t``)
-        synthesises a ``[k]`` section header and migrates ``body``
-        into the live document.
+        Use from an assignment site:
+
+            doc[k] = Table.section({"x": 1})
+
+        The returned [`Table`][tomlrt.Table] is *live*: it is not yet
+        connected to any document, but mutations -- ``t[k] = v``,
+        ``t.update(...)``, nested
+        [`Table.section`][tomlrt.Table.section] /
+        [`AoT`][tomlrt.AoT] / [`Array`][tomlrt.Array] assignments --
+        are recorded against its own private CST and survive into the
+        document on assignment. Assigning the table installs it in
+        place: ``doc[k] is t`` afterwards, and further mutations
+        through ``t`` are visible in [`dumps`][tomlrt.dumps].
+
+        Assigning a section table that is already attached somewhere
+        deep-clones it; a single CST section lives at one location at
+        a time.
         """
         t = cls()
         if body is not None:
@@ -1067,10 +1141,23 @@ class Table(Container):
 
     @classmethod
     def inline(cls, body: Mapping[str, Any] | None = None) -> Table:
-        """Build an unattached inline-flavoured `Table` view.
+        """Return a fresh inline table that *attaches live* on assignment.
 
-        Assigning the result into a document or another container
-        creates an inline table (``k = {...}``).
+        Use from an assignment site: ``doc[k] = Table.inline({...})``.
+        Unlike a plain ``dict`` (which is snapshotted on assignment),
+        the returned object becomes the *live* view at the assignment
+        site: subsequent mutations through the original reference are
+        reflected in the document, and ``doc[k] is the_inline`` after
+        assignment.
+
+        The inline table can be populated incrementally before
+        assignment (``t = Table.inline(); t["a"] = 1; doc[k] = t``);
+        all such mutations end up in the document.
+
+        If the same inline-table object is assigned a second time
+        (or after it has already been installed elsewhere), it is
+        cloned: a single inline table is attached to at most one
+        location in at most one document.
         """
         t = cls()
         t._inline = True
@@ -1085,12 +1172,7 @@ class Table(Container):
 
 
 class Document(Container):
-    """A parsed TOML document.
-
-    Owns the physical slot stream (head/tail of the doubly-linked list,
-    plus trailing trivia and detected newline). The dict-typed body is
-    inherited from `Container`.
-    """
+    """Top-level TOML document. Subclass of [`Table`][tomlrt.Table]."""
 
     __slots__ = ("_head", "_is_private", "_newline", "_tail", "_trailing")
 
@@ -1104,9 +1186,9 @@ class Document(Container):
         * lists of mappings become ``[[array.of.tables]]`` blocks;
         * everything else is set with ordinary key-value assignment.
 
-        Existing :class:`Table` / :class:`AoT` / :class:`Array` views
-        are deep-cloned, so the returned document shares no mutable
-        state with ``data``.
+        Existing [`Table`][tomlrt.Table] / [`AoT`][tomlrt.AoT] /
+        [`Array`][tomlrt.Array] views are deep-cloned, so the returned
+        document shares no mutable state with ``data``.
         """
         super().__init__()
         self._head: Slot | None = None
@@ -1120,10 +1202,28 @@ class Document(Container):
                 self[k] = _coerce_for_document_init(v)
 
     def render(self) -> str:
+        """Serialize the document back to a TOML string.
+
+        Equivalent to `tomlrt.dumps(self)`.
+        """
         return render(self)
 
     @property
     def preamble(self) -> tuple[str, ...]:
+        """Comment block at the top of the document.
+
+        A "preamble" is the run of ``# …`` lines that opens the file
+        and is blank-line-separated from anything below. Comments that
+        sit directly above the first key (no blank line) are *not*
+        preamble — they are the leading comments of that key, accessed
+        via `leading_comments`. In a document with no structural
+        content, the entire opening comment block is treated as
+        preamble.
+
+        Setter accepts a sequence of bare comment texts (without the
+        leading ``#``) and replaces the current preamble; assign ``()``
+        to remove. Newlines inside any line are rejected.
+        """
         from tomlrt._comments import _doc_preamble_get  # noqa: PLC0415
 
         return _doc_preamble_get(self)
@@ -1142,6 +1242,18 @@ class Document(Container):
 
     @property
     def epilogue(self) -> tuple[str, ...]:
+        """Comment block at the very end of the document.
+
+        Returns the trailing run of ``# …`` lines that follows all
+        structural content. Empty when the document has no structural
+        content (in that case everything is `preamble`).
+
+        Setter accepts a sequence of bare comment texts and replaces
+        the current epilogue. Assign ``()`` to remove.
+
+        Raises [`TOMLError`][tomlrt.TOMLError] if called with a
+        non-empty value on a document with no structural content.
+        """
         from tomlrt._comments import _doc_epilogue_get  # noqa: PLC0415
 
         return _doc_epilogue_get(self)
@@ -1413,8 +1525,7 @@ def _to_python(v: Any) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# Scalar coercion (Phase 3a — minimal; full coverage in Phase 3c via
-# `_coerce.py`).
+# Scalar coercion
 # ---------------------------------------------------------------------------
 
 
@@ -1534,7 +1645,7 @@ TomlInput = "Mapping[str, Any] | Document"
 
 
 # ---------------------------------------------------------------------------
-# Plain-Python value synthesis (Phase 4-partial — plain dict/list only).
+# Plain-Python value synthesis.
 # ---------------------------------------------------------------------------
 
 
@@ -1592,7 +1703,7 @@ def _synth_value(
 
     Plain ``dict`` / ``Mapping`` → ``InlineTableValue`` + inline ``Table``.
     ``list`` / ``Array`` view → ``ArrayValue`` + ``Array``.
-    Section ``Container`` / ``AoT`` raise NIE (Phase 4 live-attach).
+    Section ``Container`` / ``AoT`` raise NIE.
     Anything else raises ``TypeError`` (mentioning the type name and
     the prefix ``"Cannot convert"``).
     """
@@ -1601,10 +1712,12 @@ def _synth_value(
     if _is_scalar(v):
         return _coerce_scalar(v), v
     if isinstance(v, AoT):
-        msg = "live-attach of AoT is Phase 4"
+        msg = "live-attach of AoT through value synthesis is not supported"
         raise NotImplementedError(msg)
     if isinstance(v, Container) and not v._inline:  # noqa: SLF001
-        msg = "live-attach of section Container is Phase 4"
+        msg = (
+            "live-attach of section Container through value synthesis is not supported"
+        )
         raise NotImplementedError(msg)
     # Unattached inline Container (Table.inline()) — live attach: rehome
     # the existing object instead of creating a fresh Table view, so the

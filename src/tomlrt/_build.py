@@ -3,12 +3,9 @@
 Single linear pass over a `ParseResult`'s slot stream that
 constructs the `Document` body and all nested `Table` / `Array` /
 `AoT` views, populating dict storage in doc-stream-first-occurrence
-order.
-
-Per the duck-reviewed Phase 1/2 boundary: this is the *one* place
-that derives implicit containers from slot paths. The parser does
-not build logical containers; `_container.py` does not duplicate the
-derivation.
+order. This is the *one* place that derives implicit containers from
+slot paths; the parser does not build logical containers and
+`_container.py` does not duplicate the derivation.
 """
 
 from __future__ import annotations
@@ -208,11 +205,11 @@ def _make_table(
 def _apply_kv(doc: Document, slot: KVSlot) -> None:
     """Bind a `key = value` slot into its host container.
 
-    Per the Ref-propagation rule (plan v17): refs propagate **only**
-    along the slot's logical path starting at the host container `H`,
-    NOT from the document root. So a KV with `host_path = ("a",)` and
-    `key = ("x",)` generates exactly one ref, in `a._index["x"]`; it
-    does NOT contribute a ref to `doc._index["a"]`.
+    Refs propagate **only** along the slot's logical path starting at
+    the host container `H`, NOT from the document root. So a KV with
+    `host_path = ("a",)` and `key = ("x",)` generates exactly one ref,
+    in `a._index["x"]`; it does NOT contribute a ref to
+    `doc._index["a"]`.
     """
     decoded = slot.key
     host_chain = _resolve_chain(doc, slot.host_path)
@@ -338,8 +335,7 @@ def _decode_inline_table(
                 inner._owner_aot_entry = owner  # noqa: SLF001
                 # Inner inline-tables created from a dotted inline-table
                 # entry don't have their own backing InlineTableValue;
-                # `_value` stays None. Phase 3b decides if/how to
-                # materialise these for mutation.
+                # `_value` stays None.
                 dict.__setitem__(cur, step, inner)
                 cur = inner
             else:

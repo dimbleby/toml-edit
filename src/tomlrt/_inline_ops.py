@@ -1,11 +1,10 @@
-"""Inline-table mutation primitives (Phase 3b).
+"""Inline-table mutation primitives.
 
 Inline tables are decoupled from the doc-stream linked list: a top-
 level inline table is wrapped by a single `KVSlot` whose `value` is
 an `InlineTableValue`. Mutation of the inline-table contents is a
 local operation on the `InlineTableValue.entries` list, plus a
 matching `dict.__setitem__` / `__delitem__` on the logical view.
-
 This module owns the trivia fixups required to keep the result a
 valid, nicely-spaced inline table:
 

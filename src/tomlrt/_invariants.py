@@ -101,9 +101,9 @@ def _check_inline(c: Container) -> None:
     # in a parent), verify dict storage matches the entries' first
     # key parts. Dotted entries roll into sub-containers under the
     # first key part; verify those sub-containers have the rest of
-    # the entry rolled in too. This catches the bug where the inline
-    # value's entries diverge from the dict view (which mutation in
-    # Phase 3b will have to maintain).
+    # the entry rolled in too. This catches divergence between the
+    # inline value's entries and the dict view that inline mutation
+    # has to maintain.
     iv = c._value  # noqa: SLF001
     if iv is not None:
         _check_inline_table_dict_shape(c, iv)

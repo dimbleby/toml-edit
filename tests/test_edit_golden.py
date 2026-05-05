@@ -476,12 +476,7 @@ def test_cross_doc_array_assign_deep_clones() -> None:
 
 
 def test_cross_doc_table_assign_with_nested_aot() -> None:
-    """Cross-doc copy of a section that contains an AoT in its subtree.
-
-    Regression: previously the inline-table synthesiser bailed out with a
-    confusing "Cannot store an array-of-tables as an inline value" error,
-    even though the caller *was* assigning at the table-key level.
-    """
+    """Cross-doc copy of a section that contains an AoT in its subtree."""
     src = (
         '[project]\nname = "foo"\n\n'
         '[[tool.poetry.source]]\nname = "pypi"\n'
@@ -595,14 +590,7 @@ def test_cross_doc_table_assign_merges_dotted_and_own_section() -> None:
 
 
 def test_self_overlap_assign_replaces_with_child_block() -> None:
-    """``doc[k] = doc[k]["child"]`` lifts the child to a ``[k]`` block.
-
-    Regression: previously ``__setitem__`` cascaded a detach through
-    ``old``'s subtree before ``_set_value`` ran, clearing
-    ``value._attached`` on the in-flight value and dropping it through
-    the inline-table synth path. With a nested AoT in the subtree this
-    crashed; otherwise the section silently flattened to ``a = { ... }``.
-    """
+    """``doc[k] = doc[k]["child"]`` lifts the child to a ``[k]`` block."""
     doc = tomlrt.loads(
         td("""
         [a]
@@ -896,14 +884,8 @@ def test_chained_supertable_assignment_drops_empty_parent() -> None:
 
 
 def test_subsection_under_non_last_aot_entry_lands_in_owned_range() -> None:
-    """``aot[i][k] = Table.section(...)`` lands inside entry ``i``'s range.
-
-    Previously the new ``[aot.k]`` section was appended after the last
-    sibling sharing the parent prefix, which for a non-last AoT entry
-    meant it landed past every later entry — silently re-attributing
-    on round-trip and producing duplicate header data corruption when
-    multiple entries had the same sub-table key set.
-    """
+    """``aot[i][k] = Table.section(...)`` lands inside entry ``i``'s range,
+    not after the last sibling sharing the parent prefix."""
     doc = Document()
     doc["package"] = AoT([{"n": "a"}, {"n": "b"}, {"n": "c"}])
     doc["package"][0]["source"] = Table.section({"x": 1})
@@ -998,9 +980,7 @@ def test_self_assignment_is_a_noop() -> None:
     """``doc[k] = doc[k]`` does not mutate the document or detach the view.
 
     Plain Python dict semantics: re-binding a key to its own current
-    value is a no-op. tomlrt previously tore down the value's CST
-    backing (via ``old._detach()``) and rebuilt it, which both lost
-    formatting and silently invalidated any held reference.
+    value is a no-op.
     """
     doc = tomlrt.loads(
         td("""
@@ -1088,11 +1068,6 @@ def test_section_replace_preserves_position_for_implicit_parent() -> None:
 def test_aot_assign_purges_implicit_supertable_aot_subtree() -> None:
     """Assigning an AoT to a key that names an implicit super-table
     over an existing ``[[a.b]]`` block must purge the old subtree.
-
-    Previously ``_classify`` returned ``"absent"`` for the implicit
-    parent above an AoT, so ``_prepare_section_slot`` skipped the purge
-    and the source ``[[a.b]]`` sections leaked into the result, where
-    they were silently re-attributed as a child of the new last entry.
     """
     src = tomlrt.loads(
         td("""
@@ -2611,9 +2586,9 @@ def test_aot_insert_on_empty_doc_migrates_preamble() -> None:
 
 
 def test_promote_array_preserves_source_kv_leading_and_trailing() -> None:
-    """``promote_array`` previously dropped the inline KV's leading
-    comments / blank lines and trailing EOL comment. Carry them over
-    onto the first new ``[[..]]`` header and the last entry's tail.
+    """``promote_array`` carries the inline KV's leading comments /
+    blank lines onto the first new ``[[..]]`` header, and its trailing
+    EOL comment onto the last entry's tail.
     """
     src = td("""
         # header comment
@@ -2629,10 +2604,9 @@ def test_promote_array_preserves_source_kv_leading_and_trailing() -> None:
 
 
 def test_aot_insert_at_zero_separates_from_following_entry() -> None:
-    """``AoT.insert(0, ...)`` previously left the new ``[[..]]`` glued
-    to the following existing one because the blank-line policy only
-    looked at *preceding* content. Now it also separates from the
-    next entry, mirroring sibling-uniformity (default blank-separated).
+    """``AoT.insert(0, ...)`` separates the new ``[[..]]`` from both the
+    preceding content and the following existing entry, defaulting to
+    blank-separated sibling-uniformity.
     """
     doc = tomlrt.loads("[[a]]\nx = 1\n")
     doc["a"].insert(0, {"x": 0})

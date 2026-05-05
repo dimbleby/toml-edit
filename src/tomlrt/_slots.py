@@ -6,12 +6,7 @@ slots. Three slot kinds:
 - ``KVSlot`` — one ``key = value`` line (possibly dotted).
 - ``StructuralHeaderSlot`` — one ``[a.b]`` or ``[[a.b]]`` line.
 
-`SlotRef` is the per-container occurrence of a slot; the
-container/index machinery is a Phase 2 concern, but the type is
-defined here so other modules can import it.
-
-Phase 1 uses only `Slot` / `KVSlot` / `StructuralHeaderSlot` /
-`AoTEntry` (the latter as an opaque physical-ownership marker).
+`SlotRef` is the per-container occurrence of a slot.
 """
 
 from __future__ import annotations
@@ -43,9 +38,8 @@ class AoTEntry:
     """Identifies one entry of an array-of-tables.
 
     Carried by every physical slot that belongs to that entry
-    (``owner_aot_entry``). Phase 1 needs only the identity / path /
-    ordinal; the ``_entry_slots`` list is populated by the
-    slot-builder so render can iterate without scanning.
+    (``owner_aot_entry``). The ``entry_slots`` list is populated by
+    the slot-builder so render can iterate without scanning.
     """
 
     path: tuple[str, ...]
@@ -182,10 +176,7 @@ AoTHeaderSlot = StructuralHeaderSlot
 
 @dataclass(eq=False)
 class SlotRef:
-    """A per-container occurrence of a slot.
-
-    Phase 2+ machinery; defined here so other modules can name it.
-    """
+    """A per-container occurrence of a slot."""
 
     slot: Slot
     container: Container

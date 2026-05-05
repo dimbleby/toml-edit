@@ -1,4 +1,4 @@
-"""Phase 3d-4 — dotted-KV insert under implicit-headerless container."""
+"""Dotted-KV insert under implicit-headerless container."""
 
 from __future__ import annotations
 
@@ -80,11 +80,11 @@ def test_no_final_newline_on_anchor() -> None:
     )
 
 
-def test_structural_only_implicit_now_synthesises_section() -> None:
+def test_structural_only_implicit_promotes_to_section() -> None:
     # `a` exists only via the descendant header [a.b]; no body
-    # contributors. Phase 4 now promotes the implicit `a` to an
-    # explicit `[a]` section before the descendant rather than
-    # inserting a top-level dotted KV.
+    # contributors. The implicit `a` is promoted to an explicit `[a]`
+    # section before the descendant rather than inserting a top-level
+    # dotted KV.
     doc = loads("[a.b]\ny = 1\n")
     doc.table("a")["x"] = 2
     out = dumps(doc)
