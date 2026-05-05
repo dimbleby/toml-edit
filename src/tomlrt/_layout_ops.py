@@ -61,6 +61,15 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
+def _default_eol(doc: Document) -> EolTrivia:
+    """A bare-newline `EolTrivia` for a freshly synthesised slot."""
+    return EolTrivia(
+        trailing_ws=None,
+        comment=None,
+        newline=NewlineNode(text=doc._newline),  # noqa: SLF001
+    )
+
+
 def insert_after(anchor: Slot, new_slot: Slot, doc: Document) -> None:
     """Splice ``new_slot`` immediately after ``anchor`` in ``doc``."""
     nxt = anchor._next  # noqa: SLF001
@@ -628,11 +637,7 @@ def _build_kv_slot(c: Container, key: str, value: Value, doc: Document) -> KVSlo
         pre_eq=" ",
         post_eq=" ",
         value=value,
-        eol=EolTrivia(
-            trailing_ws=None,
-            comment=None,
-            newline=NewlineNode(text=doc._newline),  # noqa: SLF001
-        ),
+        eol=_default_eol(doc),
         owner_aot_entry=c._owner_aot_entry,  # noqa: SLF001
     )
 
@@ -698,11 +703,7 @@ def _append_dotted_kv_under_implicit(c: Container, key: str, value: Value) -> No
         pre_eq=" ",
         post_eq=" ",
         value=value,
-        eol=EolTrivia(
-            trailing_ws=None,
-            comment=None,
-            newline=NewlineNode(text=doc._newline),  # noqa: SLF001
-        ),
+        eol=_default_eol(doc),
         owner_aot_entry=owner,
     )
 
@@ -834,11 +835,7 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
         pre_eq=" ",
         post_eq=" ",
         value=value,
-        eol=EolTrivia(
-            trailing_ws=None,
-            comment=None,
-            newline=NewlineNode(text=doc._newline),  # noqa: SLF001
-        ),
+        eol=_default_eol(doc),
         owner_aot_entry=owner,
     )
     insert_after(header_slot, new_kv, doc)
@@ -947,11 +944,7 @@ def _synthesise_header_then_insert_kv_at_doc_tail(
         pre_eq=" ",
         post_eq=" ",
         value=value,
-        eol=EolTrivia(
-            trailing_ws=None,
-            comment=None,
-            newline=NewlineNode(text=doc._newline),  # noqa: SLF001
-        ),
+        eol=_default_eol(doc),
         owner_aot_entry=owner,
     )
     insert_after(header_slot, new_kv, doc)
@@ -1093,11 +1086,7 @@ def _new_section_header(
         path=path,
         key_parts=make_keyparts(path),
         key_seps=["."] * (len(path) - 1),
-        eol=EolTrivia(
-            trailing_ws=None,
-            comment=None,
-            newline=NewlineNode(text=doc._newline),  # noqa: SLF001
-        ),
+        eol=_default_eol(doc),
         entry=entry,
         owner_aot_entry=owner_aot_entry,
         synthetic=True,
