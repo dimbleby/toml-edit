@@ -651,7 +651,7 @@ class Container(dict[str, Any]):
         if self._inline and len(parts) > 1:
             from tomlrt._errors import TOMLError  # noqa: PLC0415
 
-            msg = "cannot install dotted path: container is not section-backed"
+            msg = "cannot install dotted path into an inline-style table"
             raise TOMLError(msg)
         # If the value is a section-flavoured Table or an AoT, route
         # straight to the multi-component attach path so intermediate
