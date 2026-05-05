@@ -2574,6 +2574,17 @@ def remove_aot_entry(aot: object, index: int) -> object:
     # Pop entry from the AoT logical list.
     list.pop(aot, index)
 
+    # Fully detach the snapshot subtree — nested sub-Tables in the
+    # dict storage still carry _layout_root pointing at the (now
+    # unlinked) source slots; reset them so a later reattach treats
+    # the whole subtree as freshly built. Children pointing at a
+    # different doc are left alone (alien live views; the standard
+    # cross-doc clone path will handle them).
+    from tomlrt._container import _reset_table_for_rehome  # noqa: PLC0415
+
+    snapshot._layout_root = doc  # noqa: SLF001
+    _reset_table_for_rehome(snapshot)
+
     # If empty AoT now, also remove the parent _index[k] entry entirely
     # (dict storage of parent retains the AoT object).
     last_key = aot._path[-1]  # noqa: SLF001
