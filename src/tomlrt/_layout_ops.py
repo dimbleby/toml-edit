@@ -1484,7 +1484,6 @@ def clone_aot_entry(
         aot,
         src_entry,
         src_layout_root=src_layout_root,
-        src_entry_table=src_entry_table,
         dst_path=dst_path,
     )
 
@@ -1504,7 +1503,6 @@ def clone_aot_entry_from(aot: AoT, src_entry: AoTEntry) -> Table:
         aot,
         src_entry,
         src_layout_root=None,
-        src_entry_table=None,
         dst_path=None,
     )
 
@@ -1514,7 +1512,6 @@ def _clone_aot_entry_impl(
     src_entry: AoTEntry,
     *,
     src_layout_root: Document | None,
-    src_entry_table: Container | None,  # noqa: ARG001
     dst_path: tuple[str, ...] | None,
 ) -> Table:
     from tomlrt._container import Table  # noqa: PLC0415
@@ -1528,7 +1525,7 @@ def _clone_aot_entry_impl(
     doc = layout_root
     target_path = dst_path if dst_path is not None else path
 
-    src_slots = _validate_clonable_aot_entry(src_entry, None)
+    src_slots = _validate_clonable_aot_entry(src_entry)
     src_prefix = src_entry.path
 
     ordinal = len(aot)
@@ -1630,7 +1627,7 @@ def clone_aot_entry_as_table(
     if src_entry is None:
         msg = "Source entry has no owning AoTEntry"
         raise RuntimeError(msg)
-    src_slots = _validate_clonable_aot_entry(src_entry, src_entry_table)
+    src_slots = _validate_clonable_aot_entry(src_entry)
     src_prefix = src_entry.path
 
     cloned_slots = _clone_entry_slots(
@@ -2078,10 +2075,7 @@ def _populate_entry_views(
             dict.__setitem__(cur, leaf_key, decoded)
 
 
-def _validate_clonable_aot_entry(
-    src_entry: AoTEntry,
-    src_entry_table: Container | None,  # noqa: ARG001
-) -> list[Slot]:
+def _validate_clonable_aot_entry(src_entry: AoTEntry) -> list[Slot]:
     """Validate the source entry can be cloned; return its slot list.
 
     Pure validation — no mutation. Raises NotImplementedError for
@@ -2123,7 +2117,7 @@ def check_clone_aot_entry(aot: AoT, src_entry_table: Container) -> None:
     if src_entry is None:
         msg = "Source entry has no owning AoTEntry"
         raise RuntimeError(msg)
-    _validate_clonable_aot_entry(src_entry, src_entry_table)
+    _validate_clonable_aot_entry(src_entry)
 
 
 def attach_section_at(
@@ -2543,7 +2537,7 @@ def replace_aot_entry_with_clone(
         msg = "replace_aot_entry_with_clone needs AoT-entry tables on both sides"
         raise RuntimeError(msg)
 
-    src_slots = _validate_clonable_aot_entry(src_entry, src_entry_table)
+    src_slots = _validate_clonable_aot_entry(src_entry)
     src_prefix = src_entry.path
 
     # Save the destination header (we keep it in place, only its body

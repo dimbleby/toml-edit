@@ -1650,7 +1650,7 @@ def _synth_value(
     # (which ``_inline_typed_replace`` resets when an Array view is
     # overwritten in-place).
     if isinstance(v, Array) and not v._attached:  # noqa: SLF001
-        return _live_attach_array(v, layout_root=layout_root, owner=owner)
+        return _live_attach_array(v)
     # Mappings (incl. inline Container) → inline table.
     if isinstance(v, Mapping) or (isinstance(v, Container) and v._inline):  # noqa: SLF001
         return _synth_inline_table(
@@ -1714,12 +1714,7 @@ def _live_attach_inline_table(
     return val, t
 
 
-def _live_attach_array(
-    a: Array,
-    *,
-    layout_root: Document | None,  # noqa: ARG001
-    owner: AoTEntry | None,  # noqa: ARG001
-) -> tuple[ArrayValue, Array]:
+def _live_attach_array(a: Array) -> tuple[ArrayValue, Array]:
     """Rehome an unattached `Array` into ``layout_root``.
 
     The Array always has a backing ``ArrayValue`` (the constructor
