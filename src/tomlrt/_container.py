@@ -512,6 +512,12 @@ class Container(dict[str, Any]):
         binding bound by a single direct-KV slot. Dotted KV slots are
         also fine: the new value is just an inline value at the same
         leaf position.
+
+        If the displaced value is itself a typed view (inline Table,
+        Array), its attachment state is cleared so a subsequent
+        assignment of that view elsewhere re-attaches live with
+        identity preserved (rather than going through the
+        cross-doc clone path).
         """
         refs = self._index.get(key)
         if not refs or len(refs) != 1:
@@ -525,6 +531,7 @@ class Container(dict[str, Any]):
         if not isinstance(slot, KVSlot):
             msg = "structural overwrite of header-bound binding is deferred to Phase 4"
             raise NotImplementedError(msg)
+        old = dict.__getitem__(self, key)
         cst, decoded = _synth_value(
             value,
             layout_root=self._layout_root,
@@ -534,6 +541,11 @@ class Container(dict[str, Any]):
         )
         slot.value = cst
         dict.__setitem__(self, key, decoded)
+        # Detach the displaced view so it can be reattached live.
+        if isinstance(old, Container) and old._inline and old is not decoded:  # noqa: SLF001
+            _reset_inline_for_rehome(old)
+        elif isinstance(old, Array) and old is not decoded:
+            _reset_array_for_rehome(old)
 
     @override
     def __delitem__(self, key: str) -> None:
@@ -1151,6 +1163,30 @@ def _reset_table_for_rehome(t: Container) -> None:
     t._body_tail = None  # noqa: SLF001
 
 
+def _reset_inline_for_rehome(t: Container) -> None:
+    """Clear an inline Table's slot infrastructure so it can be reattached.
+
+    Inline tables are slot-less from the doc-stream perspective but
+    keep an ``InlineTableValue`` in their ``_value`` field once
+    attached. Drop that and the layout-root pointer so the standard
+    inline-attach path treats ``t`` as if freshly constructed.
+    """
+    t._layout_root = None  # noqa: SLF001
+    t._parent = None  # noqa: SLF001
+    t._owner_aot_entry = None  # noqa: SLF001
+    if hasattr(t, "_value"):
+        t._value = None  # noqa: SLF001
+
+
+def _reset_array_for_rehome(a: Array) -> None:
+    """Clear an Array view's attachment so it can be reattached live.
+
+    Leaves ``_value`` (the displaced ``ArrayValue``) intact so the
+    next attach can reuse it.
+    """
+    a._attached = False  # noqa: SLF001
+
+
 def _install_attached_subtree(
     dst_parent: Container, dst_path: tuple[str, ...], src_table: Container
 ) -> None:
@@ -1448,16 +1484,26 @@ def _synth_value(
         raise NotImplementedError(msg)
     # Unattached inline Container (Table.inline()) — live attach: rehome
     # the existing object instead of creating a fresh Table view, so the
-    # user's reference stays the document's view.
+    # user's reference stays the document's view. Detached inline tables
+    # (sitting in a private root after a prior overwrite) are also
+    # treated as unattached.
     if (
         isinstance(v, Container)
         and v._inline  # noqa: SLF001
-        and v._layout_root is None  # noqa: SLF001
+        and (
+            v._layout_root is None  # noqa: SLF001
+            or v._layout_root._is_private  # noqa: SLF001
+        )
     ):
+        if v._layout_root is not None:  # noqa: SLF001
+            _reset_inline_for_rehome(v)
         return _live_attach_inline_table(
             v, layout_root=layout_root, parent=parent, path=path, owner=owner
         )
-    # Unattached Array — live attach.
+    # Unattached Array — live attach. Arrays don't carry a layout-root
+    # field; their displaced state is signalled by ``_attached = False``
+    # (which ``_inline_typed_replace`` resets when an Array view is
+    # overwritten in-place).
     if isinstance(v, Array) and not v._attached:  # noqa: SLF001
         return _live_attach_array(v, layout_root=layout_root, owner=owner)
     # Mappings (incl. inline Container) → inline table.
