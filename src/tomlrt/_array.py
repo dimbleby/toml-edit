@@ -167,9 +167,6 @@ class Array(list[Any]):
         """
         return None
 
-    def _owner_aot(self) -> Any:
-        return None
-
     def _style(self) -> _ArrayStyle:
         return _detect_style(self._value, multiline_flag=self._multiline)
 
@@ -262,7 +259,7 @@ class Array(list[Any]):
             layout_root=self._layout_root(),
             parent=None,
             path=(),
-            owner=self._owner_aot(),
+            owner=None,
         )
 
     @override
@@ -559,7 +556,7 @@ class Array(list[Any]):
             items = self._value.items
             style = self._style()
             # Build the new ArrayItem list segment.
-            new_segment: list[Any] = []
+            new_segment: list[ArrayItem] = []
             slice_start = key.start or 0
             for i, cst in enumerate(new_csts):
                 first_in_arr = slice_start == 0 and i == 0 and not items[:slice_start]
@@ -1168,7 +1165,7 @@ class AoT(list["Table"]):
                 for i in sorted(indices, reverse=True):
                     _layout_ops.remove_aot_entry(self, i)
                 new_entries = [self._add_entry_attached(v) for v in typed_values]
-                cur: list[Any] = list(self)
+                cur: list[Table] = list(self)
                 cur = cur[: -len(new_entries)] if new_entries else cur
                 for off, e in enumerate(new_entries):
                     cur.insert(start + off, e)
