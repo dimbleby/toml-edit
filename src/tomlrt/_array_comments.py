@@ -33,7 +33,7 @@ from __future__ import annotations
 import contextlib
 import sys
 from collections.abc import MutableMapping
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING
 
 if sys.version_info >= (3, 12):
     from typing import override
@@ -44,7 +44,7 @@ from tomlrt._comments import (
     _decode_comment,
     _encode_comment,
     _validate_comment_seq,
-    _validate_comment_text,
+    _validate_comment_str,
 )
 from tomlrt._errors import TOMLError
 from tomlrt._trivia import (
@@ -164,6 +164,19 @@ def _comments_from_lines(pieces: list[TriviaPiece]) -> tuple[str, ...]:
     return tuple(_decode_comment(p.text) for p in pieces if isinstance(p, CommentNode))
 
 
+def _render_comment_lines(
+    lines: tuple[str, ...], nl: str, ind: str
+) -> list[TriviaPiece]:
+    """Indent + comment + newline for each line, plus a final indent."""
+    out: list[TriviaPiece] = []
+    for line in lines:
+        out.append(WhitespaceNode(ind))
+        out.append(CommentNode(_encode_comment(line)))
+        out.append(NewlineNode(nl))
+    out.append(WhitespaceNode(ind))
+    return out
+
+
 def _slot_indent(arr: Array) -> str:
     """Best-effort indent string for this array's items."""
     if arr._value is None:  # noqa: SLF001
@@ -207,11 +220,7 @@ class ArrayEolView(MutableMapping[int, str]):
 
     @override
     def __setitem__(self, key: int, value: str) -> None:
-        v: object = value
-        if not isinstance(v, str):
-            msg = "comment text must be a string"
-            raise TypeError(msg)
-        _validate_comment_text(value)
+        _validate_comment_str(value, "comment text")
         _ensure_multiline(self._arr)
         idx = _check_index(self._arr, key)
         items = _items_or_raise(self._arr)
@@ -329,13 +338,7 @@ class ArrayLeadingView(MutableMapping[int, tuple[str, ...]]):
                 break
         if not seen_nl:
             kept_initial = [NewlineNode(nl)]
-        new_pieces: list[TriviaPiece] = list(kept_initial)
-        for line in lines:
-            new_pieces.append(WhitespaceNode(ind))
-            new_pieces.append(CommentNode(_encode_comment(line)))
-            new_pieces.append(NewlineNode(nl))
-        new_pieces.append(WhitespaceNode(ind))
-        item0.leading.pieces = new_pieces
+        item0.leading.pieces = [*kept_initial, *_render_comment_lines(lines, nl, ind)]
 
     def _write_item_after_prev(self, idx: int, lines: tuple[str, ...]) -> None:
         items = _items_or_raise(self._arr)
@@ -346,23 +349,18 @@ class ArrayLeadingView(MutableMapping[int, tuple[str, ...]]):
         # Split prev.post_comma_trivia: keep EOL section, replace the rest
         # with our new leading lines + indent.
         eol_sec, _rest = _split_eol_section(list(prev.post_comma_trivia.pieces))
-        new_after_eol: list[TriviaPiece] = []
+        rendered = _render_comment_lines(lines, nl, ind)
         if not eol_sec:
             # No prior EOL on prev — we need a newline first to start a new
             # line for the leading comments.
-            new_after_eol.append(NewlineNode(nl))
-        for line in lines:
-            new_after_eol.append(WhitespaceNode(ind))
-            new_after_eol.append(CommentNode(_encode_comment(line)))
-            new_after_eol.append(NewlineNode(nl))
-        new_after_eol.append(WhitespaceNode(ind))
-        prev.post_comma_trivia.pieces = [*eol_sec, *new_after_eol]
+            rendered = [NewlineNode(nl), *rendered]
+        prev.post_comma_trivia.pieces = [*eol_sec, *rendered]
         # item.leading should be empty so the comments aren't duplicated.
         item.leading.pieces = []
 
     @override
     def __setitem__(self, key: int, value: tuple[str, ...] | list[str]) -> None:
-        seq = _validate_comment_seq(cast("Any", value), "leading_comments")
+        seq = _validate_comment_seq(value, "leading_comments")
         _ensure_multiline(self._arr)
         idx = _check_index(self._arr, key)
         if not seq:
