@@ -73,7 +73,7 @@ def test_pop_missing_with_default_returns_default() -> None:
 def test_pop_too_many_args_raises() -> None:
     doc = loads("")
     with pytest.raises(TypeError):
-        doc.pop("a", 1, 2)  # type: ignore[call-arg]
+        doc.pop("a", 1, 2)
 
 
 def test_popitem_returns_last_lifo() -> None:

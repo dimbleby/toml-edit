@@ -369,6 +369,7 @@ def test_held_deleted_section_view_has_clean_orphan_state() -> None:
     del doc["a"]
     # Held view's layout root is a private orphan, not `doc`.
     assert held._layout_root is not doc  # noqa: SLF001
+    assert held._layout_root is not None  # noqa: SLF001
     assert held._layout_root._is_private  # noqa: SLF001
     # Slot infra is intact (refs point at orphan slots).
     assert held["x"] == 1

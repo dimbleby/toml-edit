@@ -7,17 +7,23 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from _toml_str import td  # type: ignore[import-not-found]
+from _toml_str import td
 from tomlrt import dumps, loads
 from tomlrt._invariants import check
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
-def _roundtrip(src: str, *, expect: str, mutate: object) -> None:
+    from tomlrt import Document
+
+
+def _roundtrip(src: str, *, expect: str, mutate: Callable[[Document], None]) -> None:
     doc = loads(src)
     mutate(doc)
     check(doc)
@@ -149,7 +155,7 @@ def test_delete_then_append_at_same_position() -> None:
             a = 1
             c = 3
         """),
-        mutate=lambda d: (d.__delitem__("b"), d.__setitem__("c", 3)),
+        mutate=lambda d: (d.__delitem__("b"), d.__setitem__("c", 3)),  # type: ignore[arg-type]
     )
 
 
@@ -164,6 +170,7 @@ def test_delete_only_kv_in_section_then_reinsert() -> None:
     check(doc)
     assert dumps(doc) == "[s]\n"
     s = doc.table("s")
+    assert s._header_ref is not None  # noqa: SLF001
     assert s._body_tail is s._header_ref.slot  # noqa: SLF001
     s["fresh"] = 99
     check(doc)

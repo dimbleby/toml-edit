@@ -1390,13 +1390,12 @@ def _reset_table_for_rehome(t: Container, *, recurse: bool = False) -> None:
         if isinstance(child, Container) and not child._inline:  # noqa: SLF001
             if child._layout_root is old_root:  # noqa: SLF001
                 _reset_table_for_rehome(child, recurse=True)
-        elif isinstance(child, AoT):
-            if child._layout_root is old_root:  # noqa: SLF001
-                for entry in list.__iter__(child):
-                    _reset_table_for_rehome(entry, recurse=True)
-                child._layout_root = None  # noqa: SLF001
-                child._parent = None  # noqa: SLF001
-                child._path = ()  # noqa: SLF001
+        elif isinstance(child, AoT) and child._layout_root is old_root:  # noqa: SLF001
+            for entry in list.__iter__(child):
+                _reset_table_for_rehome(entry, recurse=True)
+            child._layout_root = None  # noqa: SLF001
+            child._parent = None  # noqa: SLF001
+            child._path = ()  # noqa: SLF001
 
 
 def _reset_inline_for_rehome(t: Container) -> None:

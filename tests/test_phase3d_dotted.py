@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from tomlrt import dumps, loads
 from tomlrt._invariants import check
-from tomlrt._slots import KVSlot
+from tomlrt._slots import KVSlot, StructuralHeaderSlot
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -47,7 +47,10 @@ def test_aot_entry_slots_updated() -> None:
     doc = loads("[[arr]]\na.x = 1\nbar = 3\n")
     doc.aot("arr")[0].table("a")["y"] = 2
     check(doc)
-    aot_entry = doc._refs[0].slot.entry  # noqa: SLF001
+    header = doc._refs[0].slot  # noqa: SLF001
+    assert isinstance(header, StructuralHeaderSlot)
+    aot_entry = header.entry
+    assert aot_entry is not None
     kvs = [s for s in aot_entry.entry_slots if isinstance(s, KVSlot)]
     assert [".".join(p.value for p in s.key_parts) for s in kvs] == [
         "a.x",
