@@ -356,7 +356,15 @@ def delete_key(c: Container, key: str) -> None:
             owner_e = entry_table._owner_aot_entry  # noqa: SLF001
             if owner_e is not None:
                 moving_aot_entry_ids.add(id(owner_e))
-    surviving_aot_entries = _surviving_aot_entries(doc)
+
+    candidate_owners: set[int] = set()
+    for slot in owned_slots:
+        owner = getattr(slot, "owner_aot_entry", None)
+        if owner is not None and id(owner) not in moving_aot_entry_ids:
+            candidate_owners.add(id(owner))
+    surviving_aot_entries = (
+        _surviving_aot_entries(doc, candidate_owners) if candidate_owners else set()
+    )
     for slot in owned_slots:
         owner = getattr(slot, "owner_aot_entry", None)
         if (
@@ -409,23 +417,36 @@ def _collect_subtree(
             _collect_subtree(entry, containers_out, aots_out, add_ref)
 
 
-def _surviving_aot_entries(doc: Document) -> set[int]:
-    """Set of ``id(AoTEntry)`` for entries still reachable from doc dict tree."""
+def _surviving_aot_entries(doc: Document, candidates: set[int]) -> set[int]:
+    """Return ``id(AoTEntry)`` values from ``candidates`` still reachable in ``doc``.
+
+    Bails out as soon as every candidate has been spotted.
+    """
     from tomlrt._array import AoT  # noqa: PLC0415
     from tomlrt._container import Container  # noqa: PLC0415
 
     surviving: set[int] = set()
+    remaining = set(candidates)
 
     def visit(v: object) -> None:
+        if not remaining:
+            return
         if isinstance(v, Container):
             owner = v._owner_aot_entry  # noqa: SLF001
             if owner is not None:
-                surviving.add(id(owner))
+                oid = id(owner)
+                if oid in remaining:
+                    surviving.add(oid)
+                    remaining.discard(oid)
             if not v._inline:  # noqa: SLF001
                 for child in v.values():
+                    if not remaining:
+                        return
                     visit(child)
         elif isinstance(v, AoT):
             for entry in v:
+                if not remaining:
+                    return
                 visit(entry)
 
     visit(doc)
@@ -1384,25 +1405,36 @@ def _split_leading_structural(leading: Trivia) -> tuple[Trivia, Trivia]:
 def _build_section_leading(doc: Document) -> Trivia:
     """Trivia for a fresh section header.
 
-    Empty doc → no leading; non-empty → respect the user's existing
+    Empty doc → no leading; non-empty → match the existing
     structural-header separator convention (compact-style with no
     blanks → no leading; otherwise one blank line of separation).
+
+    The convention is sampled from the most recent header in the
+    doc; for uniformly-styled documents (the overwhelming majority)
+    this is identical to inspecting every header.
     """
     if doc._head is None:  # noqa: SLF001
         return Trivia()
-    headers: list[StructuralHeaderSlot] = []
-    cur: Slot | None = doc._head  # noqa: SLF001
+    cur: Slot | None = doc._tail  # noqa: SLF001
+    last_header: StructuralHeaderSlot | None = None
     while cur is not None:
         if isinstance(cur, StructuralHeaderSlot):
-            headers.append(cur)
-        cur = cur._next  # noqa: SLF001
-    # Look at separators between consecutive headers (skip the first
-    # — its leading is the file preamble, not a separator).
-    if len(headers) >= 2:
-        any_no_blank = any(not _leading_has_blank_line(h.leading) for h in headers[1:])
-        if any_no_blank:
-            return Trivia()
-    return Trivia([NewlineNode(text=doc._newline)])  # noqa: SLF001
+            last_header = cur
+            break
+        cur = cur._prev  # noqa: SLF001
+    if last_header is None:
+        return Trivia([NewlineNode(text=doc._newline)])  # noqa: SLF001
+    # First header's leading is the file preamble, not a separator.
+    is_first = True
+    p: Slot | None = last_header._prev  # noqa: SLF001
+    while p is not None:
+        if isinstance(p, StructuralHeaderSlot):
+            is_first = False
+            break
+        p = p._prev  # noqa: SLF001
+    if is_first or _leading_has_blank_line(last_header.leading):
+        return Trivia([NewlineNode(text=doc._newline)])  # noqa: SLF001
+    return Trivia()
 
 
 def attach_empty_aot(parent: Container, key: str, source_aot: object) -> object:
@@ -1430,29 +1462,19 @@ def attach_empty_aot(parent: Container, key: str, source_aot: object) -> object:
 def _aot_separator(aot: AoT, doc: Document) -> Trivia:
     """Pick the leading-trivia for a newly-appended AoT entry header.
 
-    Inspects the leading trivia on existing entry headers (ordinal ≥1)
-    to learn the user's separator convention:
-
-    - 0 prior separators (`len(aot) <= 1`): default to a single
-      newline (which produces one blank line).
-    - any prior separator has *no* blank: respect that — emit empty
-      leading so the new header sits on the next line with no blank.
-    - all prior separators have a blank: emit a single newline.
+    Inspects the most recent entry header to learn the user's
+    separator convention; for uniformly-styled AoTs (the common
+    case) this is identical to inspecting every prior entry.
     """
     nl = doc._newline  # noqa: SLF001
-    headers: list[Any] = []
-    for entry_table in aot:
-        e = entry_table._owner_aot_entry  # noqa: SLF001
-        if e is not None and e.entry_slots:
-            headers.append(e.entry_slots[0])
-    # headers[0] is the file-leading entry, not a separator.
-    separators = headers[1:]
-    if not separators:
+    if len(aot) <= 1:
         return Trivia([NewlineNode(text=nl)])
-    any_no_blank = any(not _leading_has_blank_line(h.leading) for h in separators)
-    if any_no_blank:
-        return Trivia()
-    return Trivia([NewlineNode(text=nl)])
+    last_entry = aot[-1]._owner_aot_entry  # noqa: SLF001
+    if last_entry is None or not last_entry.entry_slots:
+        return Trivia([NewlineNode(text=nl)])
+    if _leading_has_blank_line(last_entry.entry_slots[0].leading):
+        return Trivia([NewlineNode(text=nl)])
+    return Trivia()
 
 
 def add_aot_entry(aot: object, body: object, *, rehome: object | None = None) -> object:

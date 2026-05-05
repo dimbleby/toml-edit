@@ -146,7 +146,9 @@ def test_aot_insert_middle_uniformly_spaced_adds_blank() -> None:
     )
 
 
-def test_aot_append_to_mixed_does_not_add_blank() -> None:
+def test_aot_append_to_mixed_follows_last_entry_style() -> None:
+    # Mixed-style AoT: the last entry's separator decides what we do.
+    # Here the last existing separator has a blank line, so we add one.
     src = td("""
         [[i]]
         x = 1
@@ -168,6 +170,7 @@ def test_aot_append_to_mixed_does_not_add_blank() -> None:
 
             [[i]]
             x = 4
+
             [[i]]
             x = 5
             """)

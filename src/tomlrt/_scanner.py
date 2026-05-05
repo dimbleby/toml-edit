@@ -360,15 +360,27 @@ class _Scanner:
         if allow_multiline and self.starts_with('"""'):
             return self._scan_ml_basic_string()
         assert self.peek() == '"'
-        self.pos += 1
         src = self.src
         end = self.end
+        # Fast path: simple basic string with no escapes.
+        m = _RE_BASIC_STR_BODY.match(src, self.pos + 1)
+        body_start = self.pos + 1
+        if m is not None:
+            body_end = m.end()
+            if body_end < end and src[body_end] == '"':
+                self.pos = body_end + 1
+                return StringValue(
+                    lexeme="",
+                    value=src[body_start:body_end],
+                    style="basic",
+                )
+            self.pos = body_end
+        else:
+            self.pos = body_start
         out: list[str] = []
+        if m is not None:
+            out.append(m.group(0))
         while True:
-            m = _RE_BASIC_STR_BODY.match(src, self.pos)
-            if m is not None:
-                out.append(m.group(0))
-                self.pos = m.end()
             if self.pos >= end:
                 msg = "unterminated basic string"
                 raise self.error(msg)
@@ -378,16 +390,20 @@ class _Scanner:
                 return StringValue(lexeme="", value="".join(out), style="basic")
             if ch == "\\":
                 out.append(self._scan_escape())
-                continue
-            if ch == "\n" or ch == "\r":
+            elif ch == "\n" or ch == "\r":
                 msg = "newline in basic string"
                 raise self.error(msg)
-            cp = ord(ch)
-            if cp == 0x7F:
-                msg = "invalid control character U+007F in string"
+            else:
+                cp = ord(ch)
+                if cp == 0x7F:
+                    msg = "invalid control character U+007F in string"
+                    raise self.error(msg)
+                msg = f"invalid control character U+{cp:04X} in string"
                 raise self.error(msg)
-            msg = f"invalid control character U+{cp:04X} in string"
-            raise self.error(msg)
+            m = _RE_BASIC_STR_BODY.match(src, self.pos)
+            if m is not None:
+                out.append(m.group(0))
+                self.pos = m.end()
 
     def _scan_ml_basic_string(self) -> StringValue:
         assert self.starts_with('"""')

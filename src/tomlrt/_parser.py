@@ -203,14 +203,16 @@ class _Parser:
     # ------------------------------------------------------------------
 
     def _parse_value(self) -> Value:
-        ch = self._sc.peek()
+        sc = self._sc
+        pos = sc.pos
+        ch = sc.src[pos] if pos < sc.end else ""
         if ch == '"' or ch == "'":
-            return self._sc.scan_string()
+            return sc.scan_string()
         if ch == "[":
             return self._parse_nested_value(self._parse_array)
         if ch == "{":
             return self._parse_nested_value(self._parse_inline_table)
-        return self._sc.scan_value_atom()
+        return sc.scan_value_atom()
 
     def _parse_nested_value(self, parser: Callable[[], Value]) -> Value:
         if self._value_depth >= self._MAX_VALUE_DEPTH:
@@ -226,35 +228,37 @@ class _Parser:
 
     def _parse_array(self) -> ArrayValue:
         sc = self._sc
+        src = sc.src
         assert sc.peek() == "["
-        sc.advance(1)
+        sc.pos += 1
         node = ArrayValue()
         leading = sc.scan_array_trivia()
-        if sc.peek() == "]":
+        end = sc.end
+        if sc.pos < end and src[sc.pos] == "]":
             node.final_trivia = leading
-            sc.advance(1)
+            sc.pos += 1
             return node
+        items = node.items
         while True:
             value = self._parse_value()
             trailing = sc.scan_array_trivia()
             has_comma = False
             post_comma = Trivia()
-            if sc.peek() == ",":
-                sc.advance(1)
+            ch = src[sc.pos] if sc.pos < end else ""
+            if ch == ",":
+                sc.pos += 1
                 has_comma = True
                 post_comma = sc.scan_array_trivia()
-            elif sc.peek() != "]":
-                msg = f"expected ',' or ']' in array, got {sc.peek()!r}"
+            elif ch != "]":
+                msg = f"expected ',' or ']' in array, got {ch!r}"
                 raise sc.error(msg)
-            node.items.append(
-                ArrayItem(leading, value, trailing, has_comma, post_comma)
-            )
+            items.append(ArrayItem(leading, value, trailing, has_comma, post_comma))
             if not has_comma:
-                sc.advance(1)
+                sc.pos += 1
                 return node
             leading = Trivia()
-            if sc.peek() == "]":
-                sc.advance(1)
+            if sc.pos < end and src[sc.pos] == "]":
+                sc.pos += 1
                 return node
 
     # --- inline tables ------------------------------------------------
