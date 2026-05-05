@@ -77,6 +77,42 @@ def _file_ref_at_tail(c: Container, ref: SlotRef) -> None:
         c._index.setdefault(ref.local_key, []).append(ref)  # noqa: SLF001
 
 
+def _file_synthetic_header_and_kv(
+    c: Container,
+    *,
+    header_slot: StructuralHeaderSlot,
+    key: str,
+    value: Value,
+    doc: Document,
+    owner: AoTEntry | None,
+    header_ref_index: int,
+) -> KVSlot:
+    """Common tail of the two header-synthesis paths.
+
+    Files ``c``'s own-header ref at ``header_ref_index``, builds and
+    inserts the ``key = value`` KV directly after ``header_slot``,
+    files the KV ref at ``header_ref_index + 1``, and updates
+    ``c._header_ref`` / ``c._index[key]`` / ``c._body_tail``. Returns
+    the new KV slot so callers can register it on
+    ``owner.entry_slots`` and similar bookkeeping.
+
+    Anchoring (where ``header_slot`` itself sits in the slot stream)
+    and ancestor binding-ref filing remain explicit in callers; both
+    are highly position-sensitive and not safe to share.
+    """
+    own_header_ref = SlotRef(slot=header_slot, container=c, local_key=None)
+    c._refs.insert(header_ref_index, own_header_ref)  # noqa: SLF001
+    c._header_ref = own_header_ref  # noqa: SLF001
+
+    new_kv = _new_kv_slot(c, key, value, doc, owner, leading=Trivia())
+    insert_after(header_slot, new_kv, doc)
+    kv_ref = SlotRef(slot=new_kv, container=c, local_key=key)
+    c._refs.insert(header_ref_index + 1, kv_ref)  # noqa: SLF001
+    c._index.setdefault(key, []).append(kv_ref)  # noqa: SLF001
+    c._body_tail = new_kv  # noqa: SLF001
+    return new_kv
+
+
 def _wire_section_container(
     c: Container,
     *,
@@ -886,10 +922,6 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
     # File the new header's refs:
     #   * own-header ref on c (local_key=None);
     #   * binding refs on every ancestor along c._path.
-    own_header_ref = SlotRef(slot=header_slot, container=c, local_key=None)
-    c._refs.insert(0, own_header_ref)  # noqa: SLF001
-    c._header_ref = own_header_ref  # noqa: SLF001
-
     # Walk ancestor chain (excluding c) top-down so we can name
     # local_keys correctly.
     ancestors = _ancestor_chain(c)
@@ -906,14 +938,15 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
         # binding ref, so it becomes the primary).
         _rebuild_index_for_key(anc, local_key)
 
-    # Insert the KV directly after the synthetic header.
-    new_kv = _new_kv_slot(c, key, value, doc, owner, leading=Trivia())
-    insert_after(header_slot, new_kv, doc)
-    kv_ref = SlotRef(slot=new_kv, container=c, local_key=key)
-    # KV ref sits right after the own-header ref in c._refs.
-    c._refs.insert(1, kv_ref)  # noqa: SLF001
-    c._index.setdefault(key, []).append(kv_ref)  # noqa: SLF001
-    c._body_tail = new_kv  # noqa: SLF001
+    new_kv = _file_synthetic_header_and_kv(
+        c,
+        header_slot=header_slot,
+        key=key,
+        value=value,
+        doc=doc,
+        owner=owner,
+        header_ref_index=0,
+    )
 
     # Maintain the AoT entry's slot list when applicable.
     if owner is not None:
@@ -966,10 +999,6 @@ def _synthesise_header_then_insert_kv_at_doc_tail(
     else:
         insert_after(doc._tail, header_slot, doc)  # noqa: SLF001
 
-    own_header_ref = SlotRef(slot=header_slot, container=c, local_key=None)
-    c._refs.append(own_header_ref)  # noqa: SLF001
-    c._header_ref = own_header_ref  # noqa: SLF001
-
     ancestors = _ancestor_chain(c)
     # When ``c`` lives inside an AoT entry and was anchored after
     # ``owner.entry_slots[-1]`` above, the synthesised header sits
@@ -997,11 +1026,15 @@ def _synthesise_header_then_insert_kv_at_doc_tail(
         else:
             _file_ref_at_tail(anc, binding_ref)
 
-    new_kv = _new_kv_slot(c, key, value, doc, owner, leading=Trivia())
-    insert_after(header_slot, new_kv, doc)
-    kv_ref = SlotRef(slot=new_kv, container=c, local_key=key)
-    _file_ref_at_tail(c, kv_ref)
-    c._body_tail = new_kv  # noqa: SLF001
+    new_kv = _file_synthetic_header_and_kv(
+        c,
+        header_slot=header_slot,
+        key=key,
+        value=value,
+        doc=doc,
+        owner=owner,
+        header_ref_index=len(c._refs),  # noqa: SLF001
+    )
 
     if owner is not None:
         owner.entry_slots.append(header_slot)
