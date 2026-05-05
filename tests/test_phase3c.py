@@ -202,13 +202,14 @@ def test_insert_into_implicit_grandparent_now_works() -> None:
     assert dumps(doc) == "a.b.c = 1\na.b.d = 2\n"
 
 
-def test_insert_into_comment_only_doc_deferred() -> None:
-    # Slotless doc with preamble trivia: inserting would relocate
-    # the comment to the epilogue. Defer until preamble migration is
-    # implemented.
+def test_insert_into_comment_only_doc_migrates_preamble() -> None:
+    # Slotless doc with preamble trivia: inserting migrates the
+    # comment block onto the new slot's leading so it stays visually
+    # at the top of the file.
     doc = loads("# preamble\n")
-    with pytest.raises(NotImplementedError):
-        doc["a"] = 1
+    doc["a"] = 1
+    assert dumps(doc) == "# preamble\n\na = 1\n"
+    assert loads(dumps(doc)).preamble == ("preamble",)
 
 
 def test_aot_entry_body_insert_now_works() -> None:

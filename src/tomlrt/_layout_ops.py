@@ -79,7 +79,20 @@ def insert_before(anchor: Slot, new_slot: Slot, doc: Document) -> None:
 
 def insert_before_head(new_slot: Slot, doc: Document) -> None:
     """Splice ``new_slot`` at the start of ``doc``'s linked list."""
+    # Preamble migration: if the doc was previously slotless and any
+    # preamble lives in `_trailing` (e.g. set via `Document.preamble`
+    # on an empty doc, or a comment-only source), prepend that trivia
+    # to the new head's leading and clear the trailing.
     head = doc._head  # noqa: SLF001
+    if head is None and doc._trailing.pieces:  # noqa: SLF001
+        nl = doc._newline  # noqa: SLF001
+        migrated = list(doc._trailing.pieces)  # noqa: SLF001
+        # Add a blank-line separator between preamble and content.
+        from tomlrt._trivia import NewlineNode  # noqa: PLC0415
+
+        migrated.append(NewlineNode(nl))
+        new_slot.leading.pieces = [*migrated, *new_slot.leading.pieces]
+        doc._trailing.pieces = []  # noqa: SLF001
     new_slot._prev = None  # noqa: SLF001
     new_slot._next = head  # noqa: SLF001
     if head is not None:
@@ -209,19 +222,10 @@ def append_direct_kv(c: Container, key: str, value: Value) -> None:
         old_head = doc._head  # noqa: SLF001
         insert_before_head(new_slot, doc)
         _ensure_leading_blank_line(old_head, doc)
-    elif doc._trailing.pieces:  # noqa: SLF001
-        # Slotless doc with preamble-only trivia (e.g. comment-only
-        # source). Inserting would either silently relocate that
-        # trivia to the epilogue or require a preamble-migration
-        # policy — Phase 3d / Phase 4 territory.
-        msg = (
-            "inserting into a slotless doc that already has trivia "
-            "(comment-only source) requires preamble migration; "
-            "deferred to a later phase"
-        )
-        raise NotImplementedError(msg)
     else:
-        # Genuinely empty doc.
+        # Empty doc (slotless), possibly with preamble trivia in
+        # _trailing — insert_before_head migrates that onto the new
+        # slot's leading.
         insert_before_head(new_slot, doc)
 
     new_ref = SlotRef(slot=new_slot, container=c, local_key=key)
