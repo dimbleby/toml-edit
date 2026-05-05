@@ -383,16 +383,10 @@ class Container(dict[str, Any]):
         if _is_section(value):
             self._attach_section(key, value)
             return
-        # Unknown type → TypeError via _synth_value.
-        _synth_value(
-            value,
-            layout_root=self._layout_root,
-            parent=self,
-            path=(*self._path, key),
-            owner=self._owner_aot_entry,
-        )
-        msg = "internal: unexpected fall-through in __setitem__"
-        raise AssertionError(msg)
+        # Reach here only for unsupported types (tuple, bytes, set, …):
+        # raise the canonical TypeError with the type name.
+        msg = f"Cannot convert {type(value).__name__} to a TOML value"
+        raise TypeError(msg)
 
     def _attach_aot(self, key: str, value: AoT) -> None:
         """Install ``value`` (an AoT) under ``key``.
@@ -487,12 +481,12 @@ class Container(dict[str, Any]):
 
     def _scalar_replace(self, key: str, value: Any) -> None:
         refs = self._index.get(key)
-        if not refs:
+        if not refs:  # pragma: no cover  -- view/CST drift invariant guard
             msg = f"internal: key {key!r} present in dict but missing from _index"
             raise AssertionError(msg)
         primary = refs[0]
         slot = primary.slot
-        if not isinstance(slot, KVSlot):
+        if not isinstance(slot, KVSlot):  # pragma: no cover  -- type invariant guard
             msg = "internal: scalar replace expects KVSlot"
             raise AssertionError(msg)  # noqa: TRY004
         slot.value = coerce_scalar(value)
@@ -656,7 +650,7 @@ class Container(dict[str, Any]):
             )
         if key in self:
             ok = _inline_ops.replace_entry_value(self, key, cst)
-            if not ok:
+            if not ok:  # pragma: no cover  -- view/CST drift invariant guard
                 msg = (
                     f"internal: key {key!r} present on inline view but no "
                     "matching entry in the backing InlineTableValue"
@@ -670,7 +664,7 @@ class Container(dict[str, Any]):
         if key not in self:
             raise KeyError(key)
         ok = _inline_ops.delete_entry(self, key)
-        if not ok:
+        if not ok:  # pragma: no cover  -- view/CST drift invariant guard
             msg = (
                 f"internal: key {key!r} present on inline view but no "
                 "matching entry in the backing InlineTableValue"

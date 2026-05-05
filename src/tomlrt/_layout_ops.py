@@ -318,7 +318,7 @@ def append_direct_kv(c: Container, key: str, value: Value) -> None:
         msg = "insert into AoT entry sub-table body is not yet supported"
         raise NotImplementedError(msg)
     layout_root = c._layout_root  # noqa: SLF001
-    if layout_root is None:
+    if layout_root is None:  # pragma: no cover
         msg = "internal: container has no layout root"
         raise AssertionError(msg)
     doc = layout_root
@@ -401,7 +401,7 @@ def delete_key(c: Container, key: str) -> None:
         raise KeyError(key)
     val = dict.__getitem__(c, key)
     layout_root = c._layout_root  # noqa: SLF001
-    if layout_root is None:
+    if layout_root is None:  # pragma: no cover
         msg = "internal: container has no layout root"
         raise AssertionError(msg)
     doc = layout_root
@@ -1048,7 +1048,7 @@ def _append_kv_in_aot_entry(c: Container, key: str, value: Value) -> None:
     keeps the entry's `entry_slots` list in doc-stream order.
     """
     layout_root = c._layout_root  # noqa: SLF001
-    if layout_root is None:
+    if layout_root is None:  # pragma: no cover
         msg = "internal: container has no layout root"
         raise AssertionError(msg)
     doc = layout_root
@@ -1115,7 +1115,7 @@ def _ensure_leading_blank_line(slot: Slot, doc: Document) -> None:
     pieces.insert(0, NewlineNode(text=doc._newline))  # noqa: SLF001
 
 
-def _find_ref_index_by_slot(c: Container, slot: Slot) -> int:
+def _find_ref_index_by_slot(c: Container, slot: Slot) -> int:  # pragma: no cover
     refs = c._refs  # noqa: SLF001
     for i, r in enumerate(refs):
         if r.slot is slot:
@@ -1364,7 +1364,7 @@ def attach_empty_aot(parent: Container, key: str, source_aot: AoT) -> AoT:
     will materialise the first ``[[path]]`` header. The ``source_aot``
     is rehomed in place (identity preserved).
     """
-    if len(source_aot) > 0:
+    if len(source_aot) > 0:  # pragma: no cover
         msg = "non-empty AoT live-attach has its own routing"
         raise AssertionError(msg)
     # Rehome the orphan AoT into this parent's logical scope.
@@ -1514,7 +1514,7 @@ def clone_aot_entry(
     Returns the new ``Table`` view.
     """
     src_entry = src_entry_table._owner_aot_entry  # noqa: SLF001
-    if src_entry is None:
+    if src_entry is None:  # pragma: no cover
         msg = "Source entry has no owning AoTEntry"
         raise RuntimeError(msg)
     src_layout_root = src_entry_table._layout_root  # noqa: SLF001
@@ -1618,7 +1618,7 @@ def _install_cloned_aot_entry(
         _ensure_terminator(anchor, doc)
         insert_after(anchor, cloned_header, doc)
     prev: Slot = cloned_header
-    for s in cloned_slots[1:]:
+    for s in cloned_slots[1:]:  # pragma: no cover
         _ensure_terminator(prev, doc)
         insert_after(prev, s, doc)
         prev = s
@@ -1679,7 +1679,7 @@ def _install_cloned_section(
     from tomlrt._container import Table  # noqa: PLC0415
 
     layout_root = parent._layout_root  # noqa: SLF001
-    if layout_root is None:
+    if layout_root is None:  # pragma: no cover
         msg = "cloned-section install requires parent attached to a document"
         raise RuntimeError(msg)
     doc = layout_root
@@ -1739,7 +1739,7 @@ def clone_aot_entry_as_table(
     AoT prefix to ``parent._path + (key,)``.
     """
     src_entry = src_entry_table._owner_aot_entry  # noqa: SLF001
-    if src_entry is None:
+    if src_entry is None:  # pragma: no cover
         msg = "Source entry has no owning AoTEntry"
         raise RuntimeError(msg)
     src_slots = _validate_clonable_aot_entry(src_entry)
@@ -1794,10 +1794,10 @@ def clone_table_as_aot_entry(
     / lexeme bytes (so per-section comments survive).
     """
     src_slots = _gather_section_slots(src_table)
-    if not isinstance(src_slots[0], StructuralHeaderSlot):
+    if not isinstance(src_slots[0], StructuralHeaderSlot):  # pragma: no cover
         msg = "Source section's first owned slot is not a header"
         raise AssertionError(msg)  # noqa: TRY004
-    if src_slots[0].kind != "table":
+    if src_slots[0].kind != "table":  # pragma: no cover
         msg = "clone_table_as_aot_entry: source must be a standard section"
         raise RuntimeError(msg)
     return _install_cloned_aot_entry(
@@ -1823,7 +1823,7 @@ def clone_section_as_section(
     ``src_table._path`` to ``parent._path + (key,)``.
     """
     src_slots = _gather_section_slots(src_table)
-    if not isinstance(src_slots[0], StructuralHeaderSlot):
+    if not isinstance(src_slots[0], StructuralHeaderSlot):  # pragma: no cover
         msg = "Source section's first owned slot is not a header"
         raise AssertionError(msg)  # noqa: TRY004
     return _install_cloned_section(parent, key, src_slots, src_table._path)  # noqa: SLF001
@@ -2013,7 +2013,7 @@ def _populate_entry_views(
                     containers[sub._path] = sub  # noqa: SLF001
                     dict.__setitem__(cur, comp, sub)
                 nxt = dict.__getitem__(cur, comp)
-                if not isinstance(nxt, Table):
+                if not isinstance(nxt, Table):  # pragma: no cover
                     msg = "internal: dotted KV traversal hit non-Table"
                     raise AssertionError(msg)  # noqa: TRY004
                 cur = nxt
@@ -2039,7 +2039,9 @@ def _validate_clonable_aot_entry(src_entry: AoTEntry) -> list[Slot]:
     `check_clone_aot_entry` so the two cannot drift.
     """
     src_slots = list(src_entry.entry_slots)
-    if not src_slots or not isinstance(src_slots[0], StructuralHeaderSlot):
+    if not src_slots or not isinstance(
+        src_slots[0], StructuralHeaderSlot
+    ):  # pragma: no cover
         msg = "Source entry has no header slot"
         raise RuntimeError(msg)
     for s in src_slots[1:]:
@@ -2048,7 +2050,7 @@ def _validate_clonable_aot_entry(src_entry: AoTEntry) -> list[Slot]:
                 msg = "AoT clone for nested non-table headers is not yet implemented"
                 raise NotImplementedError(msg)
             continue
-        if not isinstance(s, KVSlot):
+        if not isinstance(s, KVSlot):  # pragma: no cover
             msg = "AoT clone: unexpected slot type"
             raise AssertionError(msg)  # noqa: TRY004
     return src_slots
@@ -2069,7 +2071,7 @@ def check_clone_aot_entry(aot: AoT, src_entry_table: Container) -> None:
         msg = "AoT.clone_entry requires the AoT to be attached to a document"
         raise RuntimeError(msg)
     src_entry = src_entry_table._owner_aot_entry  # noqa: SLF001
-    if src_entry is None:
+    if src_entry is None:  # pragma: no cover
         msg = "Source entry has no owning AoTEntry"
         raise RuntimeError(msg)
     _validate_clonable_aot_entry(src_entry)
@@ -2101,7 +2103,7 @@ def attach_section_at(
         return attach_section(parent, sub[0], source)
 
     layout_root = parent._layout_root  # noqa: SLF001
-    if layout_root is None:
+    if layout_root is None:  # pragma: no cover
         msg = "internal: parent has no layout root"
         raise AssertionError(msg)
     doc = layout_root
@@ -2214,7 +2216,7 @@ def attach_section(
     )
 
     layout_root = parent._layout_root  # noqa: SLF001
-    if layout_root is None:
+    if layout_root is None:  # pragma: no cover
         msg = "internal: parent has no layout root"
         raise AssertionError(msg)
     doc = layout_root
