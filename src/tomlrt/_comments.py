@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from tomlrt._container import Container, Document
     from tomlrt._slots import Slot
     from tomlrt._trivia import (
+        EolTrivia,
         Trivia,
         TriviaPiece,
     )
@@ -151,14 +152,7 @@ class EolCommentView(MutableMapping[str, str]):
             msg = f"key {key!r} not in container"
             raise KeyError(msg)
         _validate_comment_str(value, "comment")
-        # Ensure trailing whitespace separator before the new comment.
-        if slot.eol.trailing_ws is None:
-            slot.eol.trailing_ws = WhitespaceNode(" ")
-        elif slot.eol.trailing_ws.text == "":
-            slot.eol.trailing_ws.text = " "
-        slot.eol.comment = CommentNode(_encode_comment(value))
-        if slot.eol.newline is None:
-            slot.eol.newline = NewlineNode(_container_newline(self._c))
+        _write_eol_comment(slot.eol, value, _container_newline(self._c))
 
     @override
     def __delitem__(self, key: str) -> None:
@@ -255,13 +249,7 @@ def _extract_leading_comments(leading: Trivia) -> tuple[str, ...]:
     preamble or archived blocks and are excluded.
     """
     _above, attached, _indent = _split_attached_block(leading)
-    out: list[str] = []
-    for line in attached:
-        for p in line:
-            if isinstance(p, CommentNode):
-                out.append(_decode_comment(p.text))
-                break
-    return tuple(out)
+    return _lines_to_comments(attached)
 
 
 def _slot_has_attached_comments(slot: Slot) -> bool:
@@ -306,22 +294,7 @@ class LeadingCommentView(MutableMapping[str, tuple[str, ...]]):
             msg = f"key {key!r} not in container"
             raise KeyError(msg)
         comments = _validate_comment_seq(value, "leading_comments")
-        nl = _container_newline(self._c)
-        # Replace only the *attached* comment block; preserve any
-        # preamble / archived blocks above any blank-line separator,
-        # and re-apply the slot's own indent before each new comment
-        # line and (implicitly) before the slot itself.
-        above, _attached, indent = _split_attached_block(slot.leading)
-        kept: list[TriviaPiece] = []
-        for line in above:
-            kept.extend(line)
-        new_pieces: list[TriviaPiece] = []
-        for c in comments:
-            new_pieces.extend(indent)
-            new_pieces.append(CommentNode(_encode_comment(c)))
-            new_pieces.append(NewlineNode(nl))
-        new_pieces.extend(indent)
-        slot.leading.pieces = [*kept, *new_pieces]
+        _set_attached_block(slot.leading, comments, _container_newline(self._c))
 
     @override
     def __delitem__(self, key: str) -> None:
@@ -394,24 +367,11 @@ def _header_comment_set(c: Container, value: str | None) -> None:
     if value is None:
         if eol.comment is not None:
             eol.comment = None
-            if (
-                eol.trailing_ws is not None
-                and eol.trailing_ws.text.strip(
-                    " \t",
-                )
-                == ""
-            ):
-                # Drop the gap whitespace that preceded the comment.
+            if eol.trailing_ws is not None and eol.trailing_ws.text.strip(" \t") == "":
                 eol.trailing_ws = None
         return
     _validate_comment_str(value, "header_comment")
-    if eol.trailing_ws is None:
-        eol.trailing_ws = WhitespaceNode(" ")
-    elif eol.trailing_ws.text == "":
-        eol.trailing_ws.text = " "
-    eol.comment = CommentNode(_encode_comment(value))
-    if eol.newline is None:
-        eol.newline = NewlineNode(_container_newline(c))
+    _write_eol_comment(eol, value, _container_newline(c))
 
 
 def _header_leading_get(c: Container) -> tuple[str, ...]:
@@ -419,8 +379,7 @@ def _header_leading_get(c: Container) -> tuple[str, ...]:
     if h is None:
         msg = "container has no header to attach leading comments to"
         raise TOMLError(msg)
-    leading = h.leading
-    return _extract_leading_comments(leading)
+    return _extract_leading_comments(h.leading)
 
 
 def _header_leading_set(c: Container, value: tuple[str, ...]) -> None:
@@ -429,19 +388,7 @@ def _header_leading_set(c: Container, value: tuple[str, ...]) -> None:
         msg = "container has no header to attach leading comments to"
         raise TOMLError(msg)
     comments = _validate_comment_seq(value, "header_leading_comments")
-    nl = _container_newline(c)
-    leading = h.leading
-    above, _attached, indent = _split_attached_block(leading)
-    kept: list[TriviaPiece] = []
-    for line in above:
-        kept.extend(line)
-    new_pieces: list[TriviaPiece] = []
-    for cm in comments:
-        new_pieces.extend(indent)
-        new_pieces.append(CommentNode(_encode_comment(cm)))
-        new_pieces.append(NewlineNode(nl))
-    new_pieces.extend(indent)
-    leading.pieces = [*kept, *new_pieces]
+    _set_attached_block(h.leading, comments, _container_newline(c))
 
 
 def _validate_comment_seq(value: object, name: str) -> tuple[str, ...]:
@@ -464,35 +411,55 @@ def _validate_comment_seq(value: object, name: str) -> tuple[str, ...]:
     return tuple(out)
 
 
-def _trivia_attached_split(
-    t: Trivia,
-) -> tuple[list[list[TriviaPiece]], list[list[TriviaPiece]], list[TriviaPiece]]:
-    """Split arbitrary trivia into (above_blank, attached, indent)."""
-    return _split_attached_block(t)
+def _lines_to_comments(lines: Iterable[Iterable[TriviaPiece]]) -> tuple[str, ...]:
+    """Extract one decoded comment per line that contains a CommentNode."""
+    out: list[str] = []
+    for line in lines:
+        for p in line:
+            if isinstance(p, CommentNode):
+                out.append(_decode_comment(p.text))
+                break
+    return tuple(out)
+
+
+def _set_attached_block(leading: Trivia, comments: tuple[str, ...], nl: str) -> None:
+    """Replace the attached comment block on ``leading`` with ``comments``.
+
+    Preserves any preamble / archived blocks above any blank-line
+    separator and re-applies the slot's own indent before each new
+    comment line and the slot itself.
+    """
+    above, _attached, indent = _split_attached_block(leading)
+    kept: list[TriviaPiece] = []
+    for line in above:
+        kept.extend(line)
+    new_pieces: list[TriviaPiece] = []
+    for c in comments:
+        new_pieces.extend(indent)
+        new_pieces.append(CommentNode(_encode_comment(c)))
+        new_pieces.append(NewlineNode(nl))
+    new_pieces.extend(indent)
+    leading.pieces = [*kept, *new_pieces]
+
+
+def _write_eol_comment(eol: EolTrivia, text: str, nl: str) -> None:
+    """Set the EOL comment on ``eol``, ensuring a separator and newline."""
+    if eol.trailing_ws is None:
+        eol.trailing_ws = WhitespaceNode(" ")
+    elif eol.trailing_ws.text == "":
+        eol.trailing_ws.text = " "
+    eol.comment = CommentNode(_encode_comment(text))
+    if eol.newline is None:
+        eol.newline = NewlineNode(nl)
 
 
 def _doc_preamble_get(doc: Document) -> tuple[str, ...]:
     head = doc._head  # noqa: SLF001
     if head is None:
         # Empty doc: read from _trailing.
-        trailing = doc._trailing  # noqa: SLF001
-        out: list[str] = []
-        for line in _split_leading_into_lines(trailing):
-            for p in line:
-                if isinstance(p, CommentNode):
-                    out.append(_decode_comment(p.text))
-                    break
-        return tuple(out)
-    leading = head.leading
-    above, _attached, _indent = _split_attached_block(leading)
-    # Preamble = comment lines in the "above" block (separated by blank).
-    out = []
-    for line in above:
-        for p in line:
-            if isinstance(p, CommentNode):
-                out.append(_decode_comment(p.text))
-                break
-    return tuple(out)
+        return _lines_to_comments(_split_leading_into_lines(doc._trailing))  # noqa: SLF001
+    above, _attached, _indent = _split_attached_block(head.leading)
+    return _lines_to_comments(above)
 
 
 def _doc_preamble_set(doc: Document, value: tuple[str, ...]) -> None:
@@ -535,19 +502,12 @@ def _doc_preamble_set(doc: Document, value: tuple[str, ...]) -> None:
 
 def _doc_epilogue_get(doc: Document) -> tuple[str, ...]:
     head = doc._head  # noqa: SLF001
-    trailing = doc._trailing  # noqa: SLF001
     if head is None:
         # Empty doc: there is no epilogue separate from preamble; both
         # routes read _trailing, but tests expect epilogue == () on an
         # empty doc.
         return ()
-    out: list[str] = []
-    for line in _split_leading_into_lines(trailing):
-        for p in line:
-            if isinstance(p, CommentNode):
-                out.append(_decode_comment(p.text))
-                break
-    return tuple(out)
+    return _lines_to_comments(_split_leading_into_lines(doc._trailing))  # noqa: SLF001
 
 
 def _doc_epilogue_set(doc: Document, value: tuple[str, ...]) -> None:
