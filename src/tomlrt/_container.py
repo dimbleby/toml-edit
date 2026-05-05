@@ -36,6 +36,7 @@ from tomlrt._comments import (
     _header_leading_set,
 )
 from tomlrt._errors import TOMLError
+from tomlrt._paths import split_path, validate_path
 from tomlrt._render import render
 from tomlrt._slots import KVSlot, StructuralHeaderSlot
 from tomlrt._trivia import (
@@ -218,7 +219,7 @@ class Container(dict[str, Any]):
 
         Raises ``TypeError`` if descent passes through a non-table.
         """
-        parts = _split_path(path)
+        parts = split_path(path)
         cur: Any = self
         for i, p in enumerate(parts):
             if not isinstance(cur, Container):
@@ -710,7 +711,7 @@ class Container(dict[str, Any]):
         Intermediate sections are created as needed via `ensure_table`.
         Returns the live view stored at the leaf.
         """
-        parts = _validate_path(path)
+        parts = validate_path(path)
         if self._inline and len(parts) > 1:
             msg = "cannot install dotted path into an inline-style table"
             raise TOMLError(msg)
@@ -802,7 +803,7 @@ class Container(dict[str, Any]):
         ``[a.b.c]`` header. An existing non-table at any component
         raises ``TypeError``.
         """
-        parts = _validate_path(path)
+        parts = validate_path(path)
         if self._inline:
             msg = "cannot create section table inside an inline-style table"
             raise TOMLError(msg)
@@ -1367,52 +1368,6 @@ def _install_attached_subtree(
             dst_parent.install(sub_path, v)
         elif isinstance(v, Container):
             _install_attached_subtree(dst_parent, sub_path, v)
-
-
-def _split_path(path: str | Sequence[str]) -> list[str]:
-    """Split a path argument into a list of component names.
-
-    A ``str`` is interpreted as a dotted path (no quoting support; for
-    keys containing dots, pass a sequence). A non-string ``Sequence``
-    is taken verbatim.
-    """
-    if isinstance(path, str):
-        return path.split(".") if path else []
-    return list(path)
-
-
-def _validate_path(path: object) -> list[str]:
-    """Validate a key-path argument and return its components.
-
-    Raises ``TypeError`` for the wrong outer type, and ``TOMLError``
-    for empty paths or paths with empty segments.
-    """
-    if isinstance(path, str):
-        if path == "":
-            msg = "key path must not be empty"
-            raise TOMLError(msg)
-        parts = path.split(".")
-        for p in parts:
-            if p == "":
-                msg = f"key path {path!r} contains an empty segment"
-                raise TOMLError(msg)
-        return parts
-    if isinstance(path, (list, tuple)):
-        if len(path) == 0:
-            msg = "key path must not be empty"
-            raise TOMLError(msg)
-        out: list[str] = []
-        for seg in path:
-            if not isinstance(seg, str):
-                msg = f"key path segment must be str, got {type(seg).__name__}"
-                raise TypeError(msg)
-            if seg == "":
-                msg = "key path contains an empty segment"
-                raise TOMLError(msg)
-            out.append(seg)
-        return out
-    msg = f"key path must be str or sequence of str, got {type(path).__name__}"
-    raise TypeError(msg)
 
 
 def _to_python(v: Any) -> Any:
