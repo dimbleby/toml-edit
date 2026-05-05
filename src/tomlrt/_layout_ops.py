@@ -986,6 +986,7 @@ def _synthesise_header_then_insert_kv_at_doc_tail(
         owner.entry_slots.append(header_slot)
         owner.entry_slots.append(new_kv)
 
+
 def _append_kv_in_aot_entry(c: Container, key: str, value: Value) -> None:
     """Append a direct KV in an AoT-entry root container's body.
 

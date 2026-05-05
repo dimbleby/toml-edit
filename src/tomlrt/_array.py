@@ -1078,6 +1078,45 @@ class AoT(list["Table"]):
         assert isinstance(result, Table)
         return result
 
+    def _add_entry_attached(self, value: Mapping[str, Any]) -> Table:
+        """Dispatch a new attached AoT entry from ``value``.
+
+        Pre: ``self._layout_root is not None``. Selects the trivia-
+        preserving clone path when ``value`` is itself an attached
+        AoT entry or attached standard section, otherwise falls
+        through to ``add_aot_entry``.
+        """
+        from tomlrt import _layout_ops  # noqa: PLC0415
+        from tomlrt._container import Table as TableType  # noqa: PLC0415
+
+        if isinstance(value, TableType) and value._layout_root is not None:  # noqa: SLF001
+            if value._owner_aot_entry is not None:  # noqa: SLF001
+                result = _layout_ops.clone_aot_entry(self, value)
+            elif value._header_ref is not None and not value._inline:  # noqa: SLF001
+                result = _layout_ops.clone_table_as_aot_entry(self, value)
+            else:
+                result = _layout_ops.add_aot_entry(self, value)
+        else:
+            result = _layout_ops.add_aot_entry(self, value)
+        assert isinstance(result, TableType)
+        return result
+
+    def _replace_entry_attached(
+        self, index: int, value: Mapping[str, Any] | None
+    ) -> None:
+        """Dispatch in-place replacement of an attached AoT entry."""
+        from tomlrt import _layout_ops  # noqa: PLC0415
+        from tomlrt._container import Table as TableType  # noqa: PLC0415
+
+        if (
+            isinstance(value, TableType)
+            and value._layout_root is not None  # noqa: SLF001
+            and value._owner_aot_entry is not None  # noqa: SLF001
+        ):
+            _layout_ops.replace_aot_entry_with_clone(self, index, value)
+            return
+        _layout_ops.replace_aot_entry(self, index, value)
+
     # ------------------------------------------------------------------
     # Supported list-mutator surface.
     # Anything not implemented here is overridden below to fail closed
@@ -1174,19 +1213,13 @@ class AoT(list["Table"]):
                 return
             # For contiguous step == 1: replace by delete-range then
             # insert at the start index. Order matters: build new
-            # entries via add (appended to end), then renormalise.
+            # entries via the dispatcher (appended to end), then
+            # renormalise.
             if index.step is None or index.step == 1:
                 start = index.indices(len(self))[0]
-                # Delete the range first.
                 for i in sorted(indices, reverse=True):
                     _layout_ops.remove_aot_entry(self, i)
-                # Add new entries at the end then renormalise into
-                # position.
-                new_entries = []
-                for v in typed_values:
-                    e = _layout_ops.add_aot_entry(self, v)
-                    new_entries.append(e)
-                # Now reorder so the new block lives at `start`.
+                new_entries = [self._add_entry_attached(v) for v in typed_values]
                 cur: list[Any] = list(self)
                 cur = cur[: -len(new_entries)] if new_entries else cur
                 for off, e in enumerate(new_entries):
@@ -1195,10 +1228,9 @@ class AoT(list["Table"]):
                     _layout_ops.renormalise_aot_order(self, cur)
                 return
             # Extended slice with step != 1 and matching length:
-            # replace each entry in place by remove + add at end + reorder.
-            # Simpler: replace via the existing single-entry path.
+            # replace each entry in place.
             for i, v in zip(indices, typed_values, strict=True):
-                _layout_ops.replace_aot_entry(self, i, v)
+                self._replace_entry_attached(i, v)
             return
         from collections.abc import Mapping  # noqa: PLC0415
 
@@ -1207,46 +1239,16 @@ class AoT(list["Table"]):
             assert isinstance(value, dict)
             list.__setitem__(self, index, _make_unattached_entry(value))
             return
-        from tomlrt._container import Table as _TableType  # noqa: PLC0415
-
-        i = operator.index(index)
-        if (
-            isinstance(value, _TableType)
-            and value._layout_root is not None  # noqa: SLF001
-            and value._owner_aot_entry is not None  # noqa: SLF001
-        ):
-            _layout_ops.replace_aot_entry_with_clone(self, i, value)
-            return
-        _layout_ops.replace_aot_entry(self, i, value)  # ty: ignore[invalid-argument-type]
+        self._replace_entry_attached(operator.index(index), value)  # ty: ignore[invalid-argument-type]
 
     @override
     def append(self, value: Table | Mapping[str, Any]) -> None:
         # Same semantics as `add(body)` but with no return value (list API).
-        from tomlrt import _layout_ops  # noqa: PLC0415
-        from tomlrt._container import Table as TableType  # noqa: PLC0415
-
         if self._layout_root is None:
             assert isinstance(value, dict)
             list.append(self, _make_unattached_entry(value))
             return
-        if (
-            isinstance(value, TableType)
-            and value._layout_root is not None  # noqa: SLF001
-            and value._owner_aot_entry is not None  # noqa: SLF001
-        ):
-            _layout_ops.clone_aot_entry(self, value)
-            return
-        if (
-            isinstance(value, TableType)
-            and value._layout_root is not None  # noqa: SLF001
-            and value._header_ref is not None  # noqa: SLF001
-            and not value._inline  # noqa: SLF001
-        ):
-            # Attached standard-section source: clone preserving its
-            # header + body trivia via the dedicated primitive.
-            _layout_ops.clone_table_as_aot_entry(self, value)
-            return
-        _layout_ops.add_aot_entry(self, value)
+        self._add_entry_attached(value)
 
     @override
     def extend(self, values: Iterable[Table | Mapping[str, Any]]) -> None:
@@ -1256,39 +1258,19 @@ class AoT(list["Table"]):
     @override
     def insert(self, index: SupportsIndex, value: Table | Mapping[str, Any]) -> None:
         from tomlrt import _layout_ops  # noqa: PLC0415
-        from tomlrt._container import Table as TableType  # noqa: PLC0415
 
         if self._layout_root is None:
             assert isinstance(value, dict)
             list.insert(self, index, _make_unattached_entry(value))
             return
-        # Materialise as add() then renormalise into position.
-        if (
-            isinstance(value, TableType)
-            and value._layout_root is not None  # noqa: SLF001
-            and value._owner_aot_entry is not None  # noqa: SLF001
-        ):
-            new_entry = _layout_ops.clone_aot_entry(self, value)
-        elif (
-            isinstance(value, TableType)
-            and value._layout_root is not None  # noqa: SLF001
-            and value._header_ref is not None  # noqa: SLF001
-            and not value._inline  # noqa: SLF001
-        ):
-            new_entry = _layout_ops.clone_table_as_aot_entry(self, value)
-        else:
-            new_entry = _layout_ops.add_aot_entry(self, value)
-        from tomlrt._container import Table  # noqa: PLC0415
-
-        assert isinstance(new_entry, Table)
-        # `add` appended; move into position via renormalise.
+        new_entry = self._add_entry_attached(value)
         idx = int(index)
         n = len(self)
         if idx < 0:
             idx = max(0, n + idx)
         idx = min(idx, n - 1)
         new_order: list[Table] = list(self)
-        new_order.pop()  # remove from tail
+        new_order.pop()
         new_order.insert(idx, new_entry)
         if new_order != list(self):
             _layout_ops.renormalise_aot_order(self, new_order)
