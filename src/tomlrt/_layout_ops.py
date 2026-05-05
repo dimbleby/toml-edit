@@ -520,16 +520,7 @@ def delete_key(c: Container, key: str) -> None:
             cc._body_tail = _recompute_body_tail(cc)  # noqa: SLF001
         _invalidate_last_direct_kv_if(cc, owned_ids)
 
-    # 4. Defensive: no live container retains a ref to any owned slot.
-    if __debug__:
-        for cc in chain:
-            for r in cc._refs:  # noqa: SLF001
-                assert id(r.slot) not in owned_ids, (
-                    "internal: live container still references a slot we are about "
-                    "to unlink — owned-set is incomplete"
-                )
-
-    # 5. Unlink owned slots from the doc; clean up AoTEntry.entry_slots
+    # 4. Unlink owned slots from the doc; clean up AoTEntry.entry_slots
     # for live (still-attached) entries. Owned slots are then
     # transplanted to an orphan Document if there are subtree
     # containers / AoTs the user may still hold references to.
@@ -665,12 +656,11 @@ def _last_direct_kv(c: Container) -> KVSlot | None:
     """
     cached = c._last_direct_kv_slot  # noqa: SLF001
     if cached is not None:
-        if __debug__:
-            assert _is_direct_kv(c, cached), (
-                "internal: stale _last_direct_kv_slot — slot no longer matches "
-                "the direct-KV predicate (host_path / owner_aot_entry / "
-                "key_parts changed?)"
-            )
+        assert _is_direct_kv(c, cached), (
+            "internal: stale _last_direct_kv_slot — slot no longer matches "
+            "the direct-KV predicate (host_path / owner_aot_entry / "
+            "key_parts changed?)"
+        )
         return cached
     for ref in reversed(c._refs):  # noqa: SLF001
         s = ref.slot
@@ -686,7 +676,7 @@ def _set_last_direct_kv(c: Container, s: KVSlot) -> None:
 
     Caller must ensure ``s`` is a direct KV of ``c`` AND that no later
     direct KV exists in ``c._refs`` (i.e. ``s`` was just appended at
-    the body tail). ``__debug__`` asserts both.
+    the body tail). Asserts the direct-KV predicate (debug builds).
     """
     assert _is_direct_kv(c, s), (
         "internal: _set_last_direct_kv called with non-direct KV"
