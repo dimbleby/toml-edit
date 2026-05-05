@@ -348,10 +348,26 @@ def delete_key(c: Container, key: str) -> None:
     # for live (still-attached) entries. Owned slots are then
     # transplanted to an orphan Document if there are subtree
     # containers / AoTs the user may still hold references to.
+    #
+    # Skip the entry_slots strip for AoTEntries that belong to AoTs
+    # being moved to the orphan — those entries are leaving with
+    # their slots, and we want their `entry_slots` lists intact so
+    # downstream `clone_aot` / re-install paths can read the full
+    # CST instead of rebuilding from dict storage.
+    moving_aot_entry_ids: set[int] = set()
+    for ao in subtree_aots:
+        for entry_table in list.__iter__(ao):
+            owner_e = entry_table._owner_aot_entry  # noqa: SLF001
+            if owner_e is not None:
+                moving_aot_entry_ids.add(id(owner_e))
     surviving_aot_entries = _surviving_aot_entries(doc)
     for slot in owned_slots:
         owner = getattr(slot, "owner_aot_entry", None)
-        if owner is not None and id(owner) in surviving_aot_entries:
+        if (
+            owner is not None
+            and id(owner) in surviving_aot_entries
+            and id(owner) not in moving_aot_entry_ids
+        ):
             with contextlib.suppress(ValueError):
                 owner.entry_slots.remove(slot)
         unlink_slot(slot, doc)
@@ -778,9 +794,7 @@ def _append_dotted_kv_under_implicit(c: Container, key: str, value: Value) -> No
             owner.entry_slots.insert(anchor_idx + 1, new_slot)
 
 
-def _synthesise_header_then_insert_kv(
-    c: Container, key: str, value: Value
-) -> None:
+def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> None:
     """Promote a purely-implicit container ``c`` to an explicit section.
 
     Pre-conditions (checked by caller):
@@ -1585,11 +1599,55 @@ def clone_aot_entry(
 
     Returns the new ``Table`` view.
     """
+    from tomlrt._container import Table  # noqa: PLC0415
+
+    assert isinstance(src_entry_table, Table)
+    src_entry = src_entry_table._owner_aot_entry  # noqa: SLF001
+    if src_entry is None:
+        msg = "Source entry has no owning AoTEntry"
+        raise RuntimeError(msg)
+    src_layout_root = src_entry_table._layout_root  # noqa: SLF001
+    return _clone_aot_entry_impl(
+        aot,
+        src_entry,
+        src_layout_root=src_layout_root,
+        src_entry_table=src_entry_table,
+        dst_path=dst_path,
+    )
+
+
+def clone_aot_entry_from(aot: object, src_entry: AoTEntry) -> object:
+    """Like ``clone_aot_entry`` but driven by a bare ``AoTEntry``.
+
+    Used by the AoT private-orphan rehome path where the source entry
+    table has already been reset (so its ``_owner_aot_entry`` /
+    ``_layout_root`` are gone) but the underlying ``AoTEntry``'s
+    ``entry_slots`` are intact in a private orphan document. We
+    deep-clone those slots into a fresh entry under ``aot``,
+    preserving per-KV trivia and any nested sub-section formatting
+    that the lossy ``add_aot_entry(rehome=)`` path would drop.
+    """
+    return _clone_aot_entry_impl(
+        aot,
+        src_entry,
+        src_layout_root=None,
+        src_entry_table=None,
+        dst_path=None,
+    )
+
+
+def _clone_aot_entry_impl(
+    aot: object,
+    src_entry: AoTEntry,
+    *,
+    src_layout_root: object | None,
+    src_entry_table: object | None,  # noqa: ARG001
+    dst_path: tuple[str, ...] | None,
+) -> object:
     from tomlrt._array import AoT  # noqa: PLC0415
     from tomlrt._container import Table  # noqa: PLC0415
 
     assert isinstance(aot, AoT)
-    assert isinstance(src_entry_table, Table)
     parent = aot._parent  # noqa: SLF001
     layout_root = aot._layout_root  # noqa: SLF001
     path = aot._path  # noqa: SLF001
@@ -1599,12 +1657,7 @@ def clone_aot_entry(
     doc = layout_root
     target_path = dst_path if dst_path is not None else path
 
-    src_entry = src_entry_table._owner_aot_entry  # noqa: SLF001
-    if src_entry is None:
-        msg = "Source entry has no owning AoTEntry"
-        raise RuntimeError(msg)
-
-    src_slots = _validate_clonable_aot_entry(src_entry, src_entry_table)
+    src_slots = _validate_clonable_aot_entry(src_entry, None)
     src_prefix = src_entry.path
 
     ordinal = len(aot)
@@ -1622,9 +1675,7 @@ def clone_aot_entry(
     head = cloned_slots[0]
     assert isinstance(head, StructuralHeaderSlot)
     cloned_header: StructuralHeaderSlot = head
-    same_aot_clone = (
-        target_path == src_entry.path and src_entry_table._layout_root is doc  # noqa: SLF001
-    )
+    same_aot_clone = target_path == src_entry.path and src_layout_root is doc
     if ordinal == 0:
         # Strip any structural prefix from the source's first header
         # (it was the source's file preamble or inter-entry separator,

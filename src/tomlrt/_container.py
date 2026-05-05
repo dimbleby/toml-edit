@@ -409,26 +409,40 @@ class Container(dict[str, Any]):
         if isinstance(value, AoT):
             from tomlrt import _layout_ops  # noqa: PLC0415
 
-            # If `value` is already attached to a different LIVE doc,
-            # the contract is to clone — the user's existing reference
-            # must keep working at its original location. Route
-            # through clone_aot which preserves per-entry trivia +
-            # nested sub-sections (the to_list() snapshot path drops
-            # both).
+            # If `value` is attached to a live doc — or to a private
+            # orphan with intact entry_slots (i.e. the user just
+            # deleted its old binding via the structural-overwrite
+            # del+set path) — route through clone_aot to preserve
+            # per-entry trivia + nested sub-sections. The to_list()
+            # snapshot path drops both.
             src_root = value._layout_root  # noqa: SLF001
             if (
-                src_root is not None
-                and not src_root._is_private  # noqa: SLF001
-                and self._layout_root is not None
+                src_root is not None and not src_root._is_private  # noqa: SLF001
             ):
                 if key in self:
                     del self[key]
                 _layout_ops.clone_aot(self, key, value)
                 return
-            # Snapshot existing entry tables (preserving identity);
-            # rehome the AoT object as empty; then reattach each
-            # entry table in place so user references survive.
+            # Snapshot existing entry tables. If their `_owner_aot_entry`
+            # records still hold intact `entry_slots` (e.g. the user
+            # just deleted the old binding via the structural-overwrite
+            # `del+set` path, which preserves slots into a private
+            # orphan), capture them so we can deep-clone the CST into
+            # the rehomed AoT — preserving per-KV trivia, nested
+            # sub-section slots, and inter-entry separator style. The
+            # generic `add_aot_entry(rehome=)` path is lossy: it
+            # rebuilds slots from dict storage and drops all of that.
             existing_entries: list[Table] = list(value)
+            preserved_entries: list[AoTEntry | None] = [
+                et._owner_aot_entry  # noqa: SLF001
+                if et._owner_aot_entry is not None  # noqa: SLF001
+                and et._owner_aot_entry.entry_slots  # noqa: SLF001
+                else None
+                for et in existing_entries
+            ]
+            can_clone = preserved_entries and all(
+                e is not None for e in preserved_entries
+            )
             for et in existing_entries:
                 _reset_table_for_rehome(et)
             list.clear(value)
@@ -437,8 +451,18 @@ class Container(dict[str, Any]):
             value._path = ()  # noqa: SLF001
             attached = _layout_ops.attach_empty_aot(self, key, value)
             dict.__setitem__(self, key, attached)
-            for entry_table in existing_entries:
-                _layout_ops.add_aot_entry(value, None, rehome=entry_table)
+            if can_clone:
+                # Deep-clone CST from intact orphan slots. Sacrifices
+                # per-entry-table Python identity (the rehomed AoT
+                # will hold fresh entry tables) in exchange for
+                # trivia preservation. AoT object identity is still
+                # preserved.
+                for src_entry in preserved_entries:
+                    assert src_entry is not None
+                    _layout_ops.clone_aot_entry_from(value, src_entry)
+            else:
+                for entry_table in existing_entries:
+                    _layout_ops.add_aot_entry(value, None, rehome=entry_table)
             return
         if isinstance(value, Container) and not value._inline:  # noqa: SLF001
             # Section-flavoured Table — synthesise [path] header.

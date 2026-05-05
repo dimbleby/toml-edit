@@ -447,10 +447,12 @@ class Array(list[Any]):
                 ),
                 None,
             )
-            opens_with_comment = first_nonws is not None and isinstance(
-                old_leading_pieces[first_nonws], CommentNode
-            ) and not any(
-                isinstance(p, NewlineNode) for p in old_leading_pieces[:first_nonws]
+            opens_with_comment = (
+                first_nonws is not None
+                and isinstance(old_leading_pieces[first_nonws], CommentNode)
+                and not any(
+                    isinstance(p, NewlineNode) for p in old_leading_pieces[:first_nonws]
+                )
             )
             if opens_with_comment:
                 adopted = Trivia(pieces=old_leading_pieces)
