@@ -60,6 +60,7 @@ if TYPE_CHECKING:
 
     from tomlrt._slots import AoTEntry, Slot, SlotRef
     from tomlrt._values import (
+        DateLikeKind,
         Value,
     )
 
@@ -1108,7 +1109,7 @@ class Table(Container):
         t._inline = True
         if body is not None:
             for k, v in body.items():
-                _k: Any = k
+                _k: object = k
                 if not isinstance(_k, str):
                     msg = f"inline-table key must be str, got {type(_k).__name__}"
                     raise TypeError(msg)
@@ -1545,7 +1546,7 @@ def _basic_string_lexeme(v: str) -> str:
     return "".join(out)
 
 
-def _dt_kind(v: object) -> Any:
+def _dt_kind(v: object) -> DateLikeKind:
     assert isinstance(v, datetime)
     return "offset-datetime" if v.tzinfo is not None else "local-datetime"
 
