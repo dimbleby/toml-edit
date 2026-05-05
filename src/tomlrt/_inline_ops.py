@@ -37,8 +37,6 @@ if TYPE_CHECKING:
     from tomlrt._values import InlineTableValue, Value
 
 
-
-
 def _outermost_inline(t: Container) -> Container:
     """Walk up `_parent` until reaching the inline table that owns `_value`."""
     cur = t
@@ -85,10 +83,6 @@ def _find_prefix_entries(iv: InlineTableValue, key_path: tuple[str, ...]) -> lis
 def _is_ws_only(trivia: Trivia) -> bool:
     """True iff trivia contains no comments (whitespace + newlines OK)."""
     return not any(isinstance(p, CommentNode) for p in trivia.pieces)
-
-
-
-
 
 
 def _ws(text: str) -> Trivia:

@@ -199,9 +199,7 @@ class Container(dict[str, Any]):
         """Like `aot(key)` but returns ``default`` if the key is missing."""
         return self._typed_entry_or(key, AoT, "an AoT", default)
 
-    def _typed_entry(
-        self, key: str | Sequence[str], cls: type[_T], label: str
-    ) -> _T:
+    def _typed_entry(self, key: str | Sequence[str], cls: type[_T], label: str) -> _T:
         v = self.entry(key)
         if not isinstance(v, cls):
             msg = f"value at {key!r} is {type(v).__name__}, not {label}"
@@ -1210,8 +1208,6 @@ class Document(Container):
         return loads(self.render())
 
 
-
-
 def _inline_value_has_inner_comments(v: object) -> bool:
     """Return True iff the inline-table value carries inner comments.
 
@@ -1353,9 +1349,7 @@ def _install_attached_subtree(
     direct_kvs: list[tuple[str, Any]] = []
     structural: list[tuple[str, Any]] = []
     for k, v in src_table.items():
-        if isinstance(v, AoT) or (
-            _is_section(v)
-        ):
+        if isinstance(v, AoT) or (_is_section(v)):
             structural.append((k, v))
         else:
             direct_kvs.append((k, v))
@@ -1629,12 +1623,9 @@ def _synth_value(
     # user's reference stays the document's view. Detached inline tables
     # (sitting in a private root after a prior overwrite) are also
     # treated as unattached.
-    if (
-        _is_inline_table(v)
-        and (
-            v._layout_root is None  # noqa: SLF001
-            or v._layout_root._is_private  # noqa: SLF001
-        )
+    if _is_inline_table(v) and (
+        v._layout_root is None  # noqa: SLF001
+        or v._layout_root._is_private  # noqa: SLF001
     ):
         if v._layout_root is not None:  # noqa: SLF001
             _reset_inline_for_rehome(v)

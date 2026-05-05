@@ -590,9 +590,7 @@ class Array(list[Any]):
         # policy reflects the original last item.
         style = self._style()
         had_leading = bool(items) and bool(items[0].leading.pieces)
-        leading_first = (
-            clone_trivia(items[0].leading) if had_leading else Trivia()
-        )
+        leading_first = clone_trivia(items[0].leading) if had_leading else Trivia()
         # Snapshot terminal item's trailing for tail-pad migration: if
         # the delete includes the original last item and final_trivia
         # is empty, migrate that trailing into final_trivia so the new
@@ -603,9 +601,7 @@ class Array(list[Any]):
             and bool(items[last_idx].trailing.pieces)
             and not self._value.final_trivia.pieces
         )
-        tail_pad = (
-            clone_trivia(items[last_idx].trailing) if had_tail_pad else Trivia()
-        )
+        tail_pad = clone_trivia(items[last_idx].trailing) if had_tail_pad else Trivia()
         if isinstance(key, slice):
             removed_indices = range(*key.indices(len(items)))
             tail_was_removed = last_idx in removed_indices
@@ -787,10 +783,6 @@ def _detect_style(value: ArrayValue | None, *, multiline_flag: bool) -> _ArraySt
     )
 
 
-
-
-
-
 def _has_ws_after_last_newline(trivia: Trivia) -> bool:
     pieces = trivia.pieces
     last_nl = -1
@@ -800,8 +792,6 @@ def _has_ws_after_last_newline(trivia: Trivia) -> bool:
     if last_nl < 0:
         return False
     return last_nl + 1 < len(pieces) and isinstance(pieces[last_nl + 1], WhitespaceNode)
-
-
 
 
 def _first_indent_after_newline(trivia: Trivia) -> str:

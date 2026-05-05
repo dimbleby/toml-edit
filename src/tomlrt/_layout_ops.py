@@ -54,8 +54,6 @@ if TYPE_CHECKING:
     from tomlrt._values import Value
 
 
-
-
 # ---------------------------------------------------------------------------
 # Pure linked-list ops
 # ---------------------------------------------------------------------------
@@ -720,8 +718,6 @@ def _build_kv_slot(c: Container, key: str, value: Value, doc: Document) -> KVSlo
     )
 
 
-
-
 def _append_dotted_kv_under_implicit(c: Container, key: str, value: Value) -> None:
     """Insert into an implicit-headerless container via dotted KV.
 
@@ -1098,13 +1094,9 @@ def _recompute_body_tail(c: Container) -> Slot | None:
     return None
 
 
-
-
 # ---------------------------------------------------------------------------
 # Structural attach — section / AoT synthesis
 # ---------------------------------------------------------------------------
-
-
 
 
 def _new_section_header(
