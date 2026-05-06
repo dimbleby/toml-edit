@@ -2416,16 +2416,26 @@ def _remove_owned_refs(
     """
     if c._inline:  # noqa: SLF001
         return False
-    to_remove: list[SlotRef] = []
+    to_remove_ids: set[int] = set()
     empty_buckets: list[str] = []
     for lk in candidate_keys:
         bucket = c._index.get(lk)  # noqa: SLF001
         if bucket is None:
             continue
-        kept = [r for r in bucket if id(r.slot) not in owned_ids]
-        if len(kept) == len(bucket):
+        # Single-pass partition: derive `kept` and the doomed-ref
+        # ids in one walk; iterating the bucket twice doubles a
+        # cost that already dominates AoT pop on large documents.
+        kept: list[SlotRef] = []
+        local_doomed: list[SlotRef] = []
+        for r in bucket:
+            if id(r.slot) in owned_ids:
+                local_doomed.append(r)
+            else:
+                kept.append(r)
+        if not local_doomed:
             continue
-        to_remove.extend(r for r in bucket if id(r.slot) in owned_ids)
+        for r in local_doomed:
+            to_remove_ids.add(id(r))
         if kept:
             c._index[lk] = kept  # noqa: SLF001
         else:
@@ -2435,21 +2445,12 @@ def _remove_owned_refs(
     # Own-header ref (local_key=None, not in _index): drop if owned.
     header_ref = c._header_ref  # noqa: SLF001
     if header_ref is not None and id(header_ref.slot) in owned_ids:
-        to_remove.append(header_ref)
+        to_remove_ids.add(id(header_ref))
         c._header_ref = None  # noqa: SLF001
-    if not to_remove:
+    if not to_remove_ids:
         return False
     refs = c._refs  # noqa: SLF001
-    if len(to_remove) == len(refs):
-        c._refs = []  # noqa: SLF001
-    elif len(to_remove) * 8 < len(refs):
-        # A few removals from a large list — list.remove is a C
-        # loop and beats rebuilding the whole list in Python.
-        for r in to_remove:
-            refs.remove(r)
-    else:
-        removed_ids = {id(r) for r in to_remove}
-        c._refs = [r for r in refs if id(r) not in removed_ids]  # noqa: SLF001
+    c._refs = [r for r in refs if id(r) not in to_remove_ids]  # noqa: SLF001
     return True
 
 

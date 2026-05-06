@@ -355,9 +355,24 @@ class Array(list[Any]):
         if i < 0 or i >= n:
             msg = "pop index out of range"
             raise IndexError(msg)
+        items = self._value.items
+        item = items[i]
+        # Fast path: when the popped item carries no own-trivia
+        # comments, no neighbouring item's comments depend on it
+        # (a comment "above" the next item would be parked in
+        # items[i].post_comma_trivia, which we just checked).
+        # __delitem__ already handles bracket-pad and tail-pad
+        # migration and skips the O(N) snapshot/clear/apply.
+        if not (
+            trivia_has_comment(item.leading)
+            or trivia_has_comment(item.trailing)
+            or trivia_has_comment(item.post_comma_trivia)
+        ):
+            decoded = self[i]
+            del self[i]
+            return decoded
         leadings, eols = snapshot_comments(self)
         decoded = list.pop(self, i)
-        items = self._value.items
         style = self._style()
 
         trailing_has_comment = any(
@@ -581,11 +596,9 @@ class Array(list[Any]):
     @override
     def __delitem__(self, index: SupportsIndex | slice) -> None:
         items = self._value.items
-        # Snapshot bracket padding + style before mutation so a delete
-        # at index 0 doesn't strip the leading-bracket padding (which
-        # was owned by the original items[0]) and so trailing-comma
-        # policy reflects the original last item.
-        style = self._style()
+        # Snapshot bracket padding before mutation so a delete at
+        # index 0 doesn't strip the leading-bracket padding (which
+        # was owned by the original items[0]).
         had_leading = bool(items) and bool(items[0].leading.pieces)
         leading_first = clone_trivia(items[0].leading) if had_leading else Trivia()
         # Snapshot terminal item's trailing for tail-pad migration: if
@@ -607,6 +620,26 @@ class Array(list[Any]):
             if i < 0:
                 i += len(items)
             tail_was_removed = i == last_idx
+        # When we'll re-stamp a new terminal after removing the old
+        # one, snapshot the original terminal's has_comma and
+        # post_comma_trivia directly. _flip_to_terminal only needs
+        # `style.trailing_comma` and `style.trailing_post` — both
+        # derive solely from items[-1] — so we can skip the O(N)
+        # `_style()` scan that would otherwise dominate pop(-1).
+        new_terminal_has_comma = False
+        new_terminal_post: Trivia = Trivia()
+        if tail_was_removed and len(items) >= 2:
+            orig_terminal = items[last_idx]
+            new_terminal_has_comma = orig_terminal.has_comma
+            if orig_terminal.has_comma:
+                is_multiline = (
+                    self._multiline
+                    or trivia_has_newline(orig_terminal.post_comma_trivia)
+                    or trivia_has_newline(self._value.final_trivia)
+                )
+                new_terminal_post = _structural_trailing_post(
+                    orig_terminal.post_comma_trivia, multiline=is_multiline
+                )
         del items[index]
         list.__delitem__(self, index)
         if items:
@@ -614,7 +647,13 @@ class Array(list[Any]):
                 items[0].leading = leading_first
             if had_tail_pad and tail_was_removed:
                 self._value.final_trivia = tail_pad
-            _flip_to_terminal(items[-1], style)
+            if tail_was_removed:
+                items[-1].has_comma = new_terminal_has_comma
+                items[-1].post_comma_trivia = (
+                    clone_trivia(new_terminal_post)
+                    if new_terminal_has_comma
+                    else Trivia()
+                )
         elif had_tail_pad and tail_was_removed:
             self._value.final_trivia = tail_pad
 
@@ -914,6 +953,27 @@ def _flip_to_terminal(item: ArrayItem, style: _ArrayStyle) -> None:
     item.post_comma_trivia = (
         clone_trivia(style.trailing_post) if style.trailing_comma else Trivia()
     )
+
+
+def _structural_trailing_post(tp: Trivia, *, multiline: bool) -> Trivia:
+    """Extract the structural trailing-post from a comma-terminated item.
+
+    Mirrors `_detect_style`'s trailing_post computation but operates on
+    a single ``post_comma_trivia`` so callers don't have to scan the
+    whole array. In a multiline layout, drops any pre-newline comment
+    block (which conceptually belonged to the popped item's row) and
+    keeps the structural newline + bracket-pad indent.
+    """
+    if not multiline:
+        return clone_trivia(tp)
+    pieces_list = list(tp.pieces)
+    last_nl = -1
+    for j, p in enumerate(pieces_list):
+        if isinstance(p, NewlineNode):
+            last_nl = j
+    if last_nl >= 0:
+        return Trivia(list(pieces_list[last_nl:]))
+    return clone_trivia(tp)
 
 
 def _value_has_any_comment(val: Value) -> bool:
