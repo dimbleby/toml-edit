@@ -29,7 +29,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from tomlrt._trivia import CommentNode, Trivia, WhitespaceNode, clone_trivia
+from tomlrt._trivia import (
+    Trivia,
+    WhitespaceNode,
+    clone_trivia,
+    split_above_block,
+    trivia_has_comment,
+)
 from tomlrt._values import InlineTableEntry, make_keyparts
 
 if TYPE_CHECKING:
@@ -78,11 +84,6 @@ def _find_prefix_entries(iv: InlineTableValue, key_path: tuple[str, ...]) -> lis
         if len(kp) > n and kp[:n] == key_path:
             out.append(i)
     return out
-
-
-def _is_ws_only(trivia: Trivia) -> bool:
-    """True iff trivia contains no comments (whitespace + newlines OK)."""
-    return not any(isinstance(p, CommentNode) for p in trivia.pieces)
 
 
 def _ws(text: str) -> Trivia:
@@ -151,17 +152,19 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
         iv.entries.append(new_entry)
         return
 
-    # Inter-entry separator from entries[1].leading (canonical model);
-    # falls back to " " for a single-entry table.
+    # Inter-entry separator: structural pad portion of entries[1].leading
+    # (mirrors :func:`_array._detect_style`). Cloning the full leading
+    # would replicate any above-entry comment block onto the new entry.
     if len(iv.entries) >= 2:
-        inter_sep = clone_trivia(iv.entries[1].leading)
+        pad, _above = split_above_block(iv.entries[1].leading)
+        inter_sep = pad if pad.pieces else clone_trivia(iv.entries[1].leading)
     else:
         inter_sep = _ws(" ")
 
     last = iv.entries[-1]
     keep_trailing_comma = last.has_comma
     if not last.has_comma:
-        if not _is_ws_only(last.trailing):
+        if trivia_has_comment(last.trailing):
             # Trailing carries a comment / newline — leave it where the
             # user put it; default the inter_sep to a single space.
             inter_sep = _ws(" ")

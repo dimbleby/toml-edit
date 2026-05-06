@@ -422,6 +422,31 @@ def test_multiline_inline_table_insert_preserves_layout() -> None:
         """)
 
 
+def test_multiline_inline_table_insert_does_not_duplicate_above_comment() -> None:
+    """The above-entry comment block must stay attached to its entry.
+
+    A naive inter-separator that clones ``entries[1].leading`` whole
+    would replicate the comment block onto the appended entry.
+    """
+    src = td("""
+        x = {
+          a = 1,
+          # above b
+          b = 2,
+        }
+        """)
+    doc = tomlrt.loads(src)
+    doc.table("x")["c"] = 3
+    assert tomlrt.dumps(doc) == td("""
+        x = {
+          a = 1,
+          # above b
+          b = 2,
+          c = 3,
+        }
+        """)
+
+
 # ---------------------------------------------------------------------------
 # A7: blank line before the first ``[table]`` when inserting into the
 # implicit pre-header section.
