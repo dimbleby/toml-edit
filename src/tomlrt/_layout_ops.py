@@ -2377,6 +2377,55 @@ def _last_aot_slot(aot: AoT) -> Slot | None:
     return None
 
 
+def unfile_ref(ref: SlotRef) -> None:
+    """Remove ``ref`` from its container's ``_refs``/``_index`` and from ``slot._refs``.
+
+    Fast tail-case: if ``ref`` is at the end of the relevant list,
+    ``list.pop()`` is O(1); otherwise C-level ``list.remove(specific)``
+    is O(N) but at C speed (no Python-level partition).
+
+    Also clears ``container._header_ref`` if the ref was the
+    container's own-header ref.
+    """
+    c = ref.container
+    if not c._inline:  # noqa: SLF001
+        refs = c._refs  # noqa: SLF001
+        if refs and refs[-1] is ref:
+            refs.pop()
+        else:
+            refs.remove(ref)
+        local_key = ref.local_key
+        if local_key is not None:
+            bucket = c._index.get(local_key)  # noqa: SLF001
+            if bucket is not None:
+                if bucket[-1] is ref:
+                    bucket.pop()
+                else:
+                    bucket.remove(ref)
+                if not bucket:
+                    del c._index[local_key]  # noqa: SLF001
+        elif c._header_ref is ref:  # noqa: SLF001
+            c._header_ref = None  # noqa: SLF001
+    slot_refs = ref.slot._refs  # noqa: SLF001
+    if slot_refs and slot_refs[-1] is ref:
+        slot_refs.pop()
+    else:
+        slot_refs.remove(ref)
+
+
+def _scrub_owned_slots_via_backptrs(owned: Iterable[Slot]) -> None:
+    """Remove every live ref to each slot in ``owned`` via slot back-pointers.
+
+    Walks ``slot._refs`` directly (length ≤ path depth, bounded
+    independent of doc size) instead of scanning ancestor containers'
+    ``_index``/``_refs`` lists.
+    """
+    for s in owned:
+        # Snapshot — unfile_ref mutates slot._refs.
+        for ref in list(s._refs):  # noqa: SLF001
+            unfile_ref(ref)
+
+
 def _candidate_keys_for(c: Container, owned: set[Slot]) -> set[str]:
     """Local-keys in ``c._index`` that may hold refs to slots in ``owned``."""
     plen = len(c._path)  # noqa: SLF001
@@ -2545,6 +2594,7 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
     owned_per_entry: list[list[Slot]] = []
     snapshots: list[Table] = []
     union_owned: set[Slot] = set()
+    union_owned_ordered: list[Slot] = []  # in doc-stream order
 
     def _collect_nested_aot_slots(c: Container, sink: list[Slot]) -> None:
         for v in c.values():
@@ -2572,7 +2622,9 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
                 continue
             seen.add(id(s))
             deduped.append(s)
-            union_owned.add(s)
+            if s not in union_owned:
+                union_owned.add(s)
+                union_owned_ordered.append(s)
         owned_per_entry.append(deduped)
 
         snapshot = Table()
@@ -2580,23 +2632,26 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
             dict.__setitem__(snapshot, k, v)
         snapshots.append(snapshot)
 
-    # Single ancestor-chain scrub with the union of every popped
-    # entry's owned slots. This is the asymptotic win: the ancestor
-    # chain (typically just `parent` for top-level AoT) is walked
-    # once per call instead of once per popped entry.
+    # Slot-driven scrub via back-pointers, in REVERSE doc-stream
+    # order so each unfile_ref hits the tail-fast-path of every
+    # affected `_refs` / `_index[k]` list. This is what makes the
+    # batched case (clear / slice-delete) linear: a parent bucket
+    # of N AoT-entry binding refs is emptied tail-pop by tail-pop
+    # at C-speed O(1) each, rather than middle-of-bucket
+    # O(N) C-removes.
+    _scrub_owned_slots_via_backptrs(reversed(union_owned_ordered))
+
+    # Body-tail invalidation: clear any `_body_tail` on the parent
+    # chain that points into the popped slot set. Stale tails are
+    # otherwise recomputed lazily, but check explicitly so that
+    # callers iterating right after a pop get a correct anchor.
     cur: Container | None = parent
     while cur is not None:
-        _scrub_container_refs(cur, union_owned)
+        if cur._body_tail is not None and cur._body_tail in union_owned:  # noqa: SLF001
+            cur._body_tail = None  # noqa: SLF001
         cur = cur._parent  # noqa: SLF001
 
-    # Per-entry recursion is required: each entry's subtree may have
-    # its own internal refs. Subtrees are disjoint so this is O(total
-    # popped subtree size). Pass each entry's own slot set (NOT the
-    # union) — `_candidate_keys_for` is O(slots-in-set) and using the
-    # union would re-introduce O(N²) on bulk delete.
-    for i, owned in zip(idx_list, owned_per_entry, strict=True):
-        owned_set: set[Slot] = set(owned)
-        _scrub_refs_to_owned_slots(aot[i], owned_set)
+    for owned in owned_per_entry:
         # Unlink in reverse order so the entry's leftmost slot (the
         # ``[[a]]`` header) goes last — see remove_aot_entry's
         # original comment for the trivia-promotion hazard.

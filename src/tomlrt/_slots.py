@@ -11,8 +11,9 @@ slots. Three slot kinds:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal
+import copy
+from dataclasses import dataclass, field, fields
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from tomlrt._container import Container
@@ -68,6 +69,37 @@ class Slot:
     Set on every slot regardless of kind so the field is uniformly
     typed at the base; both subclasses preserve `None` defaults.
     """
+
+    _refs: list[SlotRef] = field(default_factory=list, repr=False, compare=False)
+    """Back-pointers from this slot to every `SlotRef` that references it.
+
+    Bounded length (≤ path depth + 1). Used by AoT removal to scrub
+    refs in O(depth) per slot instead of O(siblings) per container.
+    Maintained by `SlotRef.__post_init__` (registers) and
+    `unfile_ref` (unregisters).
+    """
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> Slot:
+        """Deep-copy without following ``_refs``/``_prev``/``_next``.
+
+        Cloned slots start with a fresh empty ``_refs`` (callers
+        construct new ``SlotRef``s pointing at the clone) and
+        unlinked from any doc-stream chain (callers splice them in).
+        Following ``_prev``/``_next`` would otherwise drag the entire
+        source document into the deepcopy.
+        """
+        cls = type(self)
+        new = cls.__new__(cls)
+        memo[id(self)] = new
+        for f in fields(self):
+            name = f.name
+            if name == "_refs":
+                new._refs = []  # noqa: SLF001
+            elif name in ("_prev", "_next"):
+                setattr(new, name, None)
+            else:
+                setattr(new, name, copy.deepcopy(getattr(self, name), memo))
+        return new
 
     def render(self) -> str:  # pragma: no cover - overridden
         raise NotImplementedError
@@ -187,6 +219,12 @@ class SlotRef:
 
     slot: Slot
     container: Container
+
+    def __post_init__(self) -> None:
+        # Register on the slot's back-pointer list so AoT removal
+        # can scrub all containers holding refs to a doomed slot
+        # without scanning the slot's ancestors.
+        self.slot._refs.append(self)  # noqa: SLF001
 
     @property
     def local_key(self) -> str | None:
