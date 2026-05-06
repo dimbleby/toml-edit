@@ -724,8 +724,18 @@ def _detect_style(value: ArrayValue | None, *, multiline_flag: bool) -> _ArraySt
             trailing_post=Trivia(),
         )
     items = value.items
-    has_newline = any(trivia_has_newline(it.post_comma_trivia) for it in items) or (
-        trivia_has_newline(value.final_trivia)
+    # Local has_newline probe: in a uniformly-laid-out array (the
+    # parsed norm) every item's post_comma_trivia carries the same
+    # shape, so checking the head + tail items + final_trivia is
+    # sufficient — the same reasoning that lets `__delitem__` derive
+    # is_multiline from items[-1] alone. Avoids an O(N) per-call scan
+    # over the whole array on every append/insert.
+    has_newline = trivia_has_newline(value.final_trivia) or (
+        bool(items)
+        and (
+            trivia_has_newline(items[0].post_comma_trivia)
+            or trivia_has_newline(items[-1].post_comma_trivia)
+        )
     )
     is_multiline = has_newline or multiline_flag
     # Inter-item separator: first internal item's post_comma_trivia.
