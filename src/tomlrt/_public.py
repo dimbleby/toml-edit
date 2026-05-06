@@ -2,49 +2,20 @@
 
 from __future__ import annotations
 
-import warnings
-from typing import IO, TYPE_CHECKING, Any
+from typing import IO, TYPE_CHECKING
 
-from tomlrt._document import Document
+from tomlrt._build import build_from_parse
 from tomlrt._parser import _Parser
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
-
-def document(data: Mapping[str, Any] | None = None) -> Document:
-    """Deprecated alias for [`Document`][tomlrt.Document].
-
-    Use ``Document(data)`` instead. This wrapper is retained for
-    backwards compatibility and will be removed in a future release.
-    """
-    warnings.warn(
-        "tomlrt.document() is deprecated; use tomlrt.Document() instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return Document(data)
+    from tomlrt._container import Document
 
 
 def loads(text: str) -> Document:
     """Parse a TOML document string into a [`Document`][tomlrt.Document]."""
     parser = _Parser(text)
-    cst = parser.parse()
-    return Document._from_node(cst, newline=parser.detected_newline())  # noqa: SLF001
-
-
-def parse(text: str) -> Document:
-    """Deprecated alias for [`loads`][tomlrt.loads].
-
-    Use ``tomlrt.loads(text)`` instead. This wrapper is retained for
-    backwards compatibility and will be removed in a future release.
-    """
-    warnings.warn(
-        "tomlrt.parse() is deprecated; use tomlrt.loads() instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return loads(text)
+    result = parser.parse()
+    return build_from_parse(result)
 
 
 def load(fp: IO[bytes]) -> Document:
@@ -75,4 +46,4 @@ def dump(doc: Document, fp: IO[bytes]) -> None:
     fp.write(dumps(doc).encode("utf-8"))
 
 
-__all__ = ["document", "dump", "dumps", "load", "loads", "parse"]
+__all__ = ["dump", "dumps", "load", "loads"]

@@ -386,6 +386,124 @@ def test_aot_entry_install_subsection_does_not_overwrite_sibling() -> None:
     assert tomlrt.dumps(tomlrt.loads(out)) == out
 
 
+def test_root_section_after_aot_does_not_split_entry_body() -> None:
+    """Regression: adding a root [metadata] section after an AoT used to
+    splice the new header *between* the [[package]] header and its body
+    KVs, because _parent_subtree_tail bailed at the AoT-entry-owned body."""
+    doc = tomlrt.loads("")
+    doc["package"] = tomlrt.AoT()
+    doc["package"].add({"name": "poetry-core", "version": "2.2.1"})
+    doc["metadata"] = tomlrt.Table.section({"lock-version": "2.1"})
+    out = tomlrt.dumps(doc)
+    assert out == (
+        "[[package]]\n"
+        'name = "poetry-core"\n'
+        'version = "2.2.1"\n\n'
+        "[metadata]\n"
+        'lock-version = "2.1"\n'
+    )
+    assert tomlrt.dumps(tomlrt.loads(out)) == out
+
+
+def test_root_section_after_multi_entry_aot() -> None:
+    """The walk to parent's subtree tail must traverse multiple AoT entry
+    owners and land after the *last* entry's body."""
+    doc = tomlrt.loads("[[package]]\nname='a'\n\n[[package]]\nname='b'\n")
+    doc["metadata"] = tomlrt.Table.section({"v": 1})
+    out = tomlrt.dumps(doc)
+    assert "[metadata]" in out
+    assert out.index("[metadata]") > out.index("name='b'")
+    assert tomlrt.dumps(tomlrt.loads(out)) == out
+
+
+def test_clone_section_into_aot_entry_with_sibling_entry() -> None:
+    """Guard against the lax fix: when parent is entry 0 of [[a]] and
+    entry 1 exists, the new sub-section must land between the two
+    entries — not after entry 1."""
+    src = tomlrt.loads("[src]\nz = 3\n")
+    doc = tomlrt.loads("[[a]]\nx = 1\n\n[[a]]\ny = 2\n")
+    doc["a"][0]["child"] = src["src"]
+    out = tomlrt.dumps(doc)
+    assert out == ("[[a]]\nx = 1\n\n[a.child]\nz = 3\n\n[[a]]\ny = 2\n")
+    assert tomlrt.dumps(tomlrt.loads(out)) == out
+
+
+def test_subsection_into_aot_entry_with_nested_sub_aot() -> None:
+    """Strict-descendant rule: when entry 0 already has a nested [[a.b]]
+    sub-AoT, a new [a.child] under entry 0 must not split the nested
+    AoT header from its body."""
+    doc = tomlrt.loads("[[a]]\nx = 1\n\n[[a.b]]\ny = 2\n")
+    doc["a"][0]["child"] = tomlrt.Table.section({"z": 3})
+    out = tomlrt.dumps(doc)
+    # Whatever the chosen ordering, [a.child] must NOT land between
+    # [[a.b]] and its body.
+    parsed = tomlrt.loads(out)
+    assert parsed["a"][0]["b"][0]["y"] == 2
+    assert parsed["a"][0]["child"]["z"] == 3
+    assert tomlrt.dumps(parsed) == out
+
+
+def test_ensure_table_multi_component_anchors_under_parent() -> None:
+    """Regression: ensure_table with a multi-component path used to splice
+    the new [tool.a.b] header at end-of-doc (after unrelated [other])
+    instead of within [tool]'s subtree."""
+    doc = tomlrt.loads("[tool]\nx = 1\n\n[other]\ny = 1\n")
+    doc.ensure_table(("tool", "a", "b"))
+    out = tomlrt.dumps(doc)
+    assert out.index("[tool.a.b]") < out.index("[other]")
+    assert tomlrt.dumps(tomlrt.loads(out)) == out
+
+
+def test_cross_doc_update_preserves_dotted_super_table() -> None:
+    """Regression: copying a dotted-header table (e.g. [tool.poetry]) from
+    one Document into another via Document.update or per-key assignment
+    used to insert a spurious empty [tool] super-table header before the
+    [tool.poetry] header."""
+    src = tomlrt.loads("[tool.poetry]\npackages = []\n")
+
+    dst1 = tomlrt.loads("")
+    dst1.update(src)
+    out1 = tomlrt.dumps(dst1)
+    assert "[tool]\n" not in out1
+    assert "[tool.poetry]" in out1
+
+    dst2 = tomlrt.loads("")
+    for k, v in src.items():
+        dst2[k] = v
+    out2 = tomlrt.dumps(dst2)
+    assert "[tool]\n" not in out2
+    assert "[tool.poetry]" in out2
+
+
+def test_cross_doc_array_assignment_preserves_multiline_layout() -> None:
+    """Regression: assigning an attached Array from one Document to a key
+    in another used to re-synthesise it as a single-line ``[a, b]`` blob,
+    losing the source's multi-line layout. The CST is now deep-cloned so
+    the destination keeps the source's whitespace, trailing-comma style,
+    and any embedded comments."""
+    src = tomlrt.loads(
+        '[project]\ndependencies = [\n    "foo>=2.0",\n    "bar>=1.0",\n]\n'
+    )
+    dst = tomlrt.loads('[project]\ndependencies = ["x"]\n')
+    dst["project"]["dependencies"] = src["project"]["dependencies"]
+    assert (
+        tomlrt.dumps(dst)
+        == '[project]\ndependencies = [\n    "foo>=2.0",\n    "bar>=1.0",\n]\n'
+    )
+    # Source is independent of subsequent destination mutation.
+    dst["project"]["dependencies"].remove("foo>=2.0")
+    assert "foo>=2.0" in tomlrt.dumps(src)
+
+
+def test_cross_doc_inline_table_assignment_preserves_spacing() -> None:
+    """Regression: cross-doc inline-table assignment lost embedded
+    spacing (e.g. double-space between entries)."""
+    src = tomlrt.loads('owner = { name = "tom",  dob = 1979 }\n')
+    dst = tomlrt.loads("owner = { x = 1 }\n")
+    dst["owner"] = src["owner"]
+    assert tomlrt.dumps(dst) == 'owner = { name = "tom",  dob = 1979 }\n'
+
+
 # ---------------------------------------------------------------------------
 # Inline tables and arrays — round-trip edits
 # ---------------------------------------------------------------------------
@@ -476,12 +594,7 @@ def test_cross_doc_array_assign_deep_clones() -> None:
 
 
 def test_cross_doc_table_assign_with_nested_aot() -> None:
-    """Cross-doc copy of a section that contains an AoT in its subtree.
-
-    Regression: previously the inline-table synthesiser bailed out with a
-    confusing "Cannot store an array-of-tables as an inline value" error,
-    even though the caller *was* assigning at the table-key level.
-    """
+    """Cross-doc copy of a section that contains an AoT in its subtree."""
     src = (
         '[project]\nname = "foo"\n\n'
         '[[tool.poetry.source]]\nname = "pypi"\n'
@@ -595,14 +708,7 @@ def test_cross_doc_table_assign_merges_dotted_and_own_section() -> None:
 
 
 def test_self_overlap_assign_replaces_with_child_block() -> None:
-    """``doc[k] = doc[k]["child"]`` lifts the child to a ``[k]`` block.
-
-    Regression: previously ``__setitem__`` cascaded a detach through
-    ``old``'s subtree before ``_set_value`` ran, clearing
-    ``value._attached`` on the in-flight value and dropping it through
-    the inline-table synth path. With a nested AoT in the subtree this
-    crashed; otherwise the section silently flattened to ``a = { ... }``.
-    """
+    """``doc[k] = doc[k]["child"]`` lifts the child to a ``[k]`` block."""
     doc = tomlrt.loads(
         td("""
         [a]
@@ -896,14 +1002,8 @@ def test_chained_supertable_assignment_drops_empty_parent() -> None:
 
 
 def test_subsection_under_non_last_aot_entry_lands_in_owned_range() -> None:
-    """``aot[i][k] = Table.section(...)`` lands inside entry ``i``'s range.
-
-    Previously the new ``[aot.k]`` section was appended after the last
-    sibling sharing the parent prefix, which for a non-last AoT entry
-    meant it landed past every later entry — silently re-attributing
-    on round-trip and producing duplicate header data corruption when
-    multiple entries had the same sub-table key set.
-    """
+    """``aot[i][k] = Table.section(...)`` lands inside entry ``i``'s range,
+    not after the last sibling sharing the parent prefix."""
     doc = Document()
     doc["package"] = AoT([{"n": "a"}, {"n": "b"}, {"n": "c"}])
     doc["package"][0]["source"] = Table.section({"x": 1})
@@ -998,9 +1098,7 @@ def test_self_assignment_is_a_noop() -> None:
     """``doc[k] = doc[k]`` does not mutate the document or detach the view.
 
     Plain Python dict semantics: re-binding a key to its own current
-    value is a no-op. tomlrt previously tore down the value's CST
-    backing (via ``old._detach()``) and rebuilt it, which both lost
-    formatting and silently invalidated any held reference.
+    value is a no-op.
     """
     doc = tomlrt.loads(
         td("""
@@ -1088,11 +1186,6 @@ def test_section_replace_preserves_position_for_implicit_parent() -> None:
 def test_aot_assign_purges_implicit_supertable_aot_subtree() -> None:
     """Assigning an AoT to a key that names an implicit super-table
     over an existing ``[[a.b]]`` block must purge the old subtree.
-
-    Previously ``_classify`` returned ``"absent"`` for the implicit
-    parent above an AoT, so ``_prepare_section_slot`` skipped the purge
-    and the source ``[[a.b]]`` sections leaked into the result, where
-    they were silently re-attributed as a child of the new last entry.
     """
     src = tomlrt.loads(
         td("""
@@ -2611,9 +2704,9 @@ def test_aot_insert_on_empty_doc_migrates_preamble() -> None:
 
 
 def test_promote_array_preserves_source_kv_leading_and_trailing() -> None:
-    """``promote_array`` previously dropped the inline KV's leading
-    comments / blank lines and trailing EOL comment. Carry them over
-    onto the first new ``[[..]]`` header and the last entry's tail.
+    """``promote_array`` carries the inline KV's leading comments /
+    blank lines onto the first new ``[[..]]`` header, and its trailing
+    EOL comment onto the last entry's tail.
     """
     src = td("""
         # header comment
@@ -2629,10 +2722,9 @@ def test_promote_array_preserves_source_kv_leading_and_trailing() -> None:
 
 
 def test_aot_insert_at_zero_separates_from_following_entry() -> None:
-    """``AoT.insert(0, ...)`` previously left the new ``[[..]]`` glued
-    to the following existing one because the blank-line policy only
-    looked at *preceding* content. Now it also separates from the
-    next entry, mirroring sibling-uniformity (default blank-separated).
+    """``AoT.insert(0, ...)`` separates the new ``[[..]]`` from both the
+    preceding content and the following existing entry, defaulting to
+    blank-separated sibling-uniformity.
     """
     doc = tomlrt.loads("[[a]]\nx = 1\n")
     doc["a"].insert(0, {"x": 0})
@@ -3131,3 +3223,102 @@ def test_inline_table_rejects_section_table_value() -> None:
     nd2["a"] = {}
     nd2["a"]["b"] = inner_src["inner"]
     assert tomlrt.dumps(nd2) == "a = {b = { x = 1 }}\n"
+
+
+def test_cross_doc_update_retargets_eol_to_dst() -> None:
+    """``Document.update(src)`` adopts the destination's line ending.
+
+    Grafting tables from a CRLF source into an LF destination (or
+    vice versa) used to leak the source's NewlineNode pieces into
+    the destination's slot stream, producing mixed-EOL output.
+    Cloning now retargets all structural newlines to the
+    destination's detected line ending, so the merged document is
+    consistently LF or CRLF.
+    """
+    dst = tomlrt.loads("\r\n[tool.black]\r\nline-length = 88\r\n")
+    src = tomlrt.loads('[project]\nname = "foo"\n\n[build-system]\nrequires = []\n')
+    dst.update(src)
+    out = tomlrt.dumps(dst)
+    # Every newline must be CRLF.
+    assert "\n" not in out.replace("\r\n", "")
+    assert "[project]" in out
+    assert "[build-system]" in out
+
+    # Symmetric: CRLF source into LF destination → all LF.
+    dst2 = tomlrt.loads("[a]\nx = 1\n")
+    src2 = tomlrt.loads("[b]\r\ny = 2\r\n")
+    dst2.update(src2)
+    out2 = tomlrt.dumps(dst2)
+    assert "\r" not in out2
+
+
+def test_cross_doc_array_assignment_retargets_eol() -> None:
+    """Cross-doc inline-Array assignment retargets multi-line EOL too."""
+    dst = tomlrt.loads("a = [1]\r\n")
+    src = tomlrt.loads("a = [\n  2,\n  3,\n]\n")
+    dst["a"] = src["a"]
+    out = tomlrt.dumps(dst)
+    assert "\n" not in out.replace("\r\n", "")
+
+
+def test_mixed_eol_parse_still_roundtrips_byte_exact() -> None:
+    """Render-time normalisation would break this; graft-time doesn't.
+
+    Parsing a document whose physical line endings are inconsistent
+    must still produce byte-exact output on a no-op round-trip. The
+    EOL retargeting fix runs only at clone time, so this invariant
+    is preserved.
+    """
+    mixed = "[a]\r\nx = 1\n[b]\r\ny = 2\n"
+    assert tomlrt.dumps(tomlrt.loads(mixed)) == mixed
+
+
+def test_displaced_inline_view_detaches_on_overwrite() -> None:
+    """Held inline-table reference is detached when its hosting KV is dropped.
+
+    The structural-overwrite path (assigning a section/AoT into a
+    key currently bound to an inline value, or ``del`` of the
+    holding key) used to leave inline Containers and Arrays in
+    the displaced subtree with stale ``_layout_root`` /
+    ``_attached`` state. That broke identity preservation on
+    re-assignment: a held reference would silently be cloned
+    instead of live-attached.
+
+    Sections and AoTs already detached correctly via the
+    private-orphan rehome dance; this test pins the same
+    behaviour for inline views.
+    """
+    # 1. Inline displaced by section overwrite.
+    doc = tomlrt.loads("k = {x = 1}\n")
+    it = doc["k"]
+    doc["k"] = tomlrt.Table.section({"y": 2})
+    doc["other"] = it
+    assert doc["other"] is it
+
+    # 2. Array displaced by section overwrite.
+    doc = tomlrt.loads("k = [1, 2]\n")
+    arr = doc["k"]
+    doc["k"] = tomlrt.Table.section({"y": 2})
+    doc["x"] = arr
+    assert doc["x"] is arr
+
+    # 3. Nested inline-in-inline displaced via del of outer.
+    doc = tomlrt.loads("outer = {inner = {x = 1}}\n")
+    inner = doc["outer"]["inner"]
+    del doc["outer"]
+    doc["new"] = inner
+    assert doc["new"] is inner
+
+    # 4. Array nested in inline displaced.
+    doc = tomlrt.loads("o = {a = [1, 2]}\n")
+    arr = doc["o"]["a"]
+    del doc["o"]
+    doc["x"] = arr
+    assert doc["x"] is arr
+
+    # 5. Inline nested in array displaced.
+    doc = tomlrt.loads("a = [{x = 1}]\n")
+    it = doc["a"][0]
+    del doc["a"]
+    doc["new"] = it
+    assert doc["new"] is it

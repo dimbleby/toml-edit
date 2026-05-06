@@ -724,3 +724,17 @@ v = 1
 """
     doc = tomlrt.loads(src)
     assert tomlrt.dumps(doc) == src
+
+
+def test_held_view_after_delete_does_not_corrupt_doc() -> None:
+    # Held views survive delete via a private orphan root with live
+    # mutation. Mutating the orphan must not affect the live document.
+    doc = tomlrt.loads("[a]\nx = 1\n[b]\ny = 2\n")
+    held = doc.table("a")
+    del doc["a"]
+    assert "a" not in doc
+    assert tomlrt.dumps(doc) == "[b]\ny = 2\n"
+    assert held["x"] == 1
+    held["new"] = 99
+    assert tomlrt.dumps(doc) == "[b]\ny = 2\n"
+    assert held["new"] == 99

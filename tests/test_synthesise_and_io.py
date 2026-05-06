@@ -562,3 +562,15 @@ def test_deepcopy_table_subview_supports_nested_mutation() -> None:
     t2.table("inner")["x"] = 42
     assert t.table("inner")["x"] == 1
     assert tomlrt.dumps(doc) == src
+
+
+def test_typed_container_assign_now_clones_from_other_doc() -> None:
+    # Assigning a section table from one document into another
+    # deep-clones it; the two views are independent thereafter.
+    src = tomlrt.loads("[a]\nx = 1\n")
+    dst = tomlrt.loads("")
+    dst["a"] = src["a"]
+    assert tomlrt.dumps(dst) == "[a]\nx = 1\n"
+    assert src["a"] is not dst["a"]
+    src["a"]["x"] = 99
+    assert dst["a"]["x"] == 1
