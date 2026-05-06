@@ -69,62 +69,176 @@ must pass before any commit. CI runs the same set on Python 3.10–3.14.
 
 ## Architecture (in `src/tomlrt/`)
 
-The codebase is small and deliberately layered. Read in this order:
+The codebase is layered: **physical slot stream** at the bottom,
+**logical dict/list views** on top, **mutation primitives** between
+them. Read roughly in this order:
 
-- **`_nodes.py`** — the **concrete syntax tree (CST)**: dataclasses
-  that hold every byte of the original source (including trivia,
-  comments, and the literal lexeme of every value). Mutate these only
-  through helpers that maintain the round-trip invariant.
-- **`_scanner.py`** — the `(src, end, pos)` cursor and the `scan_*`
-  primitives the parser drives (strings, keys, numbers, trivia
-  blocks, …). String scanning is *semantic*: escapes are decoded,
-  surrogate code points rejected, and the resulting `StringNode`
-  carries both the raw lexeme and the decoded value. Performance-
-  sensitive: prefer bulk `str` scans over per-character loops.
-- **`_parser.py`** — hand-written recursive-descent parser, TOML 1.0 +
-  1.1, that drives `_Scanner` to produce the CST and feeds each
-  header / `key = value` / inline-table key into `_Validator`.
-- **`_validator.py`** — semantic validator for the cross-section /
-  cross-line table rules that the syntactic CST cannot express on
-  its own (a key bound as a value cannot later be opened as a table,
-  `[H]` cannot redefine an already-opened table, dotted keys cannot
-  extend an explicitly defined table or AoT, inline-table local key
-  rules, …). Owned and invoked by `_parser.py`.
-- **`_synthesise.py`** — converts plain Python values (`str`, `int`,
-  `bool`, `datetime`, `list`, `dict`, …) into newly synthesised CST
-  nodes when the user assigns into the document.
-- **`_trivia.py`** — pure helpers over `Trivia` and `TriviaPiece`
-  sequences: comment formatting, EOL-comment handling, scanning and
-  rewriting leading/trailing-comment blocks, line-ending detection.
-  Depends only on `_nodes` and `_errors`.
-- **`_separator.py`** — comma-separator style sampling and
-  re-application for inline arrays and inline tables
-  (`_SeparatorStyle`, snapshot/restore of per-item leading comments).
-  Depends on `_trivia` only.
-- **`_section_build.py`** — section construction, deep-clone-with-
-  rebase, and splice helpers used when assigning whole tables / AoTs
-  into a document. Reaches into `_document` privates by design (it is
-  the inverse of "give me the CST that backs this view").
-- **`_comment_views.py`** — the `MutableMapping` / `MutableSequence`
-  views returned by `Table.comments` / `.leading_comments` and the
-  `Array` equivalents. `_PresenceFilteredView` is an `abc.ABC` with
-  `@abstractmethod` hooks; the four concrete subclasses are imported
-  by `_document.py` and constructed from the relevant properties.
-- **`_document.py`** — the **logical view layer**: `Document`, `Table`,
-  `Array`, `AoT` wrappers that present a dict/list-shaped API while
-  delegating all mutation to the CST. The Comment API and typed
-  accessors live here. This is by far the largest file.
-- **`_public.py`** — the top-level `loads` / `load` / `dumps` / `dump`
-  functions, plus thin deprecation shims for the older `parse` and
-  `document` spellings. `load` and `dump` require **binary** file
-  objects (`IO[bytes]`); text mode would silently translate newlines
-  on Windows and break round-tripping.
+### Foundation
+
 - **`_errors.py`** — public exception hierarchy.
+- **`_paths.py`** — key-path argument parsing and validation
+  (the `t["a", "b"]` / `t[("a", "b")]` shapes used by the public
+  API).
+- **`_trivia.py`** — `Trivia` / `TriviaPiece` types and pure helpers
+  over them (whitespace, newlines, comments). Depends only on
+  `_errors`.
+- **`_scanner.py`** — the `(src, end, pos)` cursor and the `scan_*`
+  primitives the parser drives. String scanning is *semantic*:
+  escapes are decoded, surrogate code points rejected, and the
+  resulting node carries both the raw lexeme and the decoded value.
+  Performance-sensitive: prefer bulk `str` scans over per-character
+  loops.
+- **`_values.py`** — the inline-value layer. Every TOML value
+  (scalar, `ArrayValue`, `InlineTableValue`) carries enough source
+  text to re-emit byte-exactly. Pure data; no slot-stream awareness.
+  `ArrayValue` and `InlineTableValue` carry a pair of bracket-pad
+  anchors — `header_trivia` (gap immediately after `[` / `{`) and
+  `final_trivia` (gap before the closing bracket) — so that the
+  above-item region of item 0 and the post-comma trivia of item -1
+  have a single canonical owner; per-item `leading` only owns the
+  region above items 1..n-1.
+- **`_scalar.py`** — Python-to-TOML scalar predicates / coercion
+  helpers (`is_scalar`, etc.). Depends on `_values` only.
+- **`_slots.py`** — the **physical slot stream**:
+  - `Slot` — base; carries `leading: Trivia`, `_prev` / `_next`
+    intrusive linked-list pointers, `owner_aot_entry`, and a
+    `_refs` back-pointer list (every `SlotRef` that targets the
+    slot — bounded by path depth, used for O(depth) ref scrub on
+    AoT removal).
+  - `KVSlot` — one `key = value` line (`host_path`, `key_parts`,
+    `key_seps`, `value`, `eol`).
+  - `StructuralHeaderSlot` — one `[a.b]` / `[[a.b]]` header (`path`,
+    `kind`, `entry`, `synthetic`).
+  - `AoTEntry` — bookkeeping for an `[[a]]` entry (its
+    `entry_slots`, the table view it backs).
+  - `SlotRef` — a per-container *occurrence* of a slot.
+    `local_key` is a derived `@property` of `(slot, container)`
+    geometry — never store it. Registers itself on the target
+    slot's `_refs` list at construction; `unfile_ref` unregisters.
+
+### Parser
+
+- **`_parser.py`** — hand-written recursive-descent parser,
+  TOML 1.0 + 1.1, that drives `_Scanner` to produce a flat slot
+  stream and feeds each header / `key = value` / inline-table key
+  into `_Validator`.
+- **`_validator.py`** — semantic validator for the cross-section /
+  cross-line rules that the per-line slot stream cannot express on
+  its own (a key bound as a value cannot later be opened as a
+  table, `[H]` cannot redefine an already-opened table, dotted
+  keys cannot extend an explicitly defined table / AoT, inline-
+  table local key rules). Owned and invoked by `_parser.py`.
+
+### Logical view construction & mutation
+
+- **`_build.py`** — single linear pass over the parser's slot
+  stream that constructs the `Document` body and all nested
+  `Table` / `Array` / `AoT` views, populating dict storage in
+  doc-stream-first-occurrence order. The *one* place that derives
+  implicit containers from slot paths.
+- **`_layout_ops.py`** — section-side mutation primitives: insert
+  / delete on the doc-stream linked list; `_index` and `_refs`
+  bookkeeping; KV / section / AoT-entry append; subtree rehome.
+  By far the largest file. Internal hot-path conventions:
+  - **Reverse-walks of `c._refs`** go through `_last_kv(c, predicate)`.
+    The wrappers (`_last_direct_kv`, `_last_host_kv`,
+    `_recompute_body_tail`) are *semantic* — they exist so the
+    predicate is named once. Don't add a fourth ad-hoc walk.
+  - **Bulk ref removal** goes through `_remove_owned_refs(c,
+    candidate_keys, owned_ids)`. Callers own only the body-tail
+    policy (clear vs recompute).
+  - **`Container._body_tail`** is the cached doc-stream-tail of
+    the container's region; treat it as ground truth for
+    "what's the latest body slot of `c`?". `_last_direct_kv`
+    uses it as an O(1) fast path before falling back to a
+    reverse-walk.
+- **`_inline_ops.py`** — inline-table mutation primitives. Inline
+  tables are decoupled from the doc-stream linked list: a top-
+  level inline table is one `KVSlot` whose `value` is an
+  `InlineTableValue`, and mutation operates on
+  `InlineTableValue.entries` directly. Owns the trivia fixups
+  required to keep the result a valid, nicely-spaced inline table —
+  including re-anchoring the bracket-pad (`header_trivia` /
+  `final_trivia`) when the boundary entry changes. The same
+  re-anchoring logic exists for inline arrays in `_array.py` /
+  `_array_comments.py`; the helpers `split_above_block` /
+  `join_above_block` in `_trivia.py` are the shared primitives.
+- **`_render.py`** — pure linear walk of the doc-stream slot list
+  + trailing trivia → source string. Byte-exact for any
+  unmodified parse.
+
+### Logical views
+
+- **`_container.py`** — `Container` (the abstract base, a `dict`
+  subclass), `Document`, and `Table`. Holds `_refs`, `_index`,
+  `_path`, `_parent`, `_layout_root`, `_owner_aot_entry`,
+  `_body_tail`, `_value`, `_header_ref`, `_inline`. Exposes
+  `_wire(layout_root=, parent=, path=, owner=)` — every container
+  construction site goes through it for the four common attachment
+  fields; flavour-specific bits (`_inline`, `_value`, `_header_ref`,
+  `_body_tail`) stay explicit at the call site so the table's kind
+  is visible. `_doc_newline` is the canonical "newline of the
+  owning document, or `\n` if detached" accessor — prefer it over
+  reaching into `_layout_root._newline`. Public `Mapping` /
+  `MutableMapping` API; mutation is delegated to `_layout_ops` /
+  `_inline_ops`.
+- **`_array.py`** — `Array(list)` (inline arrays) and
+  `AoT(list[Table])` (array-of-tables) views, plus the `AoTEntry`
+  glue that connects an entry's slots to its Table view.
+- **`_comments.py`** — the `MutableMapping`-shaped EOL / leading-
+  comment side-channel views over `Container` slot trivia
+  (`Container.comments`, `Container.leading_comments`).
+- **`_array_comments.py`** — the `MutableSequence`-shaped
+  equivalents for `Array` items (`Array.comments`,
+  `Array.leading_comments`). Shares encode/decode rules with
+  `_comments`.
+
+### Public API
+
+- **`_public.py`** — top-level `loads` / `load` / `dumps` / `dump`.
+  `load` / `dump` require **binary** file objects (`IO[bytes]`);
+  text mode would silently translate newlines on Windows and
+  break round-tripping.
 - **`__init__.py`** — re-exports the public API; keep `__all__`
   alphabetised.
 
 When in doubt: a change that touches only one of these layers is
-usually right; a change that has to touch all of them is usually wrong.
+usually right; a change that has to touch all of them is usually
+wrong.
+
+### Invariants worth knowing
+
+- **Slot-stream linked list** is the single source of physical
+  ordering. Mutation primitives splice exactly one slot at a time
+  and update `_prev` / `_next`. Never rebuild the list.
+- **`SlotRef.local_key` is derived** from `(slot, container)` —
+  never assigned, never stored. The property asserts the
+  geometric invariant on every read; an out-of-place ref fails
+  fast at the property boundary rather than corrupting an
+  `_index` bucket.
+- **`Container._index[k]`** is the in-order list of refs in
+  `_refs` whose `local_key == k`. Use `_rebuild_index_for_key`
+  after any mid-stream insertion under `k`.
+- **`Container._body_tail`** ≡ "the most recent slot in `_refs`
+  belonging to the body region" (KV with matching owner; or, for
+  a header-bearing container with no body, the header itself).
+  Maintained eagerly on every body-region append, recomputed by
+  `_recompute_body_tail` on body-affecting deletes.
+- **`Slot.owner_aot_entry`** lives on the base `Slot`, not on the
+  subclasses. Use direct attribute access — never `getattr(slot,
+  "owner_aot_entry", None)`.
+- **`Slot._refs`** is the back-pointer list from a slot to every
+  `SlotRef` that targets it. Bounded by path depth + 1. Maintained
+  by `SlotRef.__init__` (registers) and `unfile_ref`
+  (unregisters). AoT removal uses it to scrub refs in O(depth) per
+  slot instead of O(siblings) per container — don't bypass it
+  with ad-hoc walks of ancestor `_index` buckets.
+- **Inline `Table` shape** has two distinct `_inline=True,
+  _value=None` states: a *detached factory* from `Table.inline()`
+  (`_layout_root is None`) and an *attached dotted-implicit inner
+  inline child* (`_layout_root is not None`, parent's
+  `InlineTableValue.entries` carries the actual dotted entry).
+  Don't conflate them; check `_layout_root` to disambiguate.
 
 ## Tests
 
@@ -183,8 +297,14 @@ them when you add, rename, or change behaviour of any public API.
 ## Things to avoid
 
 - Adding an unconditional runtime dependency.
-- Reaching into `_nodes` from user-facing code instead of going through
-  `_document`.
+- Reaching into `_slots` / the doc-stream linked list from
+  user-facing code instead of going through `_layout_ops` /
+  `_inline_ops`.
+- Storing data on a `SlotRef` other than `slot` and `container` —
+  `local_key` is derived; if you need another piece of state,
+  derive it too or push it onto the slot itself.
+- Adding a fourth ad-hoc reverse-walk of `c._refs` instead of
+  expressing the predicate to `_last_kv`.
 - "Fixing" formatting differences in the writer's output without
   adding a round-trip test that proves it.
 - Touching `vendor/` (it is third-party, vendored verbatim).

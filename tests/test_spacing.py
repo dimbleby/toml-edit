@@ -39,7 +39,7 @@ def test_kv_append_to_uniformly_spaced_section_adds_blank() -> None:
         """)
 
 
-def test_kv_append_to_mixed_layout_does_not_add_blank() -> None:
+def test_kv_append_to_mixed_layout_matches_last_gap() -> None:
     doc = tomlrt.loads(
         td("""
         a = 1
@@ -54,6 +54,7 @@ def test_kv_append_to_mixed_layout_does_not_add_blank() -> None:
         b = 2
 
         c = 3
+
         d = 4
         """)
 
@@ -146,7 +147,9 @@ def test_aot_insert_middle_uniformly_spaced_adds_blank() -> None:
     )
 
 
-def test_aot_append_to_mixed_does_not_add_blank() -> None:
+def test_aot_append_to_mixed_follows_last_entry_style() -> None:
+    # Mixed-style AoT: the last entry's separator decides what we do.
+    # Here the last existing separator has a blank line, so we add one.
     src = td("""
         [[i]]
         x = 1
@@ -168,6 +171,7 @@ def test_aot_append_to_mixed_does_not_add_blank() -> None:
 
             [[i]]
             x = 4
+
             [[i]]
             x = 5
             """)
@@ -412,6 +416,31 @@ def test_multiline_inline_table_insert_preserves_layout() -> None:
     assert tomlrt.dumps(doc) == td("""
         x = {
           a = 1,
+          b = 2,
+          c = 3,
+        }
+        """)
+
+
+def test_multiline_inline_table_insert_does_not_duplicate_above_comment() -> None:
+    """The above-entry comment block must stay attached to its entry.
+
+    A naive inter-separator that clones ``entries[1].leading`` whole
+    would replicate the comment block onto the appended entry.
+    """
+    src = td("""
+        x = {
+          a = 1,
+          # above b
+          b = 2,
+        }
+        """)
+    doc = tomlrt.loads(src)
+    doc.table("x")["c"] = 3
+    assert tomlrt.dumps(doc) == td("""
+        x = {
+          a = 1,
+          # above b
           b = 2,
           c = 3,
         }

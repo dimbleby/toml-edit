@@ -52,6 +52,8 @@ docs-serve:
 .PHONY: bench
 bench:
 	benchmarks/bench_parse.py
+	benchmarks/bench_mutate.py
+	benchmarks/bench_pyproject.py
 
 .PHONY: clean
 clean:

@@ -1,0 +1,283 @@
+"""Physical slot layer.
+
+A document is an ordered intrusive doubly-linked list of physical
+slots. Three slot kinds:
+
+- ``KVSlot`` — one ``key = value`` line (possibly dotted).
+- ``StructuralHeaderSlot`` — one ``[a.b]`` or ``[[a.b]]`` line.
+
+`SlotRef` is the per-container occurrence of a slot.
+"""
+
+from __future__ import annotations
+
+import copy
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from tomlrt._container import Container
+    from tomlrt._trivia import Trivia
+    from tomlrt._values import KeyPart, Value
+
+import sys
+
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
+
+from tomlrt._trivia import EolTrivia
+
+# ---------------------------------------------------------------------------
+# AoT entry token (physical ownership marker)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(eq=False)
+class AoTEntry:
+    """Identifies one entry of an array-of-tables.
+
+    Carried by every physical slot that belongs to that entry
+    (``owner_aot_entry``). The ``entry_slots`` list is populated by
+    the slot-builder so render can iterate without scanning.
+    """
+
+    path: tuple[str, ...]
+    ordinal: int
+    entry_slots: list[Slot] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Slot base + kinds
+# ---------------------------------------------------------------------------
+
+
+@dataclass(eq=False)
+class Slot:
+    """Base for physical slots.
+
+    Subclassed by `KVSlot` and `StructuralHeaderSlot`.
+    """
+
+    leading: Trivia
+    _prev: Slot | None = field(default=None, repr=False, compare=False)
+    _next: Slot | None = field(default=None, repr=False, compare=False)
+    owner_aot_entry: AoTEntry | None = None
+    """The AoT entry that physically contains this slot, if any.
+
+    Set on every slot regardless of kind so the field is uniformly
+    typed at the base; both subclasses preserve `None` defaults.
+    """
+
+    _refs: list[SlotRef] = field(default_factory=list, repr=False, compare=False)
+    """Back-pointers from this slot to every `SlotRef` that references it.
+
+    Bounded length (≤ path depth + 1). Used by AoT removal to scrub
+    refs in O(depth) per slot instead of O(siblings) per container.
+    Maintained by `SlotRef.__post_init__` (registers) and
+    `unfile_ref` (unregisters).
+    """
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> Slot:
+        """Deep-copy without following ``_refs``/``_prev``/``_next``.
+
+        Cloned slots start with a fresh empty ``_refs`` (callers
+        construct new ``SlotRef``s pointing at the clone) and
+        unlinked from any doc-stream chain (callers splice them in).
+        Following ``_prev``/``_next`` would otherwise drag the entire
+        source document into the deepcopy.
+        """
+        cls = type(self)
+        new = cls.__new__(cls)
+        memo[id(self)] = new
+        state = self.__dict__.copy()
+        state["_refs"] = []
+        state["_prev"] = None
+        state["_next"] = None
+        new.__dict__.update(copy.deepcopy(state, memo))
+        return new
+
+    def render(self) -> str:  # pragma: no cover - overridden
+        raise NotImplementedError
+
+
+@dataclass(eq=False)
+class KVSlot(Slot):
+    """A single ``key = value`` line."""
+
+    host_path: tuple[str, ...] = ()
+    """Full path of the host table — the table whose body this KV
+    physically belongs to. For top-level KVs ``()``; for KVs under
+    ``[a.b]`` ``("a", "b")``.
+    """
+
+    key_parts: list[KeyPart] = field(default_factory=list)
+    """The dotted-key parts as written. ``len >= 1``."""
+
+    key_seps: list[str] = field(default_factory=list)
+    """Whitespace + ``.`` between parts. Length ``len(key_parts) - 1``."""
+
+    pre_eq: str = ""
+    post_eq: str = ""
+    value: Value | None = None
+    eol: EolTrivia = field(default_factory=lambda: EolTrivia(None, None, None))
+
+    def render_key(self) -> str:
+        parts = self.key_parts
+        if len(parts) == 1:
+            return parts[0].render()
+        out: list[str] = []
+        seps = self.key_seps
+        for i, p in enumerate(parts):
+            if i:
+                out.append(seps[i - 1])
+            out.append(p.render())
+        return "".join(out)
+
+    @property
+    def key(self) -> tuple[str, ...]:
+        """Decoded dotted key path."""
+        return tuple([p.value for p in self.key_parts])
+
+    @override
+    def render(self) -> str:
+        assert self.value is not None
+        return (
+            f"{self.leading.render()}{self.render_key()}"
+            f"{self.pre_eq}={self.post_eq}"
+            f"{self.value.render()}{self.eol.render()}"
+        )
+
+
+@dataclass(eq=False)
+class StructuralHeaderSlot(Slot):
+    """One ``[a.b]`` or ``[[a.b]]`` header line."""
+
+    kind: Literal["table", "aot-entry"] = "table"
+    path: tuple[str, ...] = ()
+    """Full decoded path of the section / AoT entry header."""
+
+    key_parts: list[KeyPart] = field(default_factory=list)
+    key_seps: list[str] = field(default_factory=list)
+    inner_pre: str = ""
+    inner_post: str = ""
+    eol: EolTrivia = field(default_factory=lambda: EolTrivia(None, None, None))
+
+    entry: AoTEntry | None = None
+    """The AoT entry this header opens, when ``kind == 'aot-entry'``."""
+
+    synthetic: bool = False
+    """True iff this header was introduced by mutation."""
+
+    def render_key(self) -> str:
+        parts = self.key_parts
+        if len(parts) == 1:
+            return parts[0].render()
+        out: list[str] = []
+        seps = self.key_seps
+        for i, p in enumerate(parts):
+            if i:
+                out.append(seps[i - 1])
+            out.append(p.render())
+        return "".join(out)
+
+    @override
+    def render(self) -> str:
+        if self.kind == "aot-entry":
+            open_br, close_br = "[[", "]]"
+        else:
+            open_br, close_br = "[", "]"
+        return (
+            f"{self.leading.render()}{open_br}{self.inner_pre}"
+            f"{self.render_key()}{self.inner_post}{close_br}{self.eol.render()}"
+        )
+
+
+# Aliases for readability; not separate types.
+HeaderSlot = StructuralHeaderSlot
+AoTHeaderSlot = StructuralHeaderSlot
+
+
+# ---------------------------------------------------------------------------
+# SlotRef (per-container occurrence)
+# ---------------------------------------------------------------------------
+
+
+class SlotRef:
+    """A per-container occurrence of a slot.
+
+    A `SlotRef` records that `slot` contributes to `container`'s
+    logical view. The key under which it is filed in
+    `container._index` is derived from the geometry of
+    (slot, container) and exposed via `local_key`.
+    """
+
+    __slots__ = ("container", "slot")
+
+    def __init__(self, slot: Slot, container: Container) -> None:
+        self.slot = slot
+        self.container = container
+        # Register on the slot's back-pointer list so AoT removal
+        # can scrub all containers holding refs to a doomed slot
+        # without scanning the slot's ancestors.
+        slot._refs.append(self)  # noqa: SLF001
+
+    @property
+    def local_key(self) -> str | None:
+        """Key under which this ref is filed in ``container._index``.
+
+        ``None`` for the container's own header ref (which lives in
+        ``_refs`` + ``_header_ref``, not in ``_index``); otherwise a
+        single path component, derived from the slot's logical path
+        and the container's depth.
+        """
+        slot = self.slot
+        c_path = self.container._path  # noqa: SLF001
+        if isinstance(slot, StructuralHeaderSlot):
+            if slot.path == c_path:
+                return None
+            # Binding ref in an ancestor: next path step.
+            assert len(slot.path) > len(c_path)
+            assert slot.path[: len(c_path)] == c_path
+            return slot.path[len(c_path)]
+        assert isinstance(slot, KVSlot)
+        j = len(c_path) - len(slot.host_path)
+        assert 0 <= j < len(slot.key_parts)
+        return slot.key_parts[j].value
+
+
+def retarget_slot_newlines(slot: Slot, target: str) -> None:
+    """Rewrite every ``NewlineNode.text`` reachable from ``slot`` to ``target``.
+
+    Used by graft paths so cross-document spliced slots adopt the
+    destination document's line ending. Walks the slot's leading
+    trivia, its EOL (for ``KVSlot`` / ``StructuralHeaderSlot``), and
+    recurses into any nested ``ArrayValue`` / ``InlineTableValue``
+    on a ``KVSlot``.
+    """
+    from tomlrt._trivia import (  # noqa: PLC0415
+        retarget_eol_newline,
+        retarget_trivia_newlines,
+    )
+    from tomlrt._values import retarget_value_newlines  # noqa: PLC0415
+
+    retarget_trivia_newlines(slot.leading, target)
+    if isinstance(slot, KVSlot):
+        retarget_eol_newline(slot.eol, target)
+        if slot.value is not None:
+            retarget_value_newlines(slot.value, target)
+    elif isinstance(slot, StructuralHeaderSlot):
+        retarget_eol_newline(slot.eol, target)
+
+
+__all__ = [
+    "AoTEntry",
+    "AoTHeaderSlot",
+    "HeaderSlot",
+    "KVSlot",
+    "Slot",
+    "SlotRef",
+    "StructuralHeaderSlot",
+    "retarget_slot_newlines",
+]

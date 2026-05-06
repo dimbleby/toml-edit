@@ -1,63 +1,55 @@
-"""Semantic validator for parsed TOML documents.
+"""Semantic validator for parsed TOML.
 
-The CST produced by `tomlrt._parser` is purely syntactic: it tells you
-what the source said, not whether the source said anything legal at the
-table level. TOML's table semantics include rules that span multiple
-syntactic constructs and many lines of source:
+The parser drives this with two operations:
 
-- a key bound as a value cannot later be opened as a table;
-- a `[H]` table header cannot redefine a previously opened table;
-- a `[[H]]` array-of-tables header opens a fresh entry whose
-  per-entry key tracking is independent of prior entries;
-- a dotted key cannot extend an explicitly defined table or AoT;
-- inline tables locally enforce duplicate-key and dotted-prefix
-  rules, and their nested keys must also be visible to later
-  cross-section conflict checks.
+- ``enter_header(path, kind, at)`` when a ``[H]`` / ``[[H]]``
+  header has just been parsed.
+- ``record_keyvalue(key_path, value, at)`` when a ``key = value``
+  line has just been built.
 
-`_Validator` owns the bookkeeping these rules require and is invoked
-by the parser at three points: when a `[H]` / `[[H]]` header has just
-been parsed, when a `key = value` line has just been built, and (with
-caller-supplied per-table state) when a key inside an inline table is
-about to be added.
+Plus ``check_inline_key_conflict`` for inline-table local
+duplicate / dotted-prefix detection.
 
-Diagnostics are raised through a caller-supplied error builder so the
-validator stays decoupled from the scanner: every `TOMLParseError`
-still flows through the same line/column machinery, but the validator
-itself depends on nothing more than the CST node types.
+The validator also tracks AoT entry ordinals so the parser can
+attach the correct ``AoTEntry`` (= owning array-of-tables entry)
+to each physical slot it builds.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
-from tomlrt._nodes import ArrayNode, InlineTableNode
+from tomlrt._slots import AoTEntry
+from tomlrt._values import ArrayValue, InlineTableValue
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from tomlrt._errors import TOMLParseError
-    from tomlrt._nodes import KeyValueNode, TableHeaderNode
+    from tomlrt._values import Value
 
     ErrorBuilder = Callable[..., TOMLParseError]
 
 
+HeaderKind = Literal["table", "aot-entry"]
+
+
 class _Validator:
     __slots__ = (
+        "_active_aot_entries",
         "_aot_paths",
         "_aot_subpaths",
+        "_current_owner_aot_entry",
         "_current_section",
         "_dotted_paths",
         "_error",
         "_explicit_table_paths",
         "_implicit_table_paths",
+        "_next_ordinal",
         "_value_paths",
     )
 
     def __init__(self, error_builder: ErrorBuilder) -> None:
-        # ``error_builder(message, *, at=offset)`` returns a fully-formed
-        # ``TOMLParseError``. The parser supplies ``_Scanner.error`` so
-        # diagnostics carry the correct line/column; tests can pass any
-        # callable with the same shape.
         self._error = error_builder
         # Persistent structural facts (not cleared when re-entering an AoT).
         self._explicit_table_paths: set[tuple[str, ...]] = set()
@@ -66,24 +58,40 @@ class _Validator:
         # Per-AoT-entry: cleared (for paths under H) when [[H]] opens a new entry.
         self._value_paths: set[tuple[str, ...]] = set()
         self._dotted_paths: set[tuple[str, ...]] = set()
-        # Index from each active AoT path to all sub-paths registered under
-        # it across the 5 sets above. Lets `_reset_scope_under` work in
-        # O(descendants) instead of O(all tracked paths).
+        # Index from each active AoT path to all sub-paths registered under it.
         self._aot_subpaths: dict[tuple[str, ...], list[tuple[str, ...]]] = {}
         self._current_section: tuple[str, ...] = ()
+
+        # AoT-entry tracking. ``_active_aot_entries`` maps each
+        # currently-open AoT path to the most recent AoTEntry opened
+        # there. ``_next_ordinal`` records the next ordinal to use for
+        # each path (so ordinals keep growing across `_reset_scope_under`).
+        self._active_aot_entries: dict[tuple[str, ...], AoTEntry] = {}
+        self._next_ordinal: dict[tuple[str, ...], int] = {}
+        self._current_owner_aot_entry: AoTEntry | None = None
+
+    # ------------------------------------------------------------------
+    # Public read accessors used by the slot-builder.
+    # ------------------------------------------------------------------
+
+    def current_section(self) -> tuple[str, ...]:
+        return self._current_section
+
+    def current_owner_aot_entry(self) -> AoTEntry | None:
+        return self._current_owner_aot_entry
 
     # ------------------------------------------------------------------
     # Headers
     # ------------------------------------------------------------------
 
-    def enter_header(self, header: TableHeaderNode, *, at: int) -> None:
-        """Validate and register a `[H]` or `[[H]]` header.
+    def enter_header(
+        self, path: tuple[str, ...], kind: HeaderKind, *, at: int
+    ) -> AoTEntry | None:
+        """Validate a ``[H]`` / ``[[H]]`` header.
 
-        Updates the current-section tracking that subsequent
-        `record_keyvalue` calls read from.
+        Returns the freshly-opened ``AoTEntry`` when ``kind ==
+        "aot-entry"``; otherwise ``None``.
         """
-        path = header.key.path
-        kind = header.kind
         # Prefix overlaps with a bound value would mean overwriting a scalar
         # (or an inline-table value) with a table — always invalid.
         for i in range(1, len(path)):
@@ -102,6 +110,8 @@ class _Validator:
                 f"cannot define {joined!r} as a table: already created via dotted keys"
             )
             raise self._error(msg, at=at)
+
+        new_entry: AoTEntry | None = None
         if kind == "table":
             if path in self._explicit_table_paths:
                 msg = f"redefinition of table {'.'.join(path)!r}"
@@ -112,7 +122,7 @@ class _Validator:
                 raise self._error(msg, at=at)
             self._explicit_table_paths.add(path)
             self._track(path)
-        else:  # array-of-tables
+        else:  # aot-entry
             if path in self._explicit_table_paths:
                 msg = f"cannot redefine table {'.'.join(path)!r} as an array-of-tables"
                 raise self._error(msg, at=at)
@@ -127,7 +137,12 @@ class _Validator:
             self._reset_scope_under(path)
             self._aot_paths.add(path)
             self._track(path)
-        # Intermediate prefixes become implicit tables (only mark new ones).
+            ordinal = self._next_ordinal.get(path, 0)
+            self._next_ordinal[path] = ordinal + 1
+            new_entry = AoTEntry(path=path, ordinal=ordinal)
+            self._active_aot_entries[path] = new_entry
+
+        # Intermediate prefixes become implicit tables.
         for i in range(1, len(path)):
             sub = path[:i]
             if (
@@ -137,23 +152,38 @@ class _Validator:
             ):
                 self._implicit_table_paths.add(sub)
                 self._track(sub)
+
         self._current_section = path
+        self._current_owner_aot_entry = self._compute_owner_aot_entry(path)
+        return new_entry
+
+    def _compute_owner_aot_entry(
+        self, section_path: tuple[str, ...]
+    ) -> AoTEntry | None:
+        """Return the deepest active AoTEntry whose path is a prefix of the section.
+
+        ``section_path`` is included as a prefix of itself: the entry
+        opened by ``[[a]]`` has owner_aot_entry = itself.
+        """
+        if not self._active_aot_entries:
+            return None
+        # Walk from longest to shortest prefix.
+        for i in range(len(section_path), 0, -1):
+            prefix = section_path[:i]
+            entry = self._active_aot_entries.get(prefix)
+            if entry is not None:
+                return entry
+        return None
 
     # ------------------------------------------------------------------
     # Key/value lines
     # ------------------------------------------------------------------
 
-    def record_keyvalue(self, kv: KeyValueNode, *, at: int) -> None:
-        """Validate and register a `key = value` line.
-
-        ``at`` is the source offset to report errors against (the
-        parser supplies its post-line cursor, matching prior
-        behaviour).
-        """
+    def record_keyvalue(
+        self, key_path: tuple[str, ...], value: Value, *, at: int
+    ) -> None:
         section = self._current_section
-        path = kv.key.path
-        full = section + path if section else path
-        # Final-path conflicts.
+        full = section + key_path if section else key_path
         value_paths = self._value_paths
         if full in value_paths:
             msg = f"duplicate key {'.'.join(full)!r}"
@@ -166,7 +196,7 @@ class _Validator:
         ):
             msg = f"key {'.'.join(full)!r} already defined as a table"
             raise self._error(msg, at=at)
-        # Intermediate-prefix conflicts (paths between section and full).
+        # Intermediate-prefix conflicts.
         slen = len(section)
         flen = len(full)
         if flen > slen + 1:
@@ -192,16 +222,11 @@ class _Validator:
                 self._track(sub)
         value_paths.add(full)
         self._track(full)
-        # Inline-table values: register their nested key paths so
-        # cross-section headers/keys see the conflicts. (Local
-        # duplicate / dotted-prefix conflicts are caught at parse time
-        # via `check_inline_key_conflict`.)
-        value = kv.value
-        if isinstance(value, InlineTableNode):
+        if isinstance(value, InlineTableValue):
             self._register_inline_table(value, abs_prefix=full)
-        elif isinstance(value, ArrayNode):
+        elif isinstance(value, ArrayValue):
             for item in value.items:
-                if isinstance(item.value, InlineTableNode):
+                if isinstance(item.value, InlineTableValue):
                     self._register_inline_table(item.value, abs_prefix=None)
 
     # ------------------------------------------------------------------
@@ -216,15 +241,6 @@ class _Validator:
         *,
         at: int,
     ) -> None:
-        """Validate ``path`` against keys already seen in this inline table.
-
-        Mutates ``seen_prefixes`` to add the new path's strict prefixes.
-        Caller is responsible for adding ``path`` itself to
-        ``seen_values`` after successful validation. The two sets are
-        per-inline-table local state, owned by the parser's
-        ``_parse_inline_table`` loop — they must not bleed across
-        sibling inline tables, so we don't keep them on the validator.
-        """
         if path in seen_values:
             msg = f"duplicate key {'.'.join(path)!r} in inline table"
             raise self._error(msg, at=at)
@@ -243,20 +259,12 @@ class _Validator:
 
     def _register_inline_table(
         self,
-        table: InlineTableNode,
+        table: InlineTableValue,
         *,
         abs_prefix: tuple[str, ...] | None,
     ) -> None:
-        """Register an inline table's keys for cross-section conflict checks.
-
-        When ``abs_prefix`` is given, exposes the inline table's keys
-        to document-wide tracking. Walks nested inline tables either
-        way (since arrays inside the inline table may themselves
-        contain inline tables that need walking, even though their
-        keys are not exposed at the top level).
-        """
         for entry in table.entries:
-            path = entry.key.path
+            path = tuple([p.value for p in entry.key_parts])
             if abs_prefix is not None:
                 full = abs_prefix + path
                 self._value_paths.add(full)
@@ -266,12 +274,12 @@ class _Validator:
                     self._dotted_paths.add(sub)
                     self._track(sub)
             sub_abs: tuple[str, ...] | None
-            if isinstance(entry.value, InlineTableNode):
+            if isinstance(entry.value, InlineTableValue):
                 sub_abs = (abs_prefix + path) if abs_prefix is not None else None
                 self._register_inline_table(entry.value, abs_prefix=sub_abs)
-            elif isinstance(entry.value, ArrayNode):
+            elif isinstance(entry.value, ArrayValue):
                 for item in entry.value.items:
-                    if isinstance(item.value, InlineTableNode):
+                    if isinstance(item.value, InlineTableValue):
                         self._register_inline_table(item.value, abs_prefix=None)
 
     # ------------------------------------------------------------------
@@ -279,11 +287,6 @@ class _Validator:
     # ------------------------------------------------------------------
 
     def _track(self, p: tuple[str, ...]) -> None:
-        """Index ``p`` under its longest active-AoT-path ancestor, if any.
-
-        Only paths registered here can be reset by ``_reset_scope_under``.
-        Documents with no AoTs (the common case) skip this entirely.
-        """
         aot_paths = self._aot_paths
         if not aot_paths:
             return
@@ -294,13 +297,6 @@ class _Validator:
                 return
 
     def _reset_scope_under(self, path: tuple[str, ...]) -> None:
-        """Forget per-entry tracking for paths strictly under ``path``.
-
-        Called when a new AoT entry at ``path`` is opened: prior entries'
-        keys, dotted-prefix paths and explicit sub-table headers are
-        replaced by the fresh entry's own. Runs in O(k) where k is the
-        number of paths actually registered under ``path``.
-        """
         subs = self._aot_subpaths.pop(path, None)
         if not subs:
             return
@@ -313,8 +309,10 @@ class _Validator:
             self._explicit_table_paths.discard(p)
             self._implicit_table_paths.discard(p)
             self._aot_paths.discard(p)
+            # Also clear active AoT entry tracking under this path.
+            self._active_aot_entries.pop(p, None)
         for nested in nested_aots:
             self._reset_scope_under(nested)
 
 
-__all__ = ["_Validator"]
+__all__ = ["HeaderKind", "_Validator"]

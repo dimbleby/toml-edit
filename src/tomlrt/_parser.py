@@ -1,50 +1,50 @@
-"""TOML 1.0 / 1.1 parser producing a `tomlrt._nodes` CST.
+"""Hand-written recursive-descent parser.
 
-Hand-written recursive-descent over a `_Scanner`. The parser is purely
-syntactic — it builds the CST and decides nothing about table-level
-semantics (duplicate keys, dotted-prefix conflicts, AoT scope, etc.).
-Those rules are owned by `tomlrt._validator._Validator`, which the
-parser instantiates and calls into at three points: when a header has
-just been parsed, when a key/value line has just been built, and when
-each key inside an inline table is about to be added.
+Walks the source via `_Scanner` and emits a flat ordered list of
+physical slots (`KVSlot` and `StructuralHeaderSlot`) plus the
+document's trailing trivia. Drives `_Validator` at three points:
+
+- when a header has just been parsed,
+- when a key/value line has just been built,
+- when a key inside an inline table is about to be added.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Literal
 
-from tomlrt._nodes import (
-    ArrayItem,
-    ArrayNode,
-    DocumentNode,
-    InlineTableEntry,
-    InlineTableNode,
-    Key,
-    KeyValueNode,
-    SectionNode,
-    TableHeaderNode,
-    Trivia,
-)
 from tomlrt._scanner import _Scanner
+from tomlrt._slots import KVSlot, StructuralHeaderSlot
+from tomlrt._trivia import EolTrivia, Trivia, split_eol_section
 from tomlrt._validator import _Validator
+from tomlrt._values import ArrayItem, ArrayValue, InlineTableEntry, InlineTableValue
+
+HeaderKind = Literal["table", "aot-entry"]
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from tomlrt._slots import Slot
+    from tomlrt._values import KeyPart, Value
 
-    from tomlrt._nodes import (
-        HeaderKind,
-        KeyPart,
-        ValueNode,
-    )
+
+@dataclass
+class ParseResult:
+    """The output of `_Parser.parse`.
+
+    `slots` is in physical document order. `trailing` is whatever
+    trivia (blank lines, comments) hangs at end-of-file after the
+    last slot. `newline` is the document-wide line ending detected
+    by the scanner.
+    """
+
+    slots: list[Slot] = field(default_factory=list)
+    trailing: Trivia = field(default_factory=Trivia)
+    newline: str = "\n"
 
 
 class _Parser:
     __slots__ = ("_sc", "_validator", "_value_depth")
 
-    # Hard cap on nested array / inline-table depth. Well above any
-    # realistic data (tomllib, for reference, accepts whatever Python's
-    # recursion limit allows; we pick a friendlier ceiling so the user
-    # gets a TOMLParseError instead of a RecursionError).
     _MAX_VALUE_DEPTH = 100
 
     def __init__(self, src: str) -> None:
@@ -56,10 +56,8 @@ class _Parser:
     # Entry point
     # ------------------------------------------------------------------
 
-    def parse(self) -> DocumentNode:
-        doc = DocumentNode()
-        current = SectionNode(header=None)
-        doc.sections.append(current)
+    def parse(self) -> ParseResult:
+        result = ParseResult()
         sc = self._sc
         src = sc.src
         end = sc.end
@@ -68,240 +66,295 @@ class _Parser:
             leading = sc.scan_doc_trivia()
             pos = sc.pos
             if pos >= end:
-                # leading is purely trailing trivia for the document.
-                doc.trailing_trivia.pieces.extend(leading.pieces)
+                result.trailing.pieces.extend(leading.pieces)
                 break
 
-            if src[pos] == "[":
-                header = self._parse_header(leading)
-                current = SectionNode(header=header)
-                doc.sections.append(current)
+            ch = src[pos]
+            slot: Slot
+            if ch == "[":
+                slot = self._parse_header(leading)
             else:
-                kv = self._parse_key_value(leading)
-                self._validator.record_keyvalue(kv, at=sc.pos)
-                current.entries.append(kv)
+                slot = self._parse_key_value(leading)
+            result.slots.append(slot)
 
-        return doc
+        # Stitch the doubly-linked list. (The list itself is also
+        # returned so render can simply iterate; the `_prev`/`_next`
+        # pointers are for mutation phases.)
+        prev: Slot | None = None
+        for slot in result.slots:
+            slot._prev = prev  # noqa: SLF001
+            if prev is not None:
+                prev._next = slot  # noqa: SLF001
+            prev = slot
 
-    def detected_newline(self) -> str:
-        """Document-wide newline kind seen during scanning."""
-        return self._sc.detected_newline()
+        result.newline = sc.detected_newline()
+        return result
 
     # ------------------------------------------------------------------
     # Headers
     # ------------------------------------------------------------------
 
-    def _parse_header(self, leading: Trivia) -> TableHeaderNode:
+    def _parse_header(self, leading: Trivia) -> StructuralHeaderSlot:
+        sc = self._sc
         kind: HeaderKind
-        if self._sc.starts_with("[["):
-            self._sc.advance(2)
-            kind = "array"
+        if sc.starts_with("[["):
+            sc.advance(2)
+            kind = "aot-entry"
         else:
-            assert self._sc.peek() == "["
-            self._sc.advance(1)
+            assert sc.peek() == "["
+            sc.advance(1)
             kind = "table"
 
-        inner_pre = self._sc.scan_inline_ws()
-        key = self._parse_key()
-        inner_post = self._sc.scan_inline_ws()
+        inner_pre = sc.scan_inline_ws_text()
+        key_parts, key_seps, inner_post = self._parse_key()
 
-        if kind == "array":
-            if not self._sc.starts_with("]]"):
+        if kind == "aot-entry":
+            if not sc.starts_with("]]"):
                 msg = "expected ']]' to close array-of-tables header"
-                raise self._sc.error(msg)
-            self._sc.advance(2)
+                raise sc.error(msg)
+            sc.advance(2)
         else:
-            if self._sc.peek() != "]":
+            if sc.peek() != "]":
                 msg = "expected ']' to close table header"
-                raise self._sc.error(msg)
-            self._sc.advance(1)
+                raise sc.error(msg)
+            sc.advance(1)
 
-        trailing, comment, newline = self._sc.scan_eol()
+        trailing_ws, comment, newline = sc.scan_eol()
+        path = tuple([p.value for p in key_parts])
+        new_entry = self._validator.enter_header(path, kind, at=sc.pos)
+        owner = self._validator.current_owner_aot_entry()
 
-        header = TableHeaderNode(
-            leading,
-            kind,
-            inner_pre,
-            key,
-            inner_post,
-            trailing,
-            comment,
-            newline,
+        slot = StructuralHeaderSlot(
+            leading=leading,
+            kind=kind,
+            path=path,
+            key_parts=key_parts,
+            key_seps=key_seps,
+            inner_pre=inner_pre,
+            inner_post=inner_post,
+            eol=EolTrivia(trailing_ws, comment, newline),
+            owner_aot_entry=owner,
+            entry=new_entry,
+            synthetic=False,
         )
-        self._validator.enter_header(header, at=self._sc.pos)
-        return header
+        if owner is not None:
+            owner.entry_slots.append(slot)
+        return slot
 
     # ------------------------------------------------------------------
     # Keys
     # ------------------------------------------------------------------
 
-    def _parse_key(self) -> Key:
+    def _parse_key(self) -> tuple[list[KeyPart], list[str], str]:
+        """Parse a dotted key.
+
+        Returns ``(parts, seps, trailing_ws)`` where ``trailing_ws`` is
+        the whitespace consumed after the last key part — usable
+        directly as the caller's ``pre_eq`` / ``inner_post`` field.
+        """
         sc = self._sc
         parts: list[KeyPart] = [sc.scan_key_part()]
-        separators: list[str] = []
+        seps: list[str] = []
         while True:
-            sep = sc.scan_key_separator()
-            if sep is None:
-                break
-            separators.append(sep)
+            text, is_sep = sc.scan_key_separator()
+            if not is_sep:
+                return parts, seps, text
+            seps.append(text)
             parts.append(sc.scan_key_part())
-        return Key(parts, separators)
 
     # ------------------------------------------------------------------
     # Key/value lines
     # ------------------------------------------------------------------
 
-    def _parse_key_value(self, leading: Trivia) -> KeyValueNode:
-        key = self._parse_key()
-        pre_eq = self._sc.scan_inline_ws()
-        src = self._sc.src
-        pos = self._sc.pos
-        if pos >= self._sc.end or src[pos] != "=":
-            ch = src[pos] if pos < self._sc.end else ""
+    def _parse_key_value(self, leading: Trivia) -> KVSlot:
+        sc = self._sc
+        key_parts, key_seps, pre_eq = self._parse_key()
+        src = sc.src
+        pos = sc.pos
+        if pos >= sc.end or src[pos] != "=":
+            ch = src[pos] if pos < sc.end else ""
             msg = f"expected '=' after key, got {ch!r}"
-            raise self._sc.error(msg)
-        self._sc.pos = pos + 1
-        post_eq = self._sc.scan_inline_ws()
+            raise sc.error(msg)
+        sc.pos = pos + 1
+        post_eq = sc.scan_inline_ws_text()
         value = self._parse_value()
-        trailing, comment, newline = self._sc.scan_eol()
-        return KeyValueNode(
-            leading,
-            key,
-            pre_eq,
-            post_eq,
-            value,
-            trailing,
-            comment,
-            newline,
+        trailing_ws, comment, newline = sc.scan_eol()
+
+        key_path = tuple([p.value for p in key_parts])
+        self._validator.record_keyvalue(key_path, value, at=sc.pos)
+        host_path = self._validator.current_section()
+        owner = self._validator.current_owner_aot_entry()
+        slot = KVSlot(
+            leading=leading,
+            host_path=host_path,
+            key_parts=key_parts,
+            key_seps=key_seps,
+            pre_eq=pre_eq,
+            post_eq=post_eq,
+            value=value,
+            eol=EolTrivia(trailing_ws, comment, newline),
+            owner_aot_entry=owner,
         )
+        if owner is not None:
+            owner.entry_slots.append(slot)
+        return slot
 
     # ------------------------------------------------------------------
     # Values
     # ------------------------------------------------------------------
 
-    def _parse_value(self) -> ValueNode:
-        ch = self._sc.peek()
+    def _parse_value(self) -> Value:
+        sc = self._sc
+        pos = sc.pos
+        ch = sc.src[pos] if pos < sc.end else ""
         if ch == '"' or ch == "'":
-            return self._sc.scan_string()
+            return sc.scan_string()
         if ch == "[":
-            return self._parse_nested_value(self._parse_array)
+            if self._value_depth >= self._MAX_VALUE_DEPTH:
+                msg = f"value nesting exceeds maximum depth ({self._MAX_VALUE_DEPTH})"
+                raise sc.error(msg)
+            self._value_depth += 1
+            try:
+                return self._parse_array()
+            finally:
+                self._value_depth -= 1
         if ch == "{":
-            return self._parse_nested_value(self._parse_inline_table)
-        # Bools, special floats, integers, floats and date/time literals
-        # all funnel through one bare-token scan-then-classify path.
-        return self._sc.scan_value_atom()
-
-    def _parse_nested_value(self, parser: Callable[[], ValueNode]) -> ValueNode:
-        if self._value_depth >= self._MAX_VALUE_DEPTH:
-            msg = f"value nesting exceeds maximum depth ({self._MAX_VALUE_DEPTH})"
-            raise self._sc.error(msg)
-        self._value_depth += 1
-        try:
-            return parser()
-        finally:
-            self._value_depth -= 1
+            if self._value_depth >= self._MAX_VALUE_DEPTH:
+                msg = f"value nesting exceeds maximum depth ({self._MAX_VALUE_DEPTH})"
+                raise sc.error(msg)
+            self._value_depth += 1
+            try:
+                return self._parse_inline_table()
+            finally:
+                self._value_depth -= 1
+        return sc.scan_value_atom()
 
     # --- arrays -------------------------------------------------------
 
-    def _parse_array(self) -> ArrayNode:
-        assert self._sc.peek() == "["
-        self._sc.advance(1)
-        node = ArrayNode()
-        leading = self._sc.scan_array_trivia()
-        if self._sc.peek() == "]":
-            node.final_trivia = leading
-            self._sc.advance(1)
+    def _parse_array(self) -> ArrayValue:
+        sc = self._sc
+        src = sc.src
+        assert sc.peek() == "["
+        sc.pos += 1
+        node = ArrayValue()
+        head = sc.scan_array_trivia()
+        end = sc.end
+        if sc.pos < end and src[sc.pos] == "]":
+            # Empty array: head trivia is interior, attribute it to
+            # final_trivia (the canonical pre-`]` slot).
+            node.final_trivia = head
+            sc.pos += 1
             return node
+        node.header_trivia = head
+        items = node.items
+        leading = Trivia()  # items[0].leading is always empty
         while True:
             value = self._parse_value()
-            trailing = self._sc.scan_array_trivia()
-            has_comma = False
-            post_comma = Trivia()
-            if self._sc.peek() == ",":
-                self._sc.advance(1)
-                has_comma = True
-                post_comma = self._sc.scan_array_trivia()
-            elif self._sc.peek() != "]":
-                msg = f"expected ',' or ']' in array, got {self._sc.peek()!r}"
-                raise self._sc.error(msg)
-            node.items.append(
-                ArrayItem(leading, value, trailing, has_comma, post_comma),
-            )
-            if not has_comma:
-                # We're at ']'.
-                self._sc.advance(1)
+            trailing = sc.scan_array_trivia()
+            ch = src[sc.pos] if sc.pos < end else ""
+            if ch == ",":
+                sc.pos += 1
+                scanned = sc.scan_array_trivia()
+                post_comma, next_leading = split_eol_section(scanned)
+                items.append(ArrayItem(leading, value, trailing, True, post_comma))  # noqa: FBT003
+                if sc.pos < end and src[sc.pos] == "]":
+                    # Trailing-comma terminator: structural rest is the
+                    # bracket pad.
+                    node.final_trivia = next_leading
+                    sc.pos += 1
+                    return node
+                leading = next_leading
+            elif ch == "]":
+                items.append(ArrayItem(leading, value, trailing, False, Trivia()))  # noqa: FBT003
+                # Terminal item with no trailing comma: split the
+                # trailing scan into the EOL section (stays on the
+                # item) and the structural bracket pad (final_trivia).
+                eol, rest = split_eol_section(items[-1].trailing)
+                items[-1].trailing = eol
+                node.final_trivia = rest
+                sc.pos += 1
                 return node
-            leading = Trivia()  # next item's leading is empty; trivia
-            # already attached as post_comma of previous item.
-            if self._sc.peek() == "]":
-                # Trailing comma followed by closer.
-                self._sc.advance(1)
-                return node
-            # Next iteration starts a new value.
+            else:
+                msg = f"expected ',' or ']' in array, got {ch!r}"
+                raise sc.error(msg)
 
     # --- inline tables ------------------------------------------------
 
-    def _parse_inline_table(self) -> InlineTableNode:
-        assert self._sc.peek() == "{"
-        self._sc.advance(1)
-        node = InlineTableNode()
-        # TOML 1.1: newlines and trailing comma are allowed inside an
-        # inline table, with the same trivia rules as arrays.
-        leading = self._sc.scan_array_trivia()
-        if self._sc.peek() == "}":
-            node.final_trivia = leading
-            self._sc.advance(1)
+    def _parse_inline_table(self) -> InlineTableValue:
+        sc = self._sc
+        assert sc.peek() == "{"
+        sc.advance(1)
+        node = InlineTableValue()
+        head = sc.scan_array_trivia()
+        if sc.peek() == "}":
+            node.final_trivia = head
+            sc.advance(1)
             return node
-        # Inline-table-local key tracking. Values and prefixes are
-        # tracked separately so that ``{ x = 1, x.y = 2 }`` and
-        # ``{ a.b = 1, a = 2 }`` both fail at the offending key.
+        node.header_trivia = head
+        leading = Trivia()  # entries[0].leading is always empty
         seen_values: set[tuple[str, ...]] = set()
         seen_prefixes: set[tuple[str, ...]] = set()
+        entries = node.entries
         while True:
-            key_at = self._sc.pos
-            key = self._parse_key()
+            key_at = sc.pos
+            key_parts, key_seps, pre_eq = self._parse_key()
+            key_path = tuple([p.value for p in key_parts])
             self._validator.check_inline_key_conflict(
-                key.path,
-                seen_values,
-                seen_prefixes,
-                at=key_at,
+                key_path, seen_values, seen_prefixes, at=key_at
             )
-            seen_values.add(key.path)
-            pre_eq = self._sc.scan_inline_ws()
-            if self._sc.peek() != "=":
-                msg = f"expected '=' in inline table, got {self._sc.peek()!r}"
-                raise self._sc.error(msg)
-            self._sc.advance(1)
-            post_eq = self._sc.scan_inline_ws()
+            seen_values.add(key_path)
+            if sc.peek() != "=":
+                msg = f"expected '=' in inline table, got {sc.peek()!r}"
+                raise sc.error(msg)
+            sc.advance(1)
+            post_eq = sc.scan_inline_ws_text()
             value = self._parse_value()
-            trailing = self._sc.scan_array_trivia()
-            has_comma = False
-            post_comma = Trivia()
-            if self._sc.peek() == ",":
-                self._sc.advance(1)
-                has_comma = True
-                post_comma = self._sc.scan_array_trivia()
-            elif self._sc.peek() != "}":
-                msg = f"expected ',' or '}}' in inline table, got {self._sc.peek()!r}"
-                raise self._sc.error(msg)
-            node.entries.append(
-                InlineTableEntry(
-                    leading,
-                    key,
-                    pre_eq,
-                    post_eq,
-                    value,
-                    trailing,
-                    has_comma,
-                    post_comma,
-                ),
-            )
-            if not has_comma:
-                # We're at '}'.
-                self._sc.advance(1)
+            trailing = sc.scan_array_trivia()
+            ch = sc.peek()
+            if ch == ",":
+                sc.advance(1)
+                scanned = sc.scan_array_trivia()
+                post_comma, next_leading = split_eol_section(scanned)
+                entries.append(
+                    InlineTableEntry(
+                        leading=leading,
+                        key_parts=key_parts,
+                        key_seps=key_seps,
+                        pre_eq=pre_eq,
+                        post_eq=post_eq,
+                        value=value,
+                        trailing=trailing,
+                        has_comma=True,
+                        post_comma_trivia=post_comma,
+                    )
+                )
+                if sc.peek() == "}":
+                    node.final_trivia = next_leading
+                    sc.advance(1)
+                    return node
+                leading = next_leading
+            elif ch == "}":
+                entries.append(
+                    InlineTableEntry(
+                        leading=leading,
+                        key_parts=key_parts,
+                        key_seps=key_seps,
+                        pre_eq=pre_eq,
+                        post_eq=post_eq,
+                        value=value,
+                        trailing=trailing,
+                        has_comma=False,
+                        post_comma_trivia=Trivia(),
+                    )
+                )
+                eol, rest = split_eol_section(entries[-1].trailing)
+                entries[-1].trailing = eol
+                node.final_trivia = rest
+                sc.advance(1)
                 return node
-            leading = Trivia()
-            if self._sc.peek() == "}":
-                # Trailing comma followed by the closer (TOML 1.1).
-                self._sc.advance(1)
-                return node
+            else:
+                msg = f"expected ',' or '}}' in inline table, got {ch!r}"
+                raise sc.error(msg)
+
+
+__all__ = ["ParseResult", "_Parser"]
