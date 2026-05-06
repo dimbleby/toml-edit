@@ -34,6 +34,9 @@ from tomlrt._trivia import (
     Trivia,
     WhitespaceNode,
     clone_trivia,
+    join_above_block,
+    split_above_block,
+    split_eol_section,
     trivia_has_comment,
     trivia_has_newline,
 )
@@ -48,6 +51,7 @@ if TYPE_CHECKING:
 
     from _typeshed import SupportsRichComparison
 
+    from tomlrt._trivia import TriviaPiece
     from tomlrt._values import (
         InlineTableEntry,
         Value,
@@ -102,26 +106,21 @@ class Array(list[Any]):
         for v in arr:
             list.append(self, v)
         if multiline and val.items:
-            style = _ArrayStyle(
-                is_multiline=True,
-                inter_separator=Trivia(
-                    [NewlineNode(text="\n"), WhitespaceNode(text=indent)]
-                ),
-                trailing_comma=True,
-                trailing_post=Trivia([NewlineNode(text="\n")]),
-            )
-            for it in val.items:
-                it.leading = Trivia()
+            indent_pieces: list[TriviaPiece] = [
+                NewlineNode(text="\n"),
+                WhitespaceNode(text=indent),
+            ]
+            val.header_trivia = Trivia(list(indent_pieces))
+            val.final_trivia = Trivia([NewlineNode(text="\n")])
+            for k, it in enumerate(val.items):
+                it.leading = Trivia() if k == 0 else Trivia(list(indent_pieces))
                 it.post_comma_trivia = Trivia()
-            val.items[0].leading = Trivia(
-                [NewlineNode(text="\n"), WhitespaceNode(text=indent)]
-            )
-            _renormalise_commas(val.items, style, val)
+                it.trailing = Trivia()
+                it.has_comma = True
         elif multiline and not val.items:
-            # Empty multiline factory: park the prospective leading
-            # for the first append in final_trivia, matching how an
-            # empty multiline array parses (`[\n    ]`).
-
+            # Empty multiline factory: header_trivia stays empty;
+            # final_trivia carries the pre-`]` line break + indent so
+            # that a subsequent first append slots in correctly.
             val.final_trivia = Trivia(
                 [NewlineNode(text="\n"), WhitespaceNode(text=indent)]
             )
@@ -216,18 +215,16 @@ class Array(list[Any]):
         """Switch this array between flush single-line and multi-line form.
 
         Raises ``TOMLError`` when collapsing a multi-line array that
-        carries comments (per-item leading or post_comma trivia
-        containing a comment), since those would have nowhere to live
-        on a single line.
+        carries comments (anywhere in per-item trivia, header_trivia
+        or final_trivia, or in nested inline values), since those
+        would have nowhere to live on a single line.
 
         Returns ``self`` for chaining.
         """
         ind = indent
-        items = self._value.items
+        value = self._value
+        items = value.items
         if not multiline:
-            # Recursively probe for CommentNodes anywhere inside an item
-            # (its own trivia *and* nested inline values), since collapse
-            # would have nowhere to put them.
             for it in items:
                 if _item_has_any_comment(it):
                     msg = (
@@ -235,10 +232,20 @@ class Array(list[Any]):
                         "items contain EOL or leading comments"
                     )
                     raise TOMLError(msg)
-            for it in items:
-                it.leading = Trivia()
+            if trivia_has_comment(value.header_trivia) or trivia_has_comment(
+                value.final_trivia
+            ):
+                msg = (
+                    "cannot collapse multi-line array: "
+                    "header or trailing trivia contains comments"
+                )
+                raise TOMLError(msg)
+            value.header_trivia = Trivia()
+            value.final_trivia = Trivia()
+            for k, it in enumerate(items):
+                it.leading = Trivia() if k == 0 else Trivia([WhitespaceNode(" ")])
                 it.post_comma_trivia = Trivia()
-            self._value.final_trivia = Trivia()
+                it.trailing = Trivia()
             self._multiline = False
             flush_style = _ArrayStyle(
                 is_multiline=False,
@@ -246,27 +253,32 @@ class Array(list[Any]):
                 trailing_comma=False,
                 trailing_post=Trivia(),
             )
-            _renormalise_commas(items, flush_style, self._value)
+            _renormalise_commas(items, flush_style)
             return self
         # multiline=True
         self._multiline = True
         if not items:
-            self._value.final_trivia = Trivia(
+            value.final_trivia = Trivia(
                 [NewlineNode(text="\n"), WhitespaceNode(text=ind)]
             )
             return self
-        style = _ArrayStyle(
+        indent_pieces: list[TriviaPiece] = [
+            NewlineNode(text="\n"),
+            WhitespaceNode(text=ind),
+        ]
+        value.header_trivia = Trivia(list(indent_pieces))
+        value.final_trivia = Trivia([NewlineNode(text="\n")])
+        for k, it in enumerate(items):
+            it.leading = Trivia() if k == 0 else Trivia(list(indent_pieces))
+            it.post_comma_trivia = Trivia()
+            it.trailing = Trivia()
+        ml_style = _ArrayStyle(
             is_multiline=True,
-            inter_separator=Trivia([NewlineNode(text="\n"), WhitespaceNode(text=ind)]),
+            inter_separator=Trivia(list(indent_pieces)),
             trailing_comma=True,
             trailing_post=Trivia([NewlineNode(text="\n")]),
         )
-        for it in items:
-            it.leading = Trivia()
-            it.post_comma_trivia = Trivia()
-        items[0].leading = Trivia([NewlineNode(text="\n"), WhitespaceNode(text=ind)])
-        self._value.final_trivia = Trivia()
-        _renormalise_commas(items, style, self._value)
+        _renormalise_commas(items, ml_style)
         return self
 
     def _synth_cst(self, value: object) -> tuple[Value, object]:
@@ -288,51 +300,92 @@ class Array(list[Any]):
         cst, decoded = self._synth_cst(value)
         items = self._value.items
         style = self._style()
-        # If appending into an empty array, any inner-bracket padding
-        # held in final_trivia is the prospective leading for the new
-        # item.
-        # - For pure whitespace (e.g. `[ ]`), adopt without clearing
-        #   so both `[ ` and ` ]` survive: → `[ 1 ]`.
-        # - For multiline structural content (e.g. `[\n\t# hi\n]`),
-        #   adopt + clear, and stitch on a synthesised indent so the
-        #   new item sits below the comment at the indent level the
-        #   user established for it.
-        adopted_leading: Trivia | None = None
-        if not items and self._value.final_trivia.pieces:
-            ft = self._value.final_trivia
-            if trivia_has_newline(ft):
-                indent = _indent_from_final_trivia(ft)
-                pieces = list(ft.pieces)
-                # If the final_trivia is just a bare newline (no
-                # interior content), use the array style's inferred
-                # indent (e.g. `    `) so an appended item lands at
-                # the conventional column.
-                if (
-                    not indent
-                    and len(pieces) == 1
-                    and isinstance(pieces[0], NewlineNode)
-                ):
-                    indent = _first_indent_after_newline(style.inter_separator)
-                if indent and pieces and isinstance(pieces[-1], NewlineNode):
-                    pieces.append(WhitespaceNode(text=indent))
-                adopted_leading = Trivia(pieces)
-                self._value.final_trivia = Trivia()
-            else:
-                adopted_leading = clone_trivia(ft)
-        new_item = _new_item(
-            cst,
-            leading_first=not items,
-            style=style,
-            leading=adopted_leading,
+        if not items:
+            # Empty array → first append. The interior trivia (which
+            # may contain a comment block) currently lives in
+            # final_trivia. Reframe it under the canonical model:
+            #   header_trivia = (everything up through the indent that
+            #                    will sit before the new item)
+            #   final_trivia  = (just the line break before `]`)
+            self._restamp_for_first_append()
+            new_item = ArrayItem(
+                leading=Trivia(),
+                value=cst,
+                trailing=Trivia(),
+                has_comma=False,
+                post_comma_trivia=Trivia(),
+            )
+            items.append(new_item)
+            _flip_to_terminal(new_item, style)
+            list.append(self, decoded)
+            return
+        # Non-empty: any above-`]` comment block in final_trivia
+        # logically belongs ABOVE the new item we're about to add.
+        ft_pad, ft_above = split_above_block(self._value.final_trivia)
+        new_leading = join_above_block(style.inter_separator, ft_above)
+        _flip_to_internal(items[-1])
+        new_item = ArrayItem(
+            leading=new_leading,
+            value=cst,
+            trailing=Trivia(),
+            has_comma=False,
+            post_comma_trivia=Trivia(),
         )
-        if items:
-            _flip_to_internal(items[-1], style, self._value)
+        if ft_above.pieces:
+            self._value.final_trivia = ft_pad
         items.append(new_item)
-        # The new tail inherits the array's terminal style (trailing
-        # comma + post-trivia), e.g. `\n    4,\n` for the multiline
-        # trailing-comma layout.
         _flip_to_terminal(new_item, style)
+        # Under the canonical multiline model the row break + bracket
+        # pad before ``]`` lives in ``final_trivia``. The previous last
+        # item's "before ]" gap was already in ``final_trivia`` (or
+        # was empty when its post_comma carried an EOL whose NL
+        # absorbed the gap). After append, the new last item still
+        # needs that row break before ``]`` — synthesise one when
+        # final_trivia opens without a newline.
+        if style.is_multiline:
+            ft = self._value.final_trivia
+            if not (ft.pieces and isinstance(ft.pieces[0], NewlineNode)):
+                ft.pieces = [NewlineNode("\n"), *ft.pieces]
         list.append(self, decoded)
+
+    def _restamp_for_first_append(self) -> None:
+        """Reframe an empty array's final_trivia into header_trivia + tail.
+
+        Called from the first ``append`` onto an empty multiline array.
+        Splits ``final_trivia`` so that:
+          * ``header_trivia`` carries the bracket-line break, any
+            above-item comments, and the indent for the about-to-be-
+            inserted value;
+          * ``final_trivia`` carries just the line break that puts
+            ``]`` on its own line.
+        For single-line empty arrays (``[ ]``), mirrors the inner space
+        on both sides so both bracket faces stay padded.
+        """
+        ft = self._value.final_trivia
+        if not ft.pieces:
+            return
+        if not trivia_has_newline(ft):
+            self._value.header_trivia = clone_trivia(ft)
+            return
+        pieces = list(ft.pieces)
+        last_nl = -1
+        for i, p in enumerate(pieces):
+            if isinstance(p, NewlineNode):
+                last_nl = i
+        # Pieces up to and including the last NL form the "above the
+        # new value" region. The indent for the value itself is either
+        # the WS that already follows last_nl in the existing trivia,
+        # or the indent of the most recent comment line, or four spaces.
+        head_pieces = pieces[: last_nl + 1]
+        tail_pieces = pieces[last_nl + 1 :]
+        if tail_pieces and isinstance(tail_pieces[0], WhitespaceNode):
+            value_indent = str(tail_pieces[0].text)
+        else:
+            value_indent = _indent_from_final_trivia(ft) or "    "
+        self._value.header_trivia = Trivia(
+            [*head_pieces, WhitespaceNode(text=value_indent)]
+        )
+        self._value.final_trivia = Trivia([NewlineNode(text=pieces[last_nl].text)])
 
     @override
     def extend(self, values: Iterable[Any]) -> None:
@@ -355,43 +408,8 @@ class Array(list[Any]):
         if i < 0 or i >= n:
             msg = "pop index out of range"
             raise IndexError(msg)
-        items = self._value.items
-        item = items[i]
-        # Fast path: when the popped item carries no own-trivia
-        # comments, no neighbouring item's comments depend on it
-        # (a comment "above" the next item would be parked in
-        # items[i].post_comma_trivia, which we just checked).
-        # __delitem__ already handles bracket-pad and tail-pad
-        # migration and skips the O(N) snapshot/clear/apply.
-        if not (
-            trivia_has_comment(item.leading)
-            or trivia_has_comment(item.trailing)
-            or trivia_has_comment(item.post_comma_trivia)
-        ):
-            decoded = self[i]
-            del self[i]
-            return decoded
-        leadings, eols = snapshot_comments(self)
-        decoded = list.pop(self, i)
-        style = self._style()
-
-        trailing_has_comment = any(
-            isinstance(p, CommentNode) for p in items[i].trailing.pieces
-        )
-        if (
-            i == len(items) - 1
-            and items[i].trailing.pieces
-            and not self._value.final_trivia.pieces
-            and not trailing_has_comment
-        ):
-            self._value.final_trivia = items[i].trailing
-        items.pop(i)
-        leadings.pop(i)
-        eols.pop(i)
-        if items:
-            _flip_to_terminal(items[-1], style)
-            clear_all_comments(self)
-            apply_comments(self, leadings, eols)
+        decoded = self[i]
+        del self[i]
         return decoded
 
     @override
@@ -412,87 +430,43 @@ class Array(list[Any]):
             i = max(0, n + i)
         i = min(i, n)
         items = self._value.items
+        if i == n:
+            self.append(value)
+            return
         style = self._style()
-        leadings, eols = snapshot_comments(self)
-        if i == 0 and items:
-            # Inheriting position 0's leading: split it into the
-            # "indent prefix" (initial NL+WS that puts the item on
-            # its own line) and the "above-item block" (comments
-            # plus their surrounding trivia). When the leading
-            # opens with a comment (no initial newline) it's an
-            # EOL-of-`[` style — the whole thing stays at position
-            # 0 and apply_comments must not re-emit it onto the
-            # displaced item.
-
-            old_leading_pieces = list(items[0].leading.pieces)
-            displaced = items[0]
-            first_nonws = next(
-                (
-                    j
-                    for j, p in enumerate(old_leading_pieces)
-                    if not isinstance(p, (NewlineNode, WhitespaceNode))
-                ),
-                None,
+        if i == 0:
+            # Item-owned semantics: any above-block currently inside
+            # header_trivia conceptually belongs to *the item that
+            # appears below it*. On insert(0), that item becomes
+            # items[1]; the above-block migrates to its leading. The
+            # new item gets bare leading; header_trivia retains only
+            # its structural pad.
+            pad, above = split_above_block(self._value.header_trivia)
+            self._value.header_trivia = pad
+            new_item = ArrayItem(
+                leading=Trivia(),
+                value=cst,
+                trailing=Trivia(),
+                has_comma=True,
+                post_comma_trivia=Trivia(),
             )
-            opens_with_comment = (
-                first_nonws is not None
-                and isinstance(old_leading_pieces[first_nonws], CommentNode)
-                and not any(
-                    isinstance(p, NewlineNode) for p in old_leading_pieces[:first_nonws]
-                )
+            old_first = items[0]
+            old_first.leading = join_above_block(style.inter_separator, above)
+            items.insert(0, new_item)
+        else:
+            # Internal insert: new item with leading = inter_sep; the
+            # item that was at position i (now at i+1) keeps its old
+            # leading (which already carries inter_sep + its own
+            # above-block).
+            new_item = ArrayItem(
+                leading=clone_trivia(style.inter_separator),
+                value=cst,
+                trailing=Trivia(),
+                has_comma=True,
+                post_comma_trivia=Trivia(),
             )
-            if opens_with_comment:
-                adopted = Trivia(pieces=old_leading_pieces)
-                displaced.leading = Trivia()
-                new_item = _new_item(
-                    cst, leading_first=True, style=style, leading=adopted
-                )
-                if leadings:
-                    leadings[0] = ()
-            elif first_nonws is None:
-                new_item = _new_item(
-                    cst,
-                    leading_first=True,
-                    style=style,
-                    leading=Trivia(pieces=old_leading_pieces),
-                )
-                displaced.leading = Trivia()
-            else:
-                # "Above-item" leading begins at the first comment;
-                # the indent prefix goes to the new item.
-                new_item = _new_item(
-                    cst,
-                    leading_first=True,
-                    style=style,
-                    leading=Trivia(pieces=old_leading_pieces[:first_nonws]),
-                )
-                displaced.leading = Trivia(pieces=old_leading_pieces[first_nonws:])
-                if leadings:
-                    leadings[0] = ()
-        else:
-            new_item = _new_item(cst, leading_first=False, style=style)
-        # Insert into items at position i.
-        items.insert(i, new_item)
-        # Make sure the new item has has_comma=True if not last; if it's
-        # the new last (i==len(items)-1), it should follow trailing
-        # policy.
-        is_last_after = i == len(items) - 1
-        if is_last_after:
-            # Old prior-last needs internal flip if it was a singleton.
-            # Restore terminal status on this one via _flip_to_terminal.
-            if len(items) >= 2:
-                _flip_to_internal(items[-2], style, self._value)
-            _flip_to_terminal(new_item, style)
-        else:
-            # Internal — ensure trailing comma + standard separator.
-            _flip_to_internal(new_item, style)
+            items.insert(i, new_item)
         list.insert(self, i, decoded)
-        # Logical leadings/eols follow each value to its new index.
-        leadings.insert(i, ())
-        eols.insert(i, None)
-        if any(eols) or any(leadings):
-            clear_all_comments(self)
-            apply_comments(self, leadings, eols)
 
     @override
     def reverse(self) -> None:
@@ -518,10 +492,14 @@ class Array(list[Any]):
     def _reorder(self, order: list[int]) -> None:
         """Apply index permutation to items, decoded list, and per-item comments."""
         items = self._value.items
-        # Bracket padding (leading of items[0], trailing of items[-1]) belongs
-        # to *the array* — snapshot before reorder so it stays put.
+        if not items:
+            return
+        # Capture style BEFORE swapping items so inter_sep reflects
+        # the original layout.
         style = self._style()
-        bracket_leading = clone_trivia(items[0].leading) if items else Trivia()
+        # Snapshot pad of header_trivia (everything bracket-side of the
+        # above-pos-0 block) so it stays put across the reorder.
+        head_pad, _head_above = split_above_block(self._value.header_trivia)
         leadings, eols = snapshot_comments(self)
         new_items = [items[j] for j in order]
         new_decoded = [self[j] for j in order]
@@ -531,8 +509,15 @@ class Array(list[Any]):
         list.clear(self)
         for v in new_decoded:
             list.append(self, v)
-        _normalise_for_renormalise(items, bracket_leading)
-        _renormalise_commas(items, style, self._value)
+        # Re-stamp leadings and post_comma_trivia per canonical model.
+        # Above-blocks will be re-applied by ``apply_comments`` from
+        # the snapshot.
+        self._value.header_trivia = clone_trivia(head_pad)
+        for k, it in enumerate(items):
+            it.leading = Trivia() if k == 0 else clone_trivia(style.inter_separator)
+            it.post_comma_trivia = Trivia()
+            it.trailing = Trivia()
+        _renormalise_commas(items, style)
         clear_all_comments(self)
         apply_comments(self, new_leadings, new_eols)
 
@@ -552,7 +537,6 @@ class Array(list[Any]):
             except TypeError as exc:
                 msg = "can only assign an iterable"
                 raise TypeError(msg) from exc
-            # Compute target indices and replace items in place.
             indices = list(range(*index.indices(len(self))))
             if (
                 index.step is not None
@@ -572,17 +556,24 @@ class Array(list[Any]):
                 new_decoded.append(dec)
             items = self._value.items
             style = self._style()
-            # Build the new ArrayItem list segment.
-            new_segment: list[ArrayItem] = []
             slice_start = index.start or 0
-            for i, cst in enumerate(new_csts):
-                first_in_arr = slice_start == 0 and i == 0 and not items[:slice_start]
-                new_segment.append(
-                    _new_item(cst, leading_first=first_in_arr, style=style)
+            new_segment = [
+                ArrayItem(
+                    leading=Trivia(),  # restamped below
+                    value=cst,
+                    trailing=Trivia(),
+                    has_comma=False,
+                    post_comma_trivia=Trivia(),
                 )
+                for cst in new_csts
+            ]
             items[index] = new_segment
             list.__setitem__(self, index, new_decoded)
-            _renormalise_commas(items, style, self._value)
+            # Re-stamp leadings under canonical model.
+            for k, it in enumerate(items):
+                it.leading = Trivia() if k == 0 else clone_trivia(style.inter_separator)
+            del slice_start
+            _renormalise_commas(items, style)
             return
         # int index: just replace the value CST in place.
         i = int(index)
@@ -596,66 +587,81 @@ class Array(list[Any]):
     @override
     def __delitem__(self, index: SupportsIndex | slice) -> None:
         items = self._value.items
-        # Snapshot bracket padding before mutation so a delete at
-        # index 0 doesn't strip the leading-bracket padding (which
-        # was owned by the original items[0]).
-        had_leading = bool(items) and bool(items[0].leading.pieces)
-        leading_first = clone_trivia(items[0].leading) if had_leading else Trivia()
-        # Snapshot terminal item's trailing for tail-pad migration: if
-        # the delete includes the original last item and final_trivia
-        # is empty, migrate that trailing into final_trivia so the new
-        # tail still renders with bracket padding.
-        last_idx = len(items) - 1
-        had_tail_pad = (
-            bool(items)
-            and bool(items[last_idx].trailing.pieces)
-            and not self._value.final_trivia.pieces
-        )
-        tail_pad = clone_trivia(items[last_idx].trailing) if had_tail_pad else Trivia()
+        if not items:
+            list.__delitem__(self, index)  # propagate IndexError
+            return
+        # Normalise to a sorted list of removed positions so we can
+        # reason uniformly about delete-at-0 and tail removal.
         if isinstance(index, slice):
-            removed_indices = range(*index.indices(len(items)))
-            tail_was_removed = last_idx in removed_indices
+            removed = sorted(range(*index.indices(len(items))))
         else:
             i = int(index)
             if i < 0:
                 i += len(items)
-            tail_was_removed = i == last_idx
-        # When we'll re-stamp a new terminal after removing the old
-        # one, snapshot the original terminal's has_comma and
-        # post_comma_trivia directly. _flip_to_terminal only needs
-        # `style.trailing_comma` and `style.trailing_post` — both
-        # derive solely from items[-1] — so we can skip the O(N)
-        # `_style()` scan that would otherwise dominate pop(-1).
+            if i < 0 or i >= len(items):
+                # Let list.__delitem__ raise the canonical IndexError.
+                list.__delitem__(self, index)
+                return
+            removed = [i]
+        if not removed:
+            list.__delitem__(self, index)
+            return
+        last_idx = len(items) - 1
+        zero_removed = 0 in removed
+        tail_removed = last_idx in removed
+        survivors_after_zero = [
+            j for j in range(len(items)) if j > 0 and j not in removed
+        ]
+        # Capture per-item snapshots needed for boundary fix-ups.
+        # When position 0 is removed, the new items[0] inherits a
+        # leading whose above-block currently lives in items[k].leading
+        # for the smallest surviving k > 0.
+        new_first_above: Trivia = Trivia()
+        if zero_removed and survivors_after_zero:
+            k = survivors_after_zero[0]
+            _new_pad, new_first_above = split_above_block(items[k].leading)
+        # When the tail is removed, the surviving last item's
+        # post_comma_trivia (if it had a comma) currently encodes a
+        # post-comma bracket pad we need to recompute from style.
+        is_multiline = (
+            self._multiline
+            or trivia_has_newline(self._value.header_trivia)
+            or trivia_has_newline(self._value.final_trivia)
+        )
         new_terminal_has_comma = False
         new_terminal_post: Trivia = Trivia()
-        if tail_was_removed and len(items) >= 2:
-            orig_terminal = items[last_idx]
-            new_terminal_has_comma = orig_terminal.has_comma
-            if orig_terminal.has_comma:
-                is_multiline = (
-                    self._multiline
-                    or trivia_has_newline(orig_terminal.post_comma_trivia)
-                    or trivia_has_newline(self._value.final_trivia)
-                )
-                new_terminal_post = _structural_trailing_post(
-                    orig_terminal.post_comma_trivia, multiline=is_multiline
-                )
+        new_terminal_trailing: Trivia | None = None
+        if tail_removed:
+            new_last_idx = max(
+                (j for j in range(len(items)) if j not in removed), default=-1
+            )
+            if new_last_idx >= 0:
+                orig_terminal = items[last_idx]
+                new_terminal_has_comma = orig_terminal.has_comma
+                if orig_terminal.has_comma:
+                    new_terminal_post = _structural_trailing_post(
+                        orig_terminal.post_comma_trivia, multiline=is_multiline
+                    )
+                else:
+                    new_terminal_trailing = clone_trivia(orig_terminal.trailing)
         del items[index]
         list.__delitem__(self, index)
-        if items:
-            if had_leading and not items[0].leading.pieces:
-                items[0].leading = leading_first
-            if had_tail_pad and tail_was_removed:
-                self._value.final_trivia = tail_pad
-            if tail_was_removed:
-                items[-1].has_comma = new_terminal_has_comma
-                items[-1].post_comma_trivia = (
-                    clone_trivia(new_terminal_post)
-                    if new_terminal_has_comma
-                    else Trivia()
-                )
-        elif had_tail_pad and tail_was_removed:
-            self._value.final_trivia = tail_pad
+        if not items:
+            return
+        if zero_removed:
+            # The new items[0] absorbs nothing into its leading
+            # (canonical empty); the above-block that previously sat
+            # before it migrates into header_trivia.
+            head_pad, _drop = split_above_block(self._value.header_trivia)
+            self._value.header_trivia = join_above_block(head_pad, new_first_above)
+            items[0].leading = Trivia()
+        if tail_removed:
+            items[-1].has_comma = new_terminal_has_comma
+            items[-1].post_comma_trivia = (
+                clone_trivia(new_terminal_post) if new_terminal_has_comma else Trivia()
+            )
+            if new_terminal_trailing is not None:
+                items[-1].trailing = new_terminal_trailing
 
     @override
     def __iadd__(self, values: Iterable[Any]) -> Self:
@@ -679,7 +685,7 @@ class Array(list[Any]):
                 style = self._style()
                 items = self._value.items
                 if items:
-                    _flip_to_internal(items[-1], style, self._value)
+                    _flip_to_internal(items[-1])
                 # First-of-original gets internal leading too (since we're
                 # now mid-array).
                 cloned.leading = _internal_leading(style)
@@ -724,103 +730,50 @@ def _detect_style(value: ArrayValue | None, *, multiline_flag: bool) -> _ArraySt
             trailing_post=Trivia(),
         )
     items = value.items
-    # Local has_newline probe: in a uniformly-laid-out array (the
-    # parsed norm) every item's post_comma_trivia carries the same
-    # shape, so checking the head + tail items + final_trivia is
-    # sufficient — the same reasoning that lets `__delitem__` derive
-    # is_multiline from items[-1] alone. Avoids an O(N) per-call scan
-    # over the whole array on every append/insert.
-    has_newline = trivia_has_newline(value.final_trivia) or (
-        bool(items)
-        and (
-            trivia_has_newline(items[0].post_comma_trivia)
-            or trivia_has_newline(items[-1].post_comma_trivia)
-        )
+    # Under the canonical model, multiline-ness is visible in
+    # header_trivia / final_trivia / items[k>=1].leading. Sample bounded
+    # canonical locations.
+    has_newline = (
+        trivia_has_newline(value.header_trivia)
+        or trivia_has_newline(value.final_trivia)
+        or (len(items) >= 2 and trivia_has_newline(items[1].leading))
+        or (bool(items) and trivia_has_newline(items[-1].leading))
     )
     is_multiline = has_newline or multiline_flag
-    # Inter-item separator: first internal item's post_comma_trivia.
-    inter_sep = None
-    for it in items:
-        if it.has_comma and (it is not items[-1] or len(items) == 1):
-            inter_sep = clone_trivia(it.post_comma_trivia)
-            break
-    if inter_sep is None:
-        if is_multiline:
-            # Sample newline style from any newline already in the
-            # array body so CRLF stays CRLF.
-            nl_text = "\n"
-            if value is not None:
-                for p in value.final_trivia.pieces:
-                    if isinstance(p, NewlineNode):
-                        nl_text = p.text
-                        break
-                else:
-                    for it in items:
-                        for p in it.post_comma_trivia.pieces:
-                            if isinstance(p, NewlineNode):
-                                nl_text = p.text
-                                break
-                        if nl_text != "\n":
-                            break
-            inter_sep = Trivia([NewlineNode(text=nl_text), WhitespaceNode(text="    ")])
-        else:
-            inter_sep = Trivia([WhitespaceNode(text=" ")])
-    elif is_multiline and len(items) == 1 and not _has_ws_after_last_newline(inter_sep):
-        # Single-item multiline arrays: post_comma_trivia of the
-        # only item may carry a trailing comment block but lack a
-        # trailing indent (the next byte is `]`). Stitch on the
-        # indent from items[0].leading after the LAST newline so an
-        # appended item lands at the right column without disturbing
-        # any interior comment.
-        indent = _first_indent_after_newline(items[0].leading)
-        if indent:
-            pieces_list = list(inter_sep.pieces)
-            last_nl = -1
-            for j, p in enumerate(pieces_list):
-                if isinstance(p, NewlineNode):
-                    last_nl = j
-            if last_nl >= 0:
-                pieces_list.insert(last_nl + 1, WhitespaceNode(text=indent))
-                inter_sep = Trivia(pieces_list)
-    # Trailing-comma policy: the last item's has_comma if any.
-    if items:
-        trailing_comma = items[-1].has_comma
-        if items[-1].has_comma:
-            tp = items[-1].post_comma_trivia
-            if is_multiline:
-                # In a multiline layout, post_comma_trivia of the last
-                # item may carry a trailing comment block (e.g. a
-                # `# tail` line that "belonged" to the previous tail
-                # position). The structural trailing_post is just the
-                # newline (and any bracket-pad indent) immediately
-                # before `]`. Take everything from the LAST newline
-                # forward.
-                pieces_list = list(tp.pieces)
-                last_nl = -1
-                for j, p in enumerate(pieces_list):
-                    if isinstance(p, NewlineNode):
-                        last_nl = j
-                if last_nl >= 0:
-                    trailing_post = Trivia(list(pieces_list[last_nl:]))
-                else:
-                    trailing_post = clone_trivia(tp)
-            else:
-                trailing_post = clone_trivia(tp)
-        else:
-            trailing_post = Trivia()
-    else:
-        trailing_comma = is_multiline
-        # Sample newline style from the empty array's final_trivia
-        # so CRLF documents stay CRLF after append. Falls back to LF.
+    # Inter-item separator: structural pad portion of items[1].leading
+    # (the part before any above-item-1 comment block). For single-item
+    # arrays, derive from header_trivia indent.
+    if len(items) >= 2:
+        pad, _above = split_above_block(items[1].leading)
+        inter_sep = pad if pad.pieces else clone_trivia(items[1].leading)
+    elif is_multiline:
+        # Single-item multiline: synthesise from header_trivia indent.
         nl_text = "\n"
-        if value is not None:
+        for p in value.header_trivia.pieces:
+            if isinstance(p, NewlineNode):
+                nl_text = p.text
+                break
+        else:
             for p in value.final_trivia.pieces:
                 if isinstance(p, NewlineNode):
                     nl_text = p.text
                     break
-        trailing_post = (
-            Trivia([NewlineNode(text=nl_text)]) if is_multiline else Trivia()
-        )
+        indent = _first_indent_after_newline(value.header_trivia)
+        if not indent:
+            indent = _indent_from_final_trivia(value.final_trivia) or "    "
+        inter_sep = Trivia([NewlineNode(text=nl_text), WhitespaceNode(text=indent)])
+    else:
+        inter_sep = Trivia([WhitespaceNode(text=" ")])
+    # Trailing-comma policy: the last item's has_comma if any.
+    trailing_comma = items[-1].has_comma if items else is_multiline
+    # Trailing post: pad portion of final_trivia (drops any
+    # above-`]` comment block; that's an above-block belonging to a
+    # would-be next item, not bracket pad).
+    pad_ft, _above_ft = split_above_block(value.final_trivia)
+    trailing_post = pad_ft if pad_ft.pieces else clone_trivia(value.final_trivia)
+    if not items and is_multiline and not trailing_post.pieces:
+        nl_text = "\n"
+        trailing_post = Trivia([NewlineNode(text=nl_text)])
     return _ArrayStyle(
         is_multiline=is_multiline,
         inter_separator=inter_sep,
@@ -881,10 +834,9 @@ def _indent_from_final_trivia(ft: Trivia) -> str:
     return last_ws_after_nl or ""
 
 
-def _internal_leading(_style: _ArrayStyle) -> Trivia:
-    # Internal items get blank leading; separator lives in the prior
-    # item's post_comma_trivia.
-    return Trivia()
+def _internal_leading(style: _ArrayStyle) -> Trivia:
+    """Leading trivia for an internal item: clone of inter-item separator."""
+    return clone_trivia(style.inter_separator)
 
 
 def _new_item(
@@ -905,64 +857,54 @@ def _new_item(
     )
 
 
-def _flip_to_internal(
-    item: ArrayItem, style: _ArrayStyle, value: ArrayValue | None = None
-) -> None:
+def _migrate_eol_trailing_to_post_comma(item: ArrayItem) -> None:
+    """If item.trailing carries an EOL section, move it to post_comma_trivia.
+
+    Used when flipping from terminal (no comma) to internal (comma added):
+    the EOL row that previously sat between the value and the closing `]`
+    now logically follows the new comma.
+    """
+    eol, rest = split_eol_section(item.trailing)
+    if eol.pieces:
+        item.post_comma_trivia = eol
+        item.trailing = rest
+
+
+def _migrate_eol_post_comma_to_trailing(item: ArrayItem) -> None:
+    """Inverse of _migrate_eol_trailing_to_post_comma."""
+    eol, rest = split_eol_section(item.post_comma_trivia)
+    if eol.pieces:
+        item.trailing = Trivia(list(item.trailing.pieces) + list(eol.pieces))
+        item.post_comma_trivia = rest
+
+
+def _flip_to_internal(item: ArrayItem) -> None:
     """Make ``item`` look like an internal (non-last) item.
 
-    When ``value`` is supplied, any whitespace in ``item.trailing`` is
-    treated as bracket-padding and migrated into ``value.final_trivia``
-    (if that slot is empty) before being cleared from the item — so
-    that the original ``[ ..., x ]`` style survives an item being
-    demoted from terminal to internal.
-
-    If the item already has a comma + non-empty ``post_comma_trivia``
-    (e.g. an EOL comment block), preserve it verbatim — it belongs to
-    the item — and only ensure it ends with a structural newline +
-    indent so the next item lands at the right column. Otherwise fall
-    back to the style's full inter-separator template.
+    Under the canonical model the inter-item separator lives in the
+    NEXT item's leading; this function only ensures the comma is set
+    and migrates any EOL comment from `trailing` into `post_comma_trivia`.
     """
-    has_comment = any(isinstance(p, CommentNode) for p in item.trailing.pieces)
-    if (
-        value is not None
-        and item.trailing.pieces
-        and not value.final_trivia.pieces
-        and not has_comment
-    ):
-        value.final_trivia = item.trailing
-    if not has_comment:
-        item.trailing = Trivia()
-    if item.has_comma and item.post_comma_trivia.pieces:
-        if not _has_ws_after_last_newline(item.post_comma_trivia):
-            indent = _first_indent_after_newline(style.inter_separator)
-            pieces = list(item.post_comma_trivia.pieces)
-            last_nl = -1
-            for j, p in enumerate(pieces):
-                if isinstance(p, NewlineNode):
-                    last_nl = j
-            if last_nl >= 0 and indent:
-                pieces.insert(last_nl + 1, WhitespaceNode(text=indent))
-                item.post_comma_trivia = Trivia(pieces)
-            elif last_nl < 0 and indent:
-                nl_text = "\n"
-                for p in style.inter_separator.pieces:
-                    if isinstance(p, NewlineNode):
-                        nl_text = p.text
-                        break
-                pieces.append(NewlineNode(text=nl_text))
-                pieces.append(WhitespaceNode(text=indent))
-                item.post_comma_trivia = Trivia(pieces)
-        return
-    item.has_comma = True
-    item.post_comma_trivia = clone_trivia(style.inter_separator)
+    if not item.has_comma:
+        _migrate_eol_trailing_to_post_comma(item)
+        item.has_comma = True
 
 
 def _flip_to_terminal(item: ArrayItem, style: _ArrayStyle) -> None:
     """Make ``item`` look like the terminal (last) item per style."""
-    item.has_comma = style.trailing_comma
-    item.post_comma_trivia = (
-        clone_trivia(style.trailing_post) if style.trailing_comma else Trivia()
-    )
+    if style.trailing_comma:
+        if not item.has_comma:
+            _migrate_eol_trailing_to_post_comma(item)
+            item.has_comma = True
+        # When has_comma==True, post_comma_trivia carries any EOL the
+        # parser/mutation already filed there; keep it intact.
+        return
+    # No trailing comma policy: drop the comma; migrate any EOL back
+    # to trailing.
+    if item.has_comma:
+        _migrate_eol_post_comma_to_trailing(item)
+        item.has_comma = False
+        item.post_comma_trivia = Trivia()
 
 
 def _structural_trailing_post(tp: Trivia, *, multiline: bool) -> Trivia:
@@ -988,11 +930,15 @@ def _structural_trailing_post(tp: Trivia, *, multiline: bool) -> Trivia:
 
 def _value_has_any_comment(val: Value) -> bool:
     if isinstance(val, ArrayValue):
-        if trivia_has_comment(val.final_trivia):
+        if trivia_has_comment(val.header_trivia) or trivia_has_comment(
+            val.final_trivia
+        ):
             return True
         return any(_item_has_any_comment(it) for it in val.items)
     if isinstance(val, InlineTableValue):
-        if trivia_has_comment(val.final_trivia):
+        if trivia_has_comment(val.header_trivia) or trivia_has_comment(
+            val.final_trivia
+        ):
             return True
         return any(_entry_has_any_comment(e) for e in val.entries)
     return False
@@ -1016,29 +962,13 @@ def _entry_has_any_comment(entry: InlineTableEntry) -> bool:
     return _value_has_any_comment(entry.value)
 
 
-def _renormalise_commas(
-    items: list[ArrayItem], style: _ArrayStyle, value: ArrayValue | None = None
-) -> None:
+def _renormalise_commas(items: list[ArrayItem], style: _ArrayStyle) -> None:
     """Reset has_comma + post_comma_trivia across ``items`` per style."""
     if not items:
         return
     for it in items[:-1]:
-        _flip_to_internal(it, style, value)
+        _flip_to_internal(it)
     _flip_to_terminal(items[-1], style)
-
-
-def _normalise_for_renormalise(items: list[ArrayItem], bracket_leading: Trivia) -> None:
-    """Prepare ``items`` for `_renormalise_commas` after a reorder.
-
-    Strips per-item ``leading`` (so the bracket-leading isn't double-
-    counted on whichever item now sits at index 0) and re-applies the
-    captured ``bracket_leading`` to the new ``items[0]``.
-    """
-    if not items:
-        return
-    for it in items:
-        it.leading = Trivia()
-    items[0].leading = bracket_leading
 
 
 def _clone_item(item: ArrayItem) -> ArrayItem:

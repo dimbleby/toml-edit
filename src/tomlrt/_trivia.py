@@ -75,6 +75,88 @@ def clone_trivia(t: Trivia) -> Trivia:
     return Trivia(list(t.pieces))
 
 
+def split_above_block(t: Trivia) -> tuple[Trivia, Trivia]:
+    """Split ``t`` into ``(pad, above)``.
+
+    ``above`` is the item-attached comment block and ``pad`` is the
+    structural padding that surrounds it (opening newline + value
+    indent).
+
+    Used by inline-array / inline-table mutators to relocate an
+    above-item comment block from one item's leading slot to another's
+    when the boundary item changes (``insert(0)``, ``del[0]``, sort,
+    reverse, slice assignment at index 0, append onto an array whose
+    ``final_trivia`` carries an above-`]` comment block).
+
+    Two parts are returned, but they are *not* a simple concatenation:
+    the comment block lives between the opening newline (a single
+    ``NewlineNode`` from ``pad``) and the trailing value indent (the
+    rest of ``pad``). To reconstruct, splice ``above`` between
+    ``pad[0]`` and ``pad[1:]`` (use :func:`join_above_block`).
+
+    By construction ``above`` is the run of pieces strictly between
+    the first ``NewlineNode`` and the trailing whitespace immediately
+    preceding nothing (or the end of trivia). ``above`` is empty iff
+    no ``CommentNode`` appears in that run.
+    """
+    pieces = t.pieces
+    first_nl = -1
+    for i, p in enumerate(pieces):
+        if isinstance(p, NewlineNode):
+            first_nl = i
+            break
+    if first_nl < 0:
+        return Trivia(list(pieces)), Trivia()
+    # Trailing-WS run (zero or one piece).
+    tail_start = len(pieces)
+    if tail_start > first_nl + 1 and isinstance(pieces[tail_start - 1], WhitespaceNode):
+        tail_start -= 1
+    middle = pieces[first_nl + 1 : tail_start]
+    # ``above`` is non-empty only if a CommentNode appears in middle.
+    if not any(isinstance(p, CommentNode) for p in middle):
+        return Trivia(list(pieces)), Trivia()
+    pad = Trivia(list(pieces[: first_nl + 1]) + list(pieces[tail_start:]))
+    above = Trivia(list(middle))
+    return pad, above
+
+
+def join_above_block(pad: Trivia, above: Trivia) -> Trivia:
+    """Splice ``above`` back into ``pad``.
+
+    ``above`` is inserted between ``pad[0]`` (opening NL) and the rest
+    of ``pad`` (value indent). Inverse of :func:`split_above_block`.
+    """
+    pieces = list(pad.pieces)
+    if not pieces:
+        return Trivia(list(above.pieces))
+    return Trivia([pieces[0], *above.pieces, *pieces[1:]])
+
+
+def split_eol_section(t: Trivia) -> tuple[Trivia, Trivia]:
+    """Split ``t`` into the inline EOL section and the structural rest.
+
+    Used to canonicalise post-comma trivia in inline arrays and inline
+    tables.  The "EOL section" is the row-attached part: any inline
+    whitespace, an EOL comment, and the terminating newline of that
+    comment row.  Anything beyond — additional newlines, indent,
+    above-item comment blocks — is structural and belongs to the
+    *next* item's leading.
+
+    If no EOL comment is present on the comma's row, the whole input
+    is structural and the EOL half is empty.
+    """
+    pieces = t.pieces
+    j = 0
+    while j < len(pieces) and isinstance(pieces[j], WhitespaceNode):
+        j += 1
+    if j >= len(pieces) or not isinstance(pieces[j], CommentNode):
+        return Trivia(), Trivia(list(pieces))
+    end = j + 1
+    if end < len(pieces) and isinstance(pieces[end], NewlineNode):
+        end += 1
+    return Trivia(list(pieces[:end])), Trivia(list(pieces[end:]))
+
+
 @dataclass(slots=True, eq=False)
 class EolTrivia:
     """End-of-line tail of a single physical line.
@@ -107,4 +189,10 @@ __all__ = [
     "Trivia",
     "TriviaPiece",
     "WhitespaceNode",
+    "clone_trivia",
+    "join_above_block",
+    "split_above_block",
+    "split_eol_section",
+    "trivia_has_comment",
+    "trivia_has_newline",
 ]

@@ -133,10 +133,7 @@ class ArrayValue:
 
     def render(self) -> str:
         body = "".join([item.render() for item in self.items])
-        return (
-            f"[{self.header_trivia.render()}{body}"
-            f"{self.final_trivia.render()}]"
-        )
+        return f"[{self.header_trivia.render()}{body}{self.final_trivia.render()}]"
 
 
 # ---------------------------------------------------------------------------
@@ -238,10 +235,7 @@ class InlineTableValue:
 
     def render(self) -> str:
         body = "".join([e.render() for e in self.entries])
-        return (
-            f"{{{self.header_trivia.render()}{body}"
-            f"{self.final_trivia.render()}}}"
-        )
+        return f"{{{self.header_trivia.render()}{body}{self.final_trivia.render()}}}"
 
 
 Value = (

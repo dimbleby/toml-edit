@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Literal
 
 from tomlrt._scanner import _Scanner
 from tomlrt._slots import KVSlot, StructuralHeaderSlot
-from tomlrt._trivia import EolTrivia, Trivia
+from tomlrt._trivia import EolTrivia, Trivia, split_eol_section
 from tomlrt._validator import _Validator
 from tomlrt._values import ArrayItem, ArrayValue, InlineTableEntry, InlineTableValue
 
@@ -232,34 +232,49 @@ class _Parser:
         assert sc.peek() == "["
         sc.pos += 1
         node = ArrayValue()
-        leading = sc.scan_array_trivia()
+        head = sc.scan_array_trivia()
         end = sc.end
         if sc.pos < end and src[sc.pos] == "]":
-            node.final_trivia = leading
+            # Empty array: head trivia is interior, attribute it to
+            # final_trivia (the canonical pre-`]` slot).
+            node.final_trivia = head
             sc.pos += 1
             return node
+        node.header_trivia = head
         items = node.items
+        leading = Trivia()  # items[0].leading is always empty
         while True:
             value = self._parse_value()
             trailing = sc.scan_array_trivia()
             has_comma = False
             post_comma = Trivia()
+            next_leading = Trivia()
             ch = src[sc.pos] if sc.pos < end else ""
             if ch == ",":
                 sc.pos += 1
                 has_comma = True
-                post_comma = sc.scan_array_trivia()
+                scanned = sc.scan_array_trivia()
+                post_comma, next_leading = split_eol_section(scanned)
             elif ch != "]":
                 msg = f"expected ',' or ']' in array, got {ch!r}"
                 raise sc.error(msg)
             items.append(ArrayItem(leading, value, trailing, has_comma, post_comma))
             if not has_comma:
+                # Terminal item with no trailing comma: split the
+                # trailing scan into the EOL section (stays on the
+                # item) and the structural bracket pad (final_trivia).
+                eol, rest = split_eol_section(items[-1].trailing)
+                items[-1].trailing = eol
+                node.final_trivia = rest
                 sc.pos += 1
                 return node
-            leading = Trivia()
             if sc.pos < end and src[sc.pos] == "]":
+                # Trailing-comma terminator: structural rest is the
+                # bracket pad.
+                node.final_trivia = next_leading
                 sc.pos += 1
                 return node
+            leading = next_leading
 
     # --- inline tables ------------------------------------------------
 
@@ -268,11 +283,13 @@ class _Parser:
         assert sc.peek() == "{"
         sc.advance(1)
         node = InlineTableValue()
-        leading = sc.scan_array_trivia()
+        head = sc.scan_array_trivia()
         if sc.peek() == "}":
-            node.final_trivia = leading
+            node.final_trivia = head
             sc.advance(1)
             return node
+        node.header_trivia = head
+        leading = Trivia()  # entries[0].leading is always empty
         seen_values: set[tuple[str, ...]] = set()
         seen_prefixes: set[tuple[str, ...]] = set()
         while True:
@@ -293,10 +310,12 @@ class _Parser:
             trailing = sc.scan_array_trivia()
             has_comma = False
             post_comma = Trivia()
+            next_leading = Trivia()
             if sc.peek() == ",":
                 sc.advance(1)
                 has_comma = True
-                post_comma = sc.scan_array_trivia()
+                scanned = sc.scan_array_trivia()
+                post_comma, next_leading = split_eol_section(scanned)
             elif sc.peek() != "}":
                 msg = f"expected ',' or '}}' in inline table, got {sc.peek()!r}"
                 raise sc.error(msg)
@@ -314,12 +333,16 @@ class _Parser:
                 )
             )
             if not has_comma:
+                eol, rest = split_eol_section(node.entries[-1].trailing)
+                node.entries[-1].trailing = eol
+                node.final_trivia = rest
                 sc.advance(1)
                 return node
-            leading = Trivia()
             if sc.peek() == "}":
+                node.final_trivia = next_leading
                 sc.advance(1)
                 return node
+            leading = next_leading
 
 
 __all__ = ["ParseResult", "_Parser"]

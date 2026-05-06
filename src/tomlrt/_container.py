@@ -1220,7 +1220,7 @@ def _inline_value_has_inner_comments(v: object) -> bool:
     """
     if not isinstance(v, InlineTableValue):
         return False
-    return _comma_value_has_outer_comments(v.final_trivia, v.entries)
+    return _comma_value_has_outer_comments(v.final_trivia, v.entries, v.header_trivia)
 
 
 def _array_value_has_outer_comments(v: object) -> bool:
@@ -1232,14 +1232,17 @@ def _array_value_has_outer_comments(v: object) -> bool:
     """
     if not isinstance(v, ArrayValue):
         return False
-    return _comma_value_has_outer_comments(v.final_trivia, v.items)
+    return _comma_value_has_outer_comments(v.final_trivia, v.items, v.header_trivia)
 
 
 def _comma_value_has_outer_comments(
     final_trivia: Trivia,
     parts: Iterable[ArrayItem | InlineTableEntry],
+    header_trivia: Trivia | None = None,
 ) -> bool:
     if trivia_has_comment(final_trivia):
+        return True
+    if header_trivia is not None and trivia_has_comment(header_trivia):
         return True
     return any(
         trivia_has_comment(p.leading)
@@ -1625,7 +1628,7 @@ def _populate_inline_table(
         )
         is_last = i == len(items) - 1
         entry = InlineTableEntry(
-            leading=Trivia([WhitespaceNode(text=" ")]),
+            leading=Trivia() if i == 0 else Trivia([WhitespaceNode(text=" ")]),
             key_parts=[make_keypart(k)],
             key_seps=[],
             pre_eq=" ",
@@ -1638,6 +1641,7 @@ def _populate_inline_table(
         val.entries.append(entry)
         dict.__setitem__(table, k, sub_dec)
     if items:
+        val.header_trivia = Trivia([WhitespaceNode(text=" ")])
         val.final_trivia = Trivia([WhitespaceNode(text=" ")])
     return val, table
 
@@ -1661,17 +1665,15 @@ def _synth_inline_array(
             owner=owner,
         )
         is_last = i == len(items) - 1
-        # Place the inter-item space in post_comma_trivia (matching
-        # the parser's `,(space)2` shape) so _detect_style sees it
-        # and subsequent appends use the right separator.
+        # Under the canonical model, inter-item separators live in the
+        # NEXT item's leading; items[0].leading is always empty;
+        # post_comma_trivia carries only EOL sections (empty here).
         item = ArrayItem(
-            leading=Trivia(),
+            leading=Trivia() if i == 0 else Trivia([WhitespaceNode(text=" ")]),
             value=sub_cst,
             trailing=Trivia(),
             has_comma=not is_last,
-            post_comma_trivia=(
-                Trivia([WhitespaceNode(text=" ")]) if not is_last else Trivia()
-            ),
+            post_comma_trivia=Trivia(),
         )
         val.items.append(item)
         list.append(arr, sub_dec)

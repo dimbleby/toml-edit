@@ -1,31 +1,18 @@
 """Comment side-channel views for ``Array``.
 
-``Array.comments`` (EOL comments per item, indexed by item position)
-and ``Array.leading_comments`` (tuple of comment lines above each
-item, indexed by item position) are implemented here. They share
-the same encode/decode helpers and validation rules as the
-section-level views in ``_comments``.
+``Array.comments`` (EOL comments per item) and
+``Array.leading_comments`` (tuple of comment lines above each item)
+are implemented here.  Both are indexed by item position and share
+the encode/decode helpers and validation rules from ``_comments``.
 
-The physical layout of an item's per-item trivia (set by
-``_parser.py``) is:
+Per-item trivia ownership (canonical model — see ``ArrayValue``):
 
-    leading | value | trailing | "," | post_comma_trivia
-
-For a multi-line array the parser puts the EOL of an item with a
-trailing comma into ``post_comma_trivia`` (the comment appears
-after the comma on the same line). The EOL of a *last* item with
-no trailing comma instead lands in ``trailing``. Conversely, a
-"leading comment" written above item *i* (i > 0) ends up in the
-``post_comma_trivia`` of item *i-1* (after that item's EOL section,
-if any). Item 0's leading lives in ``items[0].leading``.
-
-The view code therefore reads from a *combined* trivia region per
-item and writes back into a single canonical place:
-
-    EOL of item i  : trailing if not has_comma else post_comma_trivia
-    leading of i   : items[0].leading      (if i == 0)
-                     items[i-1].post_comma_trivia (if i > 0),
-                     placed *after* item (i-1)'s EOL section.
+  - Above-item region for item ``i``:
+      ``header_trivia``       if i == 0
+      ``items[i].leading``    if i >= 1
+  - EOL for item ``i``:
+      ``items[i].post_comma_trivia``  if has_comma
+      ``items[i].trailing``           otherwise
 """
 
 from __future__ import annotations
@@ -49,7 +36,11 @@ from tomlrt._comments import (
 from tomlrt._trivia import (
     CommentNode,
     NewlineNode,
+    Trivia,
     WhitespaceNode,
+    join_above_block,
+    split_above_block,
+    split_eol_section,
 )
 
 if TYPE_CHECKING:
@@ -57,10 +48,9 @@ if TYPE_CHECKING:
 
     from tomlrt._array import Array
     from tomlrt._trivia import (
-        Trivia,
         TriviaPiece,
     )
-    from tomlrt._values import ArrayItem
+    from tomlrt._values import ArrayItem, ArrayValue
 
 
 # ---------------------------------------------------------------------------
@@ -79,6 +69,10 @@ def _items_or_raise(arr: Array) -> list[ArrayItem]:
     return arr._value.items  # noqa: SLF001
 
 
+def _value_or_raise(arr: Array) -> ArrayValue:
+    return arr._value  # noqa: SLF001
+
+
 def _check_index(arr: Array, key: object) -> int:
     if not isinstance(key, int) or isinstance(key, bool):
         msg = f"Array comment indices must be int, not {type(key).__name__}"
@@ -91,29 +85,6 @@ def _check_index(arr: Array, key: object) -> int:
     return idx
 
 
-def _split_eol_section(
-    pieces: list[TriviaPiece],
-) -> tuple[list[TriviaPiece], list[TriviaPiece]]:
-    """Split pieces into (eol_section, rest).
-
-    The EOL section is the leading run of non-newline pieces up to
-    and including the first ``NewlineNode``, *iff* it contains a
-    ``CommentNode``. Otherwise the EOL section is empty and `pieces`
-    is returned unchanged as `rest`.
-    """
-    saw_comment = False
-    for idx, p in enumerate(pieces):
-        if isinstance(p, CommentNode):
-            saw_comment = True
-        elif isinstance(p, NewlineNode):
-            if saw_comment:
-                return pieces[: idx + 1], pieces[idx + 1 :]
-            return [], list(pieces)
-    if saw_comment:
-        return list(pieces), []
-    return [], list(pieces)
-
-
 def _eol_text_from(pieces: list[TriviaPiece]) -> str | None:
     for p in pieces:
         if isinstance(p, NewlineNode):
@@ -124,18 +95,8 @@ def _eol_text_from(pieces: list[TriviaPiece]) -> str | None:
 
 
 def _item_eol(item: ArrayItem) -> str | None:
-    # Try the canonical "owner" first (trailing if no comma, post_comma if
-    # comma) but also fall back to the other location for layouts the
-    # parser may produce out-of-band.
-    if item.has_comma:
-        eol = _eol_text_from(list(item.post_comma_trivia.pieces))
-        if eol is not None:
-            return eol
-        return _eol_text_from(list(item.trailing.pieces))
-    eol = _eol_text_from(list(item.trailing.pieces))
-    if eol is not None:
-        return eol
-    return _eol_text_from(list(item.post_comma_trivia.pieces))
+    target = item.post_comma_trivia if item.has_comma else item.trailing
+    return _eol_text_from(list(target.pieces))
 
 
 def _eol_target(item: ArrayItem) -> Trivia:
@@ -147,48 +108,35 @@ def _ensure_multiline(arr: Array) -> None:
         arr.set_multiline(multiline=True)
 
 
-def _leading_pieces(items: list[ArrayItem], i: int) -> list[TriviaPiece]:
-    """The pieces that constitute item *i*'s leading region."""
+def _above_pieces(value: ArrayValue, i: int) -> list[TriviaPiece]:
+    """Pieces in the above-item region of item ``i``."""
     if i == 0:
-        return list(items[0].leading.pieces)
-    prev = items[i - 1]
-    _eol, rest = _split_eol_section(list(prev.post_comma_trivia.pieces))
-    return rest + list(items[i].leading.pieces)
+        return list(value.header_trivia.pieces)
+    return list(value.items[i].leading.pieces)
 
 
 def _comments_from_lines(pieces: list[TriviaPiece]) -> tuple[str, ...]:
     return tuple(_decode_comment(p.text) for p in pieces if isinstance(p, CommentNode))
 
 
-def _render_comment_lines(
-    lines: tuple[str, ...], nl: str, ind: str
-) -> list[TriviaPiece]:
-    """Indent + comment + newline for each line, plus a final indent."""
-    out: list[TriviaPiece] = []
-    for line in lines:
-        out.append(WhitespaceNode(ind))
-        out.append(CommentNode(_encode_comment(line)))
-        out.append(NewlineNode(nl))
-    out.append(WhitespaceNode(ind))
-    return out
-
-
 def _slot_indent(arr: Array) -> str:
     """Best-effort indent string for this array's items."""
-    items = arr._value.items  # noqa: SLF001
-    if items:
-        # Prefer item 0's leading whitespace immediately before the value.
-        for p in reversed(items[0].leading.pieces):
+    value = _value_or_raise(arr)
+    items = value.items
+    # Prefer the indent immediately before items[1]'s value (the
+    # canonical inter-item separator under the new model), then fall
+    # back to header_trivia, then to a reasonable default.
+    sources: list[Trivia] = []
+    if len(items) >= 2:
+        sources.append(items[1].leading)
+    sources.append(value.header_trivia)
+    sources.extend(it.leading for it in items[2:])
+    for src in sources:
+        for p in reversed(src.pieces):
             if isinstance(p, WhitespaceNode):
                 return p.text
             if isinstance(p, NewlineNode):
                 break
-        for prev in items:
-            for p in reversed(prev.post_comma_trivia.pieces):
-                if isinstance(p, WhitespaceNode):
-                    return p.text
-                if isinstance(p, NewlineNode):
-                    break
     return "  "
 
 
@@ -201,13 +149,6 @@ _T = TypeVar("_T")
 
 
 class _ArrayIntKeyedView(MutableMapping[int, _T]):
-    """Mapping over Array item indices whose item satisfies a predicate.
-
-    Subclasses provide ``_present(idx)`` plus the read/write/delete
-    item methods. The base supplies ``__init__``, ``__contains__``,
-    ``__iter__``, ``__len__``.
-    """
-
     __slots__ = ("_arr",)
 
     def __init__(self, arr: Array) -> None:
@@ -264,64 +205,130 @@ class ArrayEolView(_ArrayIntKeyedView[str]):
         item = items[idx]
         nl = _newline_text(self._arr)
         target = _eol_target(item)
-        existing_eol, rest = _split_eol_section(list(target.pieces))
-        if not existing_eol and rest and isinstance(rest[0], NewlineNode):
-            # Original layout had no EOL but did have a line break between
-            # this item and the next; our new EOL synthesises its own
-            # newline, so drop the leading NL from `rest` to avoid leaving
-            # behind a blank line.
-            rest = rest[1:]
+        existing_eol, rest = split_eol_section(target)
+        if (
+            not existing_eol.pieces
+            and rest.pieces
+            and isinstance(rest.pieces[0], NewlineNode)
+        ):
+            # Replace the structural newline; our synthesised EOL
+            # provides its own.
+            rest = Trivia(list(rest.pieces[1:]))
         new_eol: list[TriviaPiece] = [
             WhitespaceNode(" "),
             CommentNode(_encode_comment(value)),
             NewlineNode(nl),
         ]
-        # If there was no rest (last item, no following structure) and we
-        # don't have a comma, the closing `]` would otherwise be on the same
-        # line. The newline we synthesised in `new_eol` already prevents
-        # that.
-        target.pieces = [*new_eol, *rest]
+        target.pieces = [*new_eol, *rest.pieces]
+        # Canonical model: structural NL belongs to the next item's
+        # leading (or to final_trivia for the last item). When we add
+        # an EOL (which carries its own NL), the downstream NL would
+        # duplicate it. Strip exactly one.
+        if item.has_comma and not existing_eol.pieces:
+            arr_value = _value_or_raise(self._arr)
+            nxt = (
+                items[idx + 1].leading
+                if idx + 1 < len(items)
+                else arr_value.final_trivia
+            )
+            if nxt.pieces and isinstance(nxt.pieces[0], NewlineNode):
+                nxt.pieces = list(nxt.pieces[1:])
 
     @override
     def __delitem__(self, key: int) -> None:
         idx = _check_index(self._arr, key)
         items = _items_or_raise(self._arr)
         item = items[idx]
-        # Try the canonical target first, then the other.
-        candidates: list[Trivia] = (
-            [item.post_comma_trivia, item.trailing]
-            if item.has_comma
-            else [item.trailing, item.post_comma_trivia]
-        )
-        for target in candidates:
-            eol, rest = _split_eol_section(list(target.pieces))
-            if not eol:
-                continue
-            if target is item.trailing:
-                # No-comma case: drop the EOL entirely (no need for a
-                # synthesised newline because the next item's leading or
-                # final_trivia carries the line break).
-                target.pieces = list(rest)
-            else:
-                # post_comma_trivia: the EOL section we removed included a
-                # NewlineNode that separated this line from the next item.
-                # Replace it with a plain newline so the line break stays.
-                nl = _newline_text(self._arr)
-                target.pieces = [NewlineNode(nl), *rest]
+        target = _eol_target(item)
+        eol, rest = split_eol_section(target)
+        if not eol.pieces:
+            raise KeyError(key)
+        if not item.has_comma:
+            target.pieces = list(rest.pieces)
             return
-        raise KeyError(key)
+        target.pieces = list(rest.pieces)
+        # Canonical model inverse: restore the structural NL onto the
+        # next item's leading (or final_trivia for the last) so the
+        # closing layout still has its row break.
+        value = _value_or_raise(self._arr)
+        nxt = items[idx + 1].leading if idx + 1 < len(items) else value.final_trivia
+        nl = _newline_text(self._arr)
+        if not (nxt.pieces and isinstance(nxt.pieces[0], NewlineNode)):
+            nxt.pieces = [NewlineNode(nl), *nxt.pieces]
 
     @override
     def __repr__(self) -> str:
         return repr(dict(self))
 
 
+# ---------------------------------------------------------------------------
+# Leading view
+# ---------------------------------------------------------------------------
+
+
+def _render_above_block(
+    raw_lines: tuple[str, ...], nl: str, ind: str
+) -> list[TriviaPiece]:
+    """Render an above-block matching :func:`split_above_block` shape.
+
+    Each comment line emits ``WS(ind), Comment(raw), NL``; no trailing
+    whitespace (the value indent lives in pad).
+    """
+    out: list[TriviaPiece] = []
+    for raw in raw_lines:
+        out.append(WhitespaceNode(ind))
+        out.append(CommentNode(raw))
+        out.append(NewlineNode(nl))
+    return out
+
+
+def _above_target(value: ArrayValue, i: int) -> Trivia:
+    return value.header_trivia if i == 0 else value.items[i].leading
+
+
+def _ensure_pad(target: Trivia, nl: str, ind: str) -> Trivia:
+    """Return a usable pad.
+
+    Returns the existing pad from ``target`` when present, or a freshly
+    synthesised ``[NL, WS(ind)]`` when ``target`` has none.
+    """
+    pad, _above = split_above_block(target)
+    if pad.pieces:
+        return pad
+    return Trivia([NewlineNode(nl), WhitespaceNode(ind)])
+
+
+def _set_above_pieces(
+    value: ArrayValue,
+    i: int,
+    raw_lines: tuple[str, ...],
+    nl: str,
+    ind: str,
+) -> None:
+    """Replace the comment block in item ``i``'s above-region.
+
+    Preserves any structural pad already present (the opening newline
+    + value indent) and only rewrites the above-block portion.
+    """
+    target = _above_target(value, i)
+    pad = _ensure_pad(target, nl, ind)
+    above = Trivia(_render_above_block(raw_lines, nl, ind))
+    target.pieces = list(join_above_block(pad, above).pieces)
+
+
+def _clear_above_pieces(value: ArrayValue, i: int, nl: str, ind: str) -> None:
+    """Strip the comment block from item ``i``'s above-region; keep pad."""
+    target = _above_target(value, i)
+    pad = _ensure_pad(target, nl, ind)
+    target.pieces = list(pad.pieces)
+
+
 class ArrayLeadingView(_ArrayIntKeyedView[tuple[str, ...]]):
     __slots__ = ()
 
     def _read(self, idx: int) -> tuple[str, ...]:
-        items = _items_or_raise(self._arr)
-        return _comments_from_lines(_leading_pieces(items, idx))
+        value = _value_or_raise(self._arr)
+        return _comments_from_lines(_above_pieces(value, idx))
 
     @override
     def _present(self, idx: int) -> bool:
@@ -335,45 +342,6 @@ class ArrayLeadingView(_ArrayIntKeyedView[tuple[str, ...]]):
             raise KeyError(key)
         return out
 
-    def _write_item0(self, lines: tuple[str, ...]) -> None:
-        items = _items_or_raise(self._arr)
-        item0 = items[0]
-        nl = _newline_text(self._arr)
-        ind = _slot_indent(self._arr)
-        # Drop existing comments from leading; preserve at most the
-        # initial newline that separates the value from the opening `[`.
-        kept_initial: list[TriviaPiece] = []
-        seen_nl = False
-        for p in item0.leading.pieces:
-            if isinstance(p, NewlineNode) and not seen_nl:
-                kept_initial.append(p)
-                seen_nl = True
-                break
-            if isinstance(p, NewlineNode):
-                kept_initial.append(p)
-                break
-        if not seen_nl:
-            kept_initial = [NewlineNode(nl)]
-        item0.leading.pieces = [*kept_initial, *_render_comment_lines(lines, nl, ind)]
-
-    def _write_item_after_prev(self, idx: int, lines: tuple[str, ...]) -> None:
-        items = _items_or_raise(self._arr)
-        prev = items[idx - 1]
-        item = items[idx]
-        nl = _newline_text(self._arr)
-        ind = _slot_indent(self._arr)
-        # Split prev.post_comma_trivia: keep EOL section, replace the rest
-        # with our new leading lines + indent.
-        eol_sec, _rest = _split_eol_section(list(prev.post_comma_trivia.pieces))
-        rendered = _render_comment_lines(lines, nl, ind)
-        if not eol_sec:
-            # No prior EOL on prev — we need a newline first to start a new
-            # line for the leading comments.
-            rendered = [NewlineNode(nl), *rendered]
-        prev.post_comma_trivia.pieces = [*eol_sec, *rendered]
-        # item.leading should be empty so the comments aren't duplicated.
-        item.leading.pieces = []
-
     @override
     def __setitem__(self, key: int, value: tuple[str, ...] | list[str]) -> None:
         seq = _validate_comment_seq(value, "leading_comments")
@@ -382,41 +350,20 @@ class ArrayLeadingView(_ArrayIntKeyedView[tuple[str, ...]]):
         if not seq:
             self._delete(idx, allow_missing=True)
             return
-        if idx == 0:
-            self._write_item0(seq)
-        else:
-            self._write_item_after_prev(idx, seq)
-
-    def _delete(self, idx: int, *, allow_missing: bool) -> None:
-        items = _items_or_raise(self._arr)
         nl = _newline_text(self._arr)
         ind = _slot_indent(self._arr)
-        if idx == 0:
-            item0 = items[0]
-            # Strip everything except a leading newline + indent.
-            if not _comments_from_lines(list(item0.leading.pieces)):
-                if not allow_missing:
-                    raise KeyError(idx)
-                return
-            item0.leading.pieces = [NewlineNode(nl), WhitespaceNode(ind)]
-            return
-        prev = items[idx - 1]
-        item = items[idx]
-        eol_sec, rest = _split_eol_section(list(prev.post_comma_trivia.pieces))
-        leading_existing = _comments_from_lines(rest) + _comments_from_lines(
-            list(item.leading.pieces),
-        )
-        if not leading_existing:
+        encoded = tuple(_encode_comment(c) for c in seq)
+        _set_above_pieces(_value_or_raise(self._arr), idx, encoded, nl, ind)
+
+    def _delete(self, idx: int, *, allow_missing: bool) -> None:
+        value = _value_or_raise(self._arr)
+        if not _comments_from_lines(_above_pieces(value, idx)):
             if not allow_missing:
                 raise KeyError(idx)
             return
-        # Replace the leading run with a clean indent before the next item.
-        new_after_eol: list[TriviaPiece] = []
-        if not eol_sec:
-            new_after_eol.append(NewlineNode(nl))
-        new_after_eol.append(WhitespaceNode(ind))
-        prev.post_comma_trivia.pieces = [*eol_sec, *new_after_eol]
-        item.leading.pieces = []
+        nl = _newline_text(self._arr)
+        ind = _slot_indent(self._arr)
+        _clear_above_pieces(value, idx, nl, ind)
 
     @override
     def __delitem__(self, key: int) -> None:
@@ -425,47 +372,26 @@ class ArrayLeadingView(_ArrayIntKeyedView[tuple[str, ...]]):
 
     @override
     def __repr__(self) -> str:
-        # Test contract spells the values as Python lists, e.g. "{0: ['first']}".
         return repr({k: list(v) for k, v in self.items()})
 
 
 # ---------------------------------------------------------------------------
-# Reorder helpers — snapshot/clear/apply per-item comments raw, so structural
-# reordering ops (`reverse`, `sort`, `insert`, `pop`) can move comments
-# along with the items they belong to without losing exact byte spelling.
+# Reorder helpers — snapshot/clear/apply so reordering ops can move
+# comments along with their items without losing exact byte spelling.
 # ---------------------------------------------------------------------------
 
 
 def _raw_comment_lines(pieces: list[TriviaPiece]) -> tuple[str, ...]:
-    """Raw `#...` text for each CommentNode in *pieces* (preserves spelling)."""
     return tuple(p.text for p in pieces if isinstance(p, CommentNode))
 
 
 def _raw_eol_text(item: ArrayItem) -> str | None:
-    """Raw `# ...` text of *item*'s EOL comment, or None."""
-    if item.has_comma:
-        for p in item.post_comma_trivia.pieces:
-            if isinstance(p, NewlineNode):
-                break
-            if isinstance(p, CommentNode):
-                return p.text
-    for p in item.trailing.pieces:
+    target = item.post_comma_trivia if item.has_comma else item.trailing
+    for p in target.pieces:
         if isinstance(p, NewlineNode):
-            break
+            return None
         if isinstance(p, CommentNode):
             return p.text
-    if item.has_comma:
-        for p in item.trailing.pieces:
-            if isinstance(p, NewlineNode):
-                break
-            if isinstance(p, CommentNode):
-                return p.text
-    else:
-        for p in item.post_comma_trivia.pieces:
-            if isinstance(p, NewlineNode):
-                break
-            if isinstance(p, CommentNode):
-                return p.text
     return None
 
 
@@ -473,17 +399,16 @@ def snapshot_comments(
     arr: Array,
 ) -> tuple[list[tuple[str, ...]], list[str | None]]:
     """Return per-item (raw-leading-lines, raw-eol-text) snapshots."""
-    items = arr._value.items  # noqa: SLF001
-    leadings = [
-        _raw_comment_lines(_leading_pieces(items, i)) for i in range(len(items))
-    ]
+    value = _value_or_raise(arr)
+    items = value.items
+    leadings = [_raw_comment_lines(_above_pieces(value, i)) for i in range(len(items))]
     eols = [_raw_eol_text(items[i]) for i in range(len(items))]
     return leadings, eols
 
 
 def clear_all_comments(arr: Array) -> None:
     """Strip per-item comments from all items via the canonical deleters."""
-    items = arr._value.items  # noqa: SLF001
+    items = _items_or_raise(arr)
     n = len(items)
     leading = ArrayLeadingView(arr)
     eol = ArrayEolView(arr)
@@ -498,53 +423,25 @@ def _write_eol_raw(arr: Array, idx: int, raw_text: str) -> None:
     item = items[idx]
     nl = _newline_text(arr)
     target = _eol_target(item)
-    existing_eol, rest = _split_eol_section(list(target.pieces))
-    if not existing_eol and rest and isinstance(rest[0], NewlineNode):
-        rest = rest[1:]
+    existing_eol, rest = split_eol_section(target)
+    if (
+        not existing_eol.pieces
+        and rest.pieces
+        and isinstance(rest.pieces[0], NewlineNode)
+    ):
+        rest = Trivia(list(rest.pieces[1:]))
     new_eol: list[TriviaPiece] = [
         WhitespaceNode(" "),
         CommentNode(raw_text),
         NewlineNode(nl),
     ]
-    target.pieces = [*new_eol, *rest]
+    target.pieces = [*new_eol, *rest.pieces]
 
 
 def _write_leading_raw(arr: Array, idx: int, raw_lines: tuple[str, ...]) -> None:
-    items = _items_or_raise(arr)
     nl = _newline_text(arr)
     ind = _slot_indent(arr)
-    if idx == 0:
-        item0 = items[0]
-        kept_initial: list[TriviaPiece] = []
-        seen_nl = False
-        for p in item0.leading.pieces:
-            if isinstance(p, NewlineNode):
-                kept_initial.append(p)
-                seen_nl = True
-                break
-        if not seen_nl:
-            kept_initial = [NewlineNode(nl)]
-        new_pieces: list[TriviaPiece] = list(kept_initial)
-        for raw in raw_lines:
-            new_pieces.append(WhitespaceNode(ind))
-            new_pieces.append(CommentNode(raw))
-            new_pieces.append(NewlineNode(nl))
-        new_pieces.append(WhitespaceNode(ind))
-        item0.leading.pieces = new_pieces
-        return
-    prev = items[idx - 1]
-    item = items[idx]
-    eol_sec, _rest = _split_eol_section(list(prev.post_comma_trivia.pieces))
-    new_after_eol: list[TriviaPiece] = []
-    if not eol_sec:
-        new_after_eol.append(NewlineNode(nl))
-    for raw in raw_lines:
-        new_after_eol.append(WhitespaceNode(ind))
-        new_after_eol.append(CommentNode(raw))
-        new_after_eol.append(NewlineNode(nl))
-    new_after_eol.append(WhitespaceNode(ind))
-    prev.post_comma_trivia.pieces = [*eol_sec, *new_after_eol]
-    item.leading.pieces = []
+    _set_above_pieces(_value_or_raise(arr), idx, raw_lines, nl, ind)
 
 
 def apply_comments(

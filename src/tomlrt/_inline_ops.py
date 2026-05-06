@@ -118,8 +118,7 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
     assert iv is not None
     key_path = _entry_key_path(t, key)
 
-    # Detect = padding from any existing entry; default to ` = ` only
-    # if the table is empty.
+    # Sample `=` padding from any existing entry; default to ` = `.
     if iv.entries:
         sample = iv.entries[0]
         eq_pre = sample.pre_eq
@@ -140,63 +139,42 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
     )
 
     if not iv.entries:
-        # Empty {} → mirror the original inner padding (whatever was
-        # parsed into final_trivia: "" for `{}`, " " for `{ }`, etc.).
+        # Empty {} → mirror the original inner padding (parser puts
+        # the inner pad in `final_trivia`: "" for `{}`, " " for `{ }`).
+        # Under the canonical model the pad before entries[0] lives on
+        # `header_trivia`; promote final_trivia → header_trivia so the
+        # new tail can keep the original bracket pad in `final_trivia`.
         bracket_pad = clone_trivia(iv.final_trivia) if iv.final_trivia.pieces else None
         if bracket_pad is not None:
-            new_entry.leading = bracket_pad
-            new_entry.trailing = clone_trivia(bracket_pad)
-            iv.final_trivia = Trivia()
+            iv.header_trivia = bracket_pad
+            # final_trivia stays as-is (the same bracket pad before `}`).
         iv.entries.append(new_entry)
         return
 
-    # Detect inter-item separator from the existing first commaful
-    # entry (so compact `a=1,b=2` keeps `,` not `, `).
-    inter_sep: Trivia | None = None
-    for ent in iv.entries:
-        if ent.has_comma:
-            inter_sep = ent.post_comma_trivia
-            break
-    if inter_sep is None:
+    # Inter-entry separator from entries[1].leading (canonical model);
+    # falls back to " " for a single-entry table.
+    if len(iv.entries) >= 2:
+        inter_sep = clone_trivia(iv.entries[1].leading)
+    else:
         inter_sep = _ws(" ")
 
     last = iv.entries[-1]
-    # Original trailing-comma policy: was the prior tail comma-trailed?
     keep_trailing_comma = last.has_comma
-    if last.has_comma:
-        # Existing trailing comma (TOML 1.1 style); the new entry slots in
-        # before whatever post-comma trivia carried the closing space —
-        # but only if that trivia is whitespace-only. If it carries a
-        # comment or newline, those belong logically to the existing
-        # layout, not to the inserted entry.
-        if _is_ws_only(last.post_comma_trivia):
-            new_entry.trailing = last.post_comma_trivia
-            last.post_comma_trivia = clone_trivia(inter_sep)
+    if not last.has_comma:
+        if not _is_ws_only(last.trailing):
+            # Trailing carries a comment / newline — leave it where the
+            # user put it; default the inter_sep to a single space.
+            inter_sep = _ws(" ")
         else:
-            new_entry.leading = clone_trivia(inter_sep)
-            new_entry.trailing = clone_trivia(inter_sep)
-    elif _is_ws_only(last.trailing):
-        # No comma yet — promote `last`: take its (whitespace-only)
-        # trailing as the new closing space for the inserted entry and
-        # replace it with the inter-item separator.
-        new_entry.trailing = last.trailing if last.trailing.pieces else Trivia()
-        last.trailing = Trivia()
+            # Promote `last`: take its (whitespace-only) trailing as the
+            # bracket pad before the new entry's row.
+            last.trailing = Trivia()
         last.has_comma = True
-        last.post_comma_trivia = clone_trivia(inter_sep)
-    else:
-        # `last.trailing` carries a comment / newline (TOML 1.1
-        # multiline). Don't migrate — leave it where the user put it
-        # and append a comma + new entry with default spacing.
-        last.has_comma = True
-        last.post_comma_trivia = clone_trivia(inter_sep)
-        new_entry.trailing = _ws(" ")
+        last.post_comma_trivia = Trivia()
+    new_entry.leading = inter_sep
     if keep_trailing_comma:
-        # Preserve a trailing-comma policy: the new tail also carries
-        # a trailing comma, with the bracket-pad it just adopted moved
-        # past the comma.
         new_entry.has_comma = True
-        new_entry.post_comma_trivia = new_entry.trailing
-        new_entry.trailing = Trivia()
+        new_entry.post_comma_trivia = Trivia()
     iv.entries.append(new_entry)
 
 
@@ -230,14 +208,14 @@ def delete_entry(t: Container, key: str) -> bool:
     last_removed_idx = indices[-1]
     last_removed_entry = iv.entries[last_removed_idx]
     first_removed_was_head = indices[0] == 0
-    first_removed_leading = iv.entries[indices[0]].leading
     for i in reversed(indices):
         iv.entries.pop(i)
     # Tail fixup: only if the original tail was actually removed.
     if last_removed_idx == original_len - 1:
         _fix_tail_after_delete(iv, len(iv.entries), last_removed_entry)
-    if first_removed_was_head and iv.entries and not iv.entries[0].leading.pieces:
-        iv.entries[0].leading = first_removed_leading
+    if first_removed_was_head and iv.entries:
+        # Canonical: entries[0].leading == Trivia() after head delete.
+        iv.entries[0].leading = Trivia()
     return True
 
 
@@ -246,34 +224,43 @@ def _fix_tail_after_delete(
 ) -> None:
     """Promote a new tail after deleting the trailing entry.
 
-    Adopt whichever bracket-padding the removed entry was carrying:
-    - removed had a trailing comma: keep the comma policy, adopt its
-      ``post_comma_trivia`` as the new tail's post-comma bracket pad.
-    - removed had no trailing comma: drop the new tail's comma (was
-      the inter-item separator), adopt removed's ``trailing`` as the
-      new tail's bracket pad.
+    Under the canonical model, the bracket pad before ``}`` lives in
+    ``final_trivia``, so the new tail keeps its ``has_comma`` /
+    ``post_comma_trivia`` exactly as the previous-to-last entry had
+    them — except when the *removed* entry had no trailing comma, in
+    which case the new tail also drops its comma to avoid emitting a
+    stray trailing one.
     """
     if not iv.entries or removed_idx != len(iv.entries):
         return
     new_last = iv.entries[-1]
     if removed.has_comma:
+        # Trailing-comma style preserved; new_last keeps its comma.
         new_last.has_comma = True
         new_last.post_comma_trivia = removed.post_comma_trivia
     else:
+        # Removed had no trailing comma → drop the new tail's comma.
         new_last.has_comma = False
         new_last.post_comma_trivia = Trivia()
-        new_last.trailing = removed.trailing
+        if removed.trailing.pieces and not new_last.trailing.pieces:
+            new_last.trailing = removed.trailing
 
 
 def _fix_head_after_delete(
-    iv: InlineTableValue, removed_idx: int, removed: InlineTableEntry
+    iv: InlineTableValue,
+    removed_idx: int,
+    removed: InlineTableEntry,  # noqa: ARG001
 ) -> None:
-    """Migrate bracket-leading from a deleted head entry to the new head."""
+    """Restore canonical entries[0].leading == Trivia() after head delete.
+
+    Under the canonical model, the bracket pad before entries[0] lives
+    in ``header_trivia``; ``entries[0].leading`` is always empty. After
+    deleting the head, the new head's ``leading`` (which used to be the
+    inter-entry separator) becomes redundant — drop it.
+    """
     if not iv.entries or removed_idx != 0:
         return
-    new_first = iv.entries[0]
-    if removed.leading.pieces and not new_first.leading.pieces:
-        new_first.leading = removed.leading
+    iv.entries[0].leading = Trivia()
 
 
 __all__ = ["append_entry", "delete_entry", "replace_entry_value"]
