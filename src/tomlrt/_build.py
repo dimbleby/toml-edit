@@ -189,11 +189,12 @@ def _make_table(
     parent: Container, path: tuple[str, ...], *, owner: AoTEntry | None
 ) -> Table:
     table = Table()
-    table._layout_root = parent._layout_root  # noqa: SLF001
-    table._path = path  # noqa: SLF001
-    table._parent = parent  # noqa: SLF001
-    table._inline = False  # noqa: SLF001
-    table._owner_aot_entry = owner  # noqa: SLF001
+    table._wire(  # noqa: SLF001
+        layout_root=parent._layout_root,  # noqa: SLF001
+        parent=parent,
+        path=path,
+        owner=owner,
+    )
     return table
 
 
@@ -315,11 +316,10 @@ def _decode_inline_table(
     owner: AoTEntry | None,
 ) -> Table:
     table = Table()
-    table._layout_root = layout_root  # noqa: SLF001
-    table._path = path  # noqa: SLF001
-    table._parent = parent  # noqa: SLF001
+    table._wire(  # noqa: SLF001
+        layout_root=layout_root, parent=parent, path=path, owner=owner
+    )
     table._inline = True  # noqa: SLF001
-    table._owner_aot_entry = owner  # noqa: SLF001
     table._value = value  # noqa: SLF001
     for entry in value.entries:
         decoded_key = [p.value for p in entry.key_parts]
@@ -328,11 +328,13 @@ def _decode_inline_table(
             sub = cur.get(step)
             if sub is None:
                 inner = Table()
-                inner._layout_root = layout_root  # noqa: SLF001
-                inner._path = (*cur._path, step)  # noqa: SLF001
-                inner._parent = cur  # noqa: SLF001
+                inner._wire(  # noqa: SLF001
+                    layout_root=layout_root,
+                    parent=cur,
+                    path=(*cur._path, step),  # noqa: SLF001
+                    owner=owner,
+                )
                 inner._inline = True  # noqa: SLF001
-                inner._owner_aot_entry = owner  # noqa: SLF001
                 # Inner inline-tables created from a dotted inline-table
                 # entry don't have their own backing InlineTableValue;
                 # `_value` stays None.

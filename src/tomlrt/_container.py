@@ -154,6 +154,32 @@ class Container(dict[str, Any]):
         _header_leading_set(self, ())
 
     @property
+    def _doc_newline(self) -> str:
+        r"""The active newline of the owning document, or ``"\n"`` if detached."""
+        lr = self._layout_root
+        return lr._newline if lr is not None else "\n"  # noqa: SLF001
+
+    def _wire(
+        self,
+        *,
+        layout_root: Document | None,
+        parent: Container | None,
+        path: tuple[str, ...],
+        owner: AoTEntry | None,
+    ) -> None:
+        """Set the four common attachment fields shared by every Container.
+
+        Inline-specific bits (``_inline``, ``_value``) and section-specific
+        bits (``_header_ref``, ``_body_tail``) are not touched — callers
+        set them explicitly so the table's flavour is visible at the call
+        site.
+        """
+        self._layout_root = layout_root
+        self._parent = parent
+        self._path = path
+        self._owner_aot_entry = owner
+
+    @property
     def _subtree_tail(self) -> Slot | None:
         """Last slot owned anywhere in this container's subtree.
 
@@ -783,10 +809,12 @@ class Container(dict[str, Any]):
                 # / add_aot_entry).
                 for p in parts[i : len(parts) - 1]:
                     implicit = Table()
-                    implicit._layout_root = cur._layout_root  # noqa: SLF001
-                    implicit._path = (*cur._path, p)  # noqa: SLF001
-                    implicit._parent = cur  # noqa: SLF001
-                    implicit._owner_aot_entry = cur._owner_aot_entry  # noqa: SLF001
+                    implicit._wire(  # noqa: SLF001
+                        layout_root=cur._layout_root,  # noqa: SLF001
+                        parent=cur,
+                        path=(*cur._path, p),  # noqa: SLF001
+                        owner=cur._owner_aot_entry,  # noqa: SLF001
+                    )
                     dict.__setitem__(cur, p, implicit)
                     cur = implicit
                 cur[parts[-1]] = value
@@ -1608,11 +1636,10 @@ def _populate_inline_table(
     last entry, and a single trailing space when non-empty.
     """
     val = InlineTableValue()
-    table._layout_root = layout_root  # noqa: SLF001
-    table._path = path  # noqa: SLF001
-    table._parent = parent  # noqa: SLF001
+    table._wire(  # noqa: SLF001
+        layout_root=layout_root, parent=parent, path=path, owner=owner
+    )
     table._inline = True  # noqa: SLF001
-    table._owner_aot_entry = owner  # noqa: SLF001
     table._value = val  # noqa: SLF001
 
     for i, (k, sub) in enumerate(items):

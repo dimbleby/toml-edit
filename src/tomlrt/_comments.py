@@ -93,14 +93,6 @@ def _encode_comment(text: str) -> str:
     return f"# {text}"
 
 
-def _container_newline(c: Container) -> str:
-    r"""Return the document's newline string, or ``"\n"`` if detached."""
-    from tomlrt._container import Document  # noqa: PLC0415
-
-    lr = c._layout_root  # noqa: SLF001
-    return lr._newline if isinstance(lr, Document) else "\n"  # noqa: SLF001
-
-
 def _direct_kv_slot(c: Container, key: str) -> KVSlot | None:
     """Return the primary direct-KV slot for ``key`` in ``c``, or None."""
     refs = c._index.get(key)  # noqa: SLF001
@@ -189,7 +181,7 @@ class EolCommentView(_SlotKeyedView[str]):
             msg = f"key {key!r} not in container"
             raise KeyError(msg)
         _validate_comment_str(value, "comment")
-        _write_eol_comment(slot.eol, value, _container_newline(self._c))
+        _write_eol_comment(slot.eol, value, self._c._doc_newline)  # noqa: SLF001
 
     @override
     def __delitem__(self, key: str) -> None:
@@ -300,7 +292,7 @@ class LeadingCommentView(_SlotKeyedView[tuple[str, ...]]):
             msg = f"key {key!r} not in container"
             raise KeyError(msg)
         comments = _validate_comment_seq(value, "leading_comments")
-        _set_attached_block(slot.leading, comments, _container_newline(self._c))
+        _set_attached_block(slot.leading, comments, self._c._doc_newline)  # noqa: SLF001
 
     @override
     def __delitem__(self, key: str) -> None:
@@ -359,7 +351,7 @@ def _header_comment_set(c: Container, value: str | None) -> None:
                 eol.trailing_ws = None
         return
     _validate_comment_str(value, "header_comment")
-    _write_eol_comment(eol, value, _container_newline(c))
+    _write_eol_comment(eol, value, c._doc_newline)  # noqa: SLF001
 
 
 def _header_leading_get(c: Container) -> tuple[str, ...]:
@@ -376,7 +368,7 @@ def _header_leading_set(c: Container, value: tuple[str, ...]) -> None:
         msg = "container has no header to attach leading comments to"
         raise TOMLError(msg)
     comments = _validate_comment_seq(value, "header_leading_comments")
-    _set_attached_block(h.leading, comments, _container_newline(c))
+    _set_attached_block(h.leading, comments, c._doc_newline)  # noqa: SLF001
 
 
 def _validate_comment_seq(value: object, name: str) -> tuple[str, ...]:

@@ -129,10 +129,7 @@ def _wire_section_container(
     Returns the filed ref so callers can keep it in scope (e.g. for
     insertion bookkeeping).
     """
-    c._layout_root = doc  # noqa: SLF001
-    c._path = path  # noqa: SLF001
-    c._parent = parent  # noqa: SLF001
-    c._owner_aot_entry = owner  # noqa: SLF001
+    c._wire(layout_root=doc, parent=parent, path=path, owner=owner)  # noqa: SLF001
     ref = SlotRef(slot=header, container=c)
     c._refs.append(ref)  # noqa: SLF001
     c._header_ref = ref  # noqa: SLF001
@@ -149,10 +146,7 @@ def _init_implicit_table(
     from tomlrt._container import Table  # noqa: PLC0415
 
     child = Table()
-    child._layout_root = doc  # noqa: SLF001
-    child._path = path  # noqa: SLF001
-    child._parent = parent  # noqa: SLF001
-    child._owner_aot_entry = owner  # noqa: SLF001
+    child._wire(layout_root=doc, parent=parent, path=path, owner=owner)  # noqa: SLF001
     return child
 
 

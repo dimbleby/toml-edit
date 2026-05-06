@@ -59,10 +59,8 @@ if TYPE_CHECKING:
 
 
 def _newline_text(arr: Array) -> str:
-    from tomlrt._container import Document  # noqa: PLC0415
-
     lr = arr._layout_root()  # noqa: SLF001
-    return lr._newline if isinstance(lr, Document) else "\n"  # noqa: SLF001
+    return lr._newline if lr is not None else "\n"  # noqa: SLF001
 
 
 def _check_index(arr: Array, key: object) -> int:
