@@ -308,13 +308,7 @@ class Array(list[Any]):
             #                    will sit before the new item)
             #   final_trivia  = (just the line break before `]`)
             self._restamp_for_first_append()
-            new_item = ArrayItem(
-                leading=Trivia(),
-                value=cst,
-                trailing=Trivia(),
-                has_comma=False,
-                post_comma_trivia=Trivia(),
-            )
+            new_item = _make_item(cst, has_comma=False)
             items.append(new_item)
             _flip_to_terminal(new_item, style)
             list.append(self, decoded)
@@ -324,13 +318,7 @@ class Array(list[Any]):
         ft_pad, ft_above = split_above_block(self._value.final_trivia)
         new_leading = join_above_block(style.inter_separator, ft_above)
         _flip_to_internal(items[-1])
-        new_item = ArrayItem(
-            leading=new_leading,
-            value=cst,
-            trailing=Trivia(),
-            has_comma=False,
-            post_comma_trivia=Trivia(),
-        )
+        new_item = _make_item(cst, leading=new_leading, has_comma=False)
         if ft_above.pieces:
             self._value.final_trivia = ft_pad
         items.append(new_item)
@@ -443,13 +431,7 @@ class Array(list[Any]):
             # its structural pad.
             pad, above = split_above_block(self._value.header_trivia)
             self._value.header_trivia = pad
-            new_item = ArrayItem(
-                leading=Trivia(),
-                value=cst,
-                trailing=Trivia(),
-                has_comma=True,
-                post_comma_trivia=Trivia(),
-            )
+            new_item = _make_item(cst, has_comma=True)
             old_first = items[0]
             old_first.leading = join_above_block(style.inter_separator, above)
             items.insert(0, new_item)
@@ -458,12 +440,8 @@ class Array(list[Any]):
             # item that was at position i (now at i+1) keeps its old
             # leading (which already carries inter_sep + its own
             # above-block).
-            new_item = ArrayItem(
-                leading=clone_trivia(style.inter_separator),
-                value=cst,
-                trailing=Trivia(),
-                has_comma=True,
-                post_comma_trivia=Trivia(),
+            new_item = _make_item(
+                cst, leading=clone_trivia(style.inter_separator), has_comma=True
             )
             items.insert(i, new_item)
         list.insert(self, i, decoded)
@@ -472,7 +450,6 @@ class Array(list[Any]):
     def reverse(self) -> None:
         self._reorder(list(reversed(range(len(self)))))
 
-    @override
     @override
     def sort(
         self,
@@ -513,8 +490,8 @@ class Array(list[Any]):
         # Above-blocks will be re-applied by ``apply_comments`` from
         # the snapshot.
         self._value.header_trivia = clone_trivia(head_pad)
-        for k, it in enumerate(items):
-            it.leading = Trivia() if k == 0 else clone_trivia(style.inter_separator)
+        _restamp_canonical_leadings(items, style)
+        for it in items:
             it.post_comma_trivia = Trivia()
             it.trailing = Trivia()
         _renormalise_commas(items, style)
@@ -556,23 +533,10 @@ class Array(list[Any]):
                 new_decoded.append(dec)
             items = self._value.items
             style = self._style()
-            slice_start = index.start or 0
-            new_segment = [
-                ArrayItem(
-                    leading=Trivia(),  # restamped below
-                    value=cst,
-                    trailing=Trivia(),
-                    has_comma=False,
-                    post_comma_trivia=Trivia(),
-                )
-                for cst in new_csts
-            ]
+            new_segment = [_make_item(cst, has_comma=False) for cst in new_csts]
             items[index] = new_segment
             list.__setitem__(self, index, new_decoded)
-            # Re-stamp leadings under canonical model.
-            for k, it in enumerate(items):
-                it.leading = Trivia() if k == 0 else clone_trivia(style.inter_separator)
-            del slice_start
+            _restamp_canonical_leadings(items, style)
             _renormalise_commas(items, style)
             return
         # int index: just replace the value CST in place.
@@ -839,22 +803,34 @@ def _internal_leading(style: _ArrayStyle) -> Trivia:
     return clone_trivia(style.inter_separator)
 
 
-def _new_item(
-    cst: Value,
-    *,
-    leading_first: bool,
-    style: _ArrayStyle,
-    leading: Trivia | None = None,
+def _make_item(
+    cst: Value, *, leading: Trivia | None = None, has_comma: bool
 ) -> ArrayItem:
-    if leading is None:
-        leading = Trivia() if leading_first else _internal_leading(style)
+    """Build a fresh ``ArrayItem`` with empty trailing/post_comma.
+
+    Most call-sites only vary ``leading`` and ``has_comma``; this helper
+    centralises the boilerplate so the policy stays in one place.
+    """
     return ArrayItem(
-        leading=leading,
+        leading=leading if leading is not None else Trivia(),
         value=cst,
         trailing=Trivia(),
-        has_comma=False,
+        has_comma=has_comma,
         post_comma_trivia=Trivia(),
     )
+
+
+def _restamp_canonical_leadings(items: list[ArrayItem], style: _ArrayStyle) -> None:
+    """Reset every item's ``leading`` to the canonical-model pad.
+
+    Under the canonical model ``items[0].leading`` is empty (its pad
+    lives in ``header_trivia``) and ``items[k>=1].leading`` carries
+    the inter-item separator. This helper is the structural reset
+    used after a reorder or whole-segment slice replacement; comments
+    are reapplied separately by the caller.
+    """
+    for k, it in enumerate(items):
+        it.leading = Trivia() if k == 0 else clone_trivia(style.inter_separator)
 
 
 def _migrate_eol_trailing_to_post_comma(item: ArrayItem) -> None:
