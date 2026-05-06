@@ -108,15 +108,35 @@ class ArrayItem:
 
 @dataclass(slots=True, eq=False)
 class ArrayValue:
-    """Inline array literal (``[ ... ]``)."""
+    """Inline array literal (``[ ... ]``).
+
+    Trivia ownership (canonical model):
+      - ``header_trivia`` owns the gap immediately after ``[`` and
+        before the first item — bracket pad / leading newline / indent
+        / interior comments above item 0.
+      - ``items[0].leading`` is always empty.
+      - ``items[k].leading`` (k >= 1) owns the entire physical gap
+        before items[k]: structural newline + indent + above-item
+        comment block + indent before the value.
+      - ``items[k].post_comma_trivia`` carries only the row-attached
+        EOL section: same-line whitespace + EOL comment + the
+        terminating newline of that comment row.  Empty if no EOL
+        comment.
+      - ``final_trivia`` owns the gap before ``]`` (bracket pad /
+        trailing newline). For an empty array this is the only place
+        interior trivia can live.
+    """
 
     items: list[ArrayItem] = field(default_factory=list)
+    header_trivia: Trivia = field(default_factory=Trivia)
     final_trivia: Trivia = field(default_factory=Trivia)
-    """Trivia after the last item (or comma) and before the closing ``]``."""
 
     def render(self) -> str:
         body = "".join([item.render() for item in self.items])
-        return f"[{body}{self.final_trivia.render()}]"
+        return (
+            f"[{self.header_trivia.render()}{body}"
+            f"{self.final_trivia.render()}]"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -206,12 +226,22 @@ class InlineTableEntry:
 
 @dataclass(slots=True, eq=False)
 class InlineTableValue:
+    """Inline table literal (``{ ... }``).
+
+    Trivia ownership matches :class:`ArrayValue` — see that docstring
+    for the canonical model.
+    """
+
     entries: list[InlineTableEntry] = field(default_factory=list)
+    header_trivia: Trivia = field(default_factory=Trivia)
     final_trivia: Trivia = field(default_factory=Trivia)
 
     def render(self) -> str:
         body = "".join([e.render() for e in self.entries])
-        return f"{{{body}{self.final_trivia.render()}}}"
+        return (
+            f"{{{self.header_trivia.render()}{body}"
+            f"{self.final_trivia.render()}}}"
+        )
 
 
 Value = (
