@@ -2427,11 +2427,14 @@ def _scrub_owned_slots_via_backptrs(
 
 
 def remove_aot_entry(aot: AoT, index: int) -> Table:
-    """Remove ``aot[index]``, unlink its slots, and return a snapshot.
+    """Remove ``aot[index]``, unlink its slots, and return it detached.
 
-    The snapshot is a fresh unattached `Table` populated from the
-    removed entry's dict storage (deep-copied for plain values; nested
-    live typed containers are not detached).
+    Returns the popped entry ``Table`` itself (not a fresh copy), reset
+    so it behaves as an unattached, freshly-constructed container —
+    mirroring `delete_key`'s orphan-transplant model. Any user-held
+    reference to the entry pre-pop is therefore the same object as the
+    return value, and remains usable for reads, mutations, and
+    re-attachment.
     """
     n = len(aot)
     if not -n <= index < n:
@@ -2447,7 +2450,8 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
 
     The indices must already be **non-negative, in-range, distinct,
     and ascending**; callers are responsible for normalising. Returns
-    snapshots in the same order as ``indices``.
+    the popped entry ``Table``s themselves (reset for re-use), in the
+    same order as ``indices``.
 
     Batching matters because the per-pop ref-scrub is O(parent
     siblings); doing it once for the union of all popped entries'
@@ -2456,7 +2460,6 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
     """
     from tomlrt._array import AoT  # noqa: PLC0415
     from tomlrt._container import (  # noqa: PLC0415
-        Table,
         _is_section,
         _reset_table_for_rehome,
     )
@@ -2471,9 +2474,9 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
     doc = layout_root
 
     # Per-entry: collect owned slots (entry + nested AoT entry slots)
-    # and a snapshot of the entry's dict storage.
+    # and capture the entry table itself for return / reset.
     owned_per_entry: list[list[Slot]] = []
-    snapshots: list[Table] = []
+    popped_entries: list[Table] = []
     union_owned: set[Slot] = set()
     union_owned_ordered: list[Slot] = []  # in doc-stream order
 
@@ -2507,11 +2510,7 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
                 union_owned.add(s)
                 union_owned_ordered.append(s)
         owned_per_entry.append(deduped)
-
-        snapshot = Table()
-        for k, v in entry_table.items():
-            dict.__setitem__(snapshot, k, v)
-        snapshots.append(snapshot)
+        popped_entries.append(entry_table)
 
     # Slot-driven scrub via back-pointers, in REVERSE doc-stream
     # order so each unfile_ref hits the tail-fast-path of every
@@ -2543,15 +2542,20 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
     for i in reversed(idx_list):
         list.pop(aot, i)
 
-    for snapshot in snapshots:
-        snapshot._layout_root = doc  # noqa: SLF001
-        _reset_table_for_rehome(snapshot, recurse=True)
+    # Reset each popped entry in place so it presents as a freshly-
+    # constructed unattached Table (matches `delete_key`'s orphan-
+    # transplant model). `_layout_root` is set to `doc` momentarily so
+    # the recurse-filter in `_reset_table_for_rehome` knows which
+    # children belong to this subtree.
+    for entry_table in popped_entries:
+        entry_table._layout_root = doc  # noqa: SLF001
+        _reset_table_for_rehome(entry_table, recurse=True)
 
     last_key = aot._path[-1]  # noqa: SLF001
     if len(aot) == 0 and not parent._index.get(last_key):  # noqa: SLF001
         parent._index.pop(last_key, None)  # noqa: SLF001
 
-    return snapshots
+    return popped_entries
 
 
 def replace_aot_entry_with_clone(

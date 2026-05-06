@@ -496,6 +496,25 @@ def test_aot_pop_index_out_of_range_raises() -> None:
         aot.pop(-99)
 
 
+def test_aot_pop_returns_held_entry_object_and_remains_mutable() -> None:
+    """Held entry references survive pop and remain usable.
+
+    Mirrors `del doc[k]`'s orphan-transplant semantics: a user who
+    held the entry pre-pop ends up with the same object the pop
+    returns, detached from the doc, fully mutable, re-attachable.
+    """
+    doc = _aot_doc()
+    aot = doc.aot("pkg")
+    held = aot[0]
+    popped = aot.pop(0)
+    assert popped is held
+    held["extra"] = 99
+    assert popped["extra"] == 99
+    new_doc = tomlrt.loads("")
+    new_doc["pkg"] = popped
+    assert _reparses(tomlrt.dumps(new_doc))["pkg"]["extra"] == 99
+
+
 def test_aot_clear_removes_all_entries_and_owned_subsections() -> None:
     doc = _aot_doc()
     aot = doc.aot("pkg")
