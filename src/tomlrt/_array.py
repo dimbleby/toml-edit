@@ -1125,9 +1125,9 @@ class AoT(list["Table"]):
             if self._layout_root is None:
                 list.__delitem__(self, index)
                 return
-            indices = sorted(range(*index.indices(len(self))), reverse=True)
-            for i in indices:
-                _layout_ops.remove_aot_entry(self, i)
+            indices = sorted(set(range(*index.indices(len(self)))))
+            if indices:
+                _layout_ops.remove_aot_entries(self, indices)
             return
         if self._layout_root is None:
             list.__delitem__(self, index)
@@ -1139,8 +1139,9 @@ class AoT(list["Table"]):
         if self._layout_root is None:
             list.clear(self)
             return
-        while len(self) > 0:
-            _layout_ops.remove_aot_entry(self, -1)
+        n = len(self)
+        if n:
+            _layout_ops.remove_aot_entries(self, range(n))
 
     @overload
     def __setitem__(

@@ -46,7 +46,7 @@ from tomlrt._values import make_keypart, make_keyparts
 HeaderKind = Literal["table", "aot-entry"]
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Mapping, Sequence
 
     from tomlrt._array import AoT
     from tomlrt._container import Container, Document, Table
@@ -2503,102 +2503,120 @@ def remove_aot_entry(aot: AoT, index: int) -> Table:
     removed entry's dict storage (deep-copied for plain values; nested
     live typed containers are not detached).
     """
-    from tomlrt._container import Table  # noqa: PLC0415
-
     n = len(aot)
     if not -n <= index < n:
         msg = f"AoT index {index} out of range (len {n})"
         raise IndexError(msg)
     if index < 0:
         index += n
-    entry_table = aot[index]
+    return remove_aot_entries(aot, [index])[0]
+
+
+def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
+    """Remove ``aot[i]`` for each ``i`` in ``indices`` in one batch.
+
+    The indices must already be **non-negative, in-range, distinct,
+    and ascending**; callers are responsible for normalising. Returns
+    snapshots in the same order as ``indices``.
+
+    Batching matters because the per-pop ref-scrub is O(parent
+    siblings); doing it once for the union of all popped entries'
+    slots makes ``AoT.clear`` and slice-delete linear instead of
+    quadratic.
+    """
+    from tomlrt._array import AoT  # noqa: PLC0415
+    from tomlrt._container import (  # noqa: PLC0415
+        Table,
+        _is_section,
+        _reset_table_for_rehome,
+    )
+
+    idx_list = list(indices)
+    if not idx_list:
+        return []
     layout_root = aot._layout_root  # noqa: SLF001
     parent = aot._parent  # noqa: SLF001
     assert layout_root is not None
     assert parent is not None
     doc = layout_root
-    e = entry_table._owner_aot_entry  # noqa: SLF001
-    assert e is not None
-    owned_ordered: list[Slot] = list(e.entry_slots)
-    owned: set[Slot] = set(owned_ordered)
-    # Also collect slots owned by any nested AoT entries reachable
-    # from this entry's subtree (e.g. promoted [[arr.xs]] entries):
-    # those have their own AoTEntry with its own entry_slots, not in
-    # `e.entry_slots`, but they must be removed alongside the parent
-    # entry so deletion is structurally complete.
-    from tomlrt._array import AoT  # noqa: PLC0415
 
-    def _collect_nested_aot_slots(c: Container) -> None:
+    # Per-entry: collect owned slots (entry + nested AoT entry slots)
+    # and a snapshot of the entry's dict storage.
+    owned_per_entry: list[list[Slot]] = []
+    snapshots: list[Table] = []
+    union_owned: set[Slot] = set()
+
+    def _collect_nested_aot_slots(c: Container, sink: list[Slot]) -> None:
         for v in c.values():
             if isinstance(v, AoT):
                 for nested_entry_table in v:
                     ne = nested_entry_table._owner_aot_entry  # noqa: SLF001
                     if ne is not None:
-                        for s in ne.entry_slots:
-                            if s not in owned:
-                                owned.add(s)
-                                owned_ordered.append(s)
-                    _collect_nested_aot_slots(nested_entry_table)
+                        sink.extend(ne.entry_slots)
+                    _collect_nested_aot_slots(nested_entry_table, sink)
             elif _is_section(v):
-                _collect_nested_aot_slots(v)
+                _collect_nested_aot_slots(v, sink)
 
-    from tomlrt._container import _is_section  # noqa: PLC0415
+    for i in idx_list:
+        entry_table = aot[i]
+        e = entry_table._owner_aot_entry  # noqa: SLF001
+        assert e is not None
+        owned_ordered: list[Slot] = list(e.entry_slots)
+        _collect_nested_aot_slots(entry_table, owned_ordered)
+        # Dedupe while preserving order, in case nested collection
+        # produces overlap with entry_slots.
+        seen: set[int] = set()
+        deduped: list[Slot] = []
+        for s in owned_ordered:
+            if id(s) in seen:
+                continue
+            seen.add(id(s))
+            deduped.append(s)
+            union_owned.add(s)
+        owned_per_entry.append(deduped)
 
-    _collect_nested_aot_slots(entry_table)
+        snapshot = Table()
+        for k, v in entry_table.items():
+            dict.__setitem__(snapshot, k, v)
+        snapshots.append(snapshot)
 
-    # Snapshot the entry's dict-storage values to a fresh Table.
-    snapshot = Table()
-    for k, v in entry_table.items():
-        dict.__setitem__(snapshot, k, v)
-
-    # Scrub refs along the AoT-ancestor path (binding refs to the
-    # popped entry's [[..]] header live in every prefix container
-    # by the Ref-propagation rule), and recursively through the
-    # popped entry's own subtree (nested sub-section refs to slots
-    # owned by this entry). Sibling AoT entries and unrelated
-    # sections cannot hold refs to the popped entry's slots — every
-    # ref's slot.owner_aot_entry would have to match — so we skip
-    # them, replacing the previous full-doc walk that was O(siblings)
-    # per pop and made bulk pop O(N²).
+    # Single ancestor-chain scrub with the union of every popped
+    # entry's owned slots. This is the asymptotic win: the ancestor
+    # chain (typically just `parent` for top-level AoT) is walked
+    # once per call instead of once per popped entry.
     cur: Container | None = parent
     while cur is not None:
-        _scrub_container_refs(cur, owned)
+        _scrub_container_refs(cur, union_owned)
         cur = cur._parent  # noqa: SLF001
-    _scrub_refs_to_owned_slots(entry_table, owned)
 
-    # Unlink owned slots from the doc-stream linked list, walking
-    # ``owned_ordered`` in reverse so the parent entry's leftmost
-    # slot (its ``[[a]]`` header) is unlinked LAST. Iterating
-    # ``set(owned)`` directly is hash-order-dependent and may pick
-    # the head of the entry block first, briefly promoting an
-    # in-block successor to be the new doc head and stripping its
-    # leading — corrupting trivia on slots that user-held views will
-    # need later (e.g. nested ``[a.sub]`` headers in cleared AoT
-    # entries).
-    for slot in reversed(owned_ordered):
-        unlink_slot(slot, doc)
+    # Per-entry recursion is required: each entry's subtree may have
+    # its own internal refs. Subtrees are disjoint so this is O(total
+    # popped subtree size). Pass each entry's own slot set (NOT the
+    # union) — `_candidate_keys_for` is O(slots-in-set) and using the
+    # union would re-introduce O(N²) on bulk delete.
+    for i, owned in zip(idx_list, owned_per_entry, strict=True):
+        owned_set: set[Slot] = set(owned)
+        _scrub_refs_to_owned_slots(aot[i], owned_set)
+        # Unlink in reverse order so the entry's leftmost slot (the
+        # ``[[a]]`` header) goes last — see remove_aot_entry's
+        # original comment for the trivia-promotion hazard.
+        for slot in reversed(owned):
+            unlink_slot(slot, doc)
 
-    # Pop entry from the AoT logical list.
-    list.pop(aot, index)
+    # Drop entries from the logical list in reverse so earlier
+    # indices stay valid as we go.
+    for i in reversed(idx_list):
+        list.pop(aot, i)
 
-    # Fully detach the snapshot subtree — nested sub-Tables in the
-    # dict storage still carry _layout_root pointing at the (now
-    # unlinked) source slots; reset them so a later reattach treats
-    # the whole subtree as freshly built. Children pointing at a
-    # different doc are left alone (alien live views; the standard
-    # cross-doc clone path will handle them).
-    from tomlrt._container import _reset_table_for_rehome  # noqa: PLC0415
+    for snapshot in snapshots:
+        snapshot._layout_root = doc  # noqa: SLF001
+        _reset_table_for_rehome(snapshot, recurse=True)
 
-    snapshot._layout_root = doc  # noqa: SLF001
-    _reset_table_for_rehome(snapshot, recurse=True)
-
-    # If empty AoT now, also remove the parent _index[k] entry entirely
-    # (dict storage of parent retains the AoT object).
     last_key = aot._path[-1]  # noqa: SLF001
     if len(aot) == 0 and not parent._index.get(last_key):  # noqa: SLF001
         parent._index.pop(last_key, None)  # noqa: SLF001
 
-    return snapshot
+    return snapshots
 
 
 def replace_aot_entry_with_clone(
