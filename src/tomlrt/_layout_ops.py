@@ -409,81 +409,48 @@ def delete_key(c: Container, key: str) -> None:
     # 1. Owned-slot identity set + retained slot objects (for unlink).
     owned_ids: set[int] = set()
     owned_slots: list[Slot] = []
-    seen_ref_ids: set[int] = set()
 
-    def _add_ref(r: SlotRef) -> None:
-        if id(r) in seen_ref_ids:
+    def _add_slot(s: Slot) -> None:
+        if id(s) in owned_ids:
             return
-        seen_ref_ids.add(id(r))
-        if id(r.slot) not in owned_ids:
-            owned_ids.add(id(r.slot))
-            owned_slots.append(r.slot)
+        owned_ids.add(id(s))
+        owned_slots.append(s)
 
     for r in c._index.get(key, []):  # noqa: SLF001
-        _add_ref(r)
+        _add_slot(r.slot)
 
-    # 2. Subtree containers + AoTs + descendant refs.
+    # 2. Subtree containers + AoTs + descendant owned slots.
     subtree_containers: list[Container] = []
     subtree_aots: list[AoT] = []
-    _collect_subtree(val, subtree_containers, subtree_aots, _add_ref)
+    _collect_subtree(val, subtree_containers, subtree_aots, _add_slot)
 
-    # 3. Scrub ancestor chain — but only ancestors that may actually
-    # hold a ref to an owned slot. For each owned slot, ref-bearing
-    # depths are:
-    #
-    #   KVSlot              : [len(host_path), len(host_path)+len(key_parts)-1]
-    #   StructuralHeaderSlot: [0, len(path)-1] (plus own_ref at len(path))
-    #
-    # An ancestor at depth d < c_depth holds a ref iff some owned slot
-    # bottoms out at a depth ``≤ d`` — equivalently, iff ``d ≥ min`` where
-    # ``min`` is the minimum bottom-depth across all owned slots. Walking
-    # ``c._parent`` until that bound covers the doc-root scan only when
-    # truly necessary; for the common leaf-KV delete, ``min`` is
-    # ``c_depth`` and no ancestor is touched.
-    chain: list[Container] = [c]
-    min_ancestor_depth = len(c._path)  # noqa: SLF001
+    # 3. Slot-driven scrub via back-pointers, *skipping* subtree
+    # containers — those are about to be orphaned to a fresh
+    # Document and must keep their internal `_refs` / `_index`
+    # intact. Chain containers (ancestors + ``c``) and any other
+    # live container holding a ref to an owned slot are scrubbed.
+    skip_ids = frozenset(id(sc) for sc in subtree_containers)
+    _scrub_owned_slots_via_backptrs(owned_slots, skip_container_ids=skip_ids)
+
+    # 4. Body-tail recompute on the ancestor chain. An ancestor at
+    # depth ``d < min_owned_depth`` cannot have its body_tail
+    # pointing into the owned set, so we don't need to walk past
+    # that. For the common leaf-KV delete the chain is just ``c``.
+    min_owned_depth = len(c._path)  # noqa: SLF001
     for s in owned_slots:
         d = len(s.host_path) if isinstance(s, KVSlot) else 0
-        if d < min_ancestor_depth:
-            min_ancestor_depth = d
-    cur = c._parent  # noqa: SLF001
-    while cur is not None and len(cur._path) >= min_ancestor_depth:  # noqa: SLF001
-        chain.append(cur)
+        if d < min_owned_depth:
+            min_owned_depth = d
+    cur: Container | None = c
+    while cur is not None and len(cur._path) >= min_owned_depth:  # noqa: SLF001
+        if (
+            cur._body_tail is not None  # noqa: SLF001
+            and id(cur._body_tail) in owned_ids  # noqa: SLF001
+        ):
+            cur._body_tail = _recompute_body_tail(cur)  # noqa: SLF001
         cur = cur._parent  # noqa: SLF001
 
-    for cc in chain:
-        # Identify which buckets in cc._index point at owned slots.
-        # Only buckets named by an owned slot's local_key in cc are
-        # candidates — the rest of cc._index is untouched. This keeps
-        # bulk deletion O(num_owned_slots), not O(len(cc._refs)).
-        # `cc` is along the chain c → ancestors, so every owned slot's
-        # logical path passes through cc; we never see the "host
-        # strictly below cc" case here.
-        candidate_keys: set[str] = set()
-        for s in owned_slots:
-            if isinstance(s, KVSlot):
-                # KVSlot at host_path H with key parts K contributes a
-                # ref into container H+K[:j] under local_key K[j], for
-                # j in 0..len(K)-1. The contributing local_key at cc
-                # is the next path step.
-                j = len(cc._path) - len(s.host_path)  # noqa: SLF001
-                if 0 <= j < len(s.key_parts):
-                    candidate_keys.add(s.key_parts[j].value)
-            elif isinstance(s, StructuralHeaderSlot):
-                # StructuralHeaderSlot at path P contributes binding
-                # refs at every prefix container; the local_key at cc
-                # is P[len(cc._path)] when cc is a strict prefix.
-                if len(cc._path) < len(s.path):  # noqa: SLF001
-                    candidate_keys.add(s.path[len(cc._path)])  # noqa: SLF001
-        if not _remove_owned_refs(cc, candidate_keys, owned_ids):
-            continue
-        if (
-            cc._body_tail is not None  # noqa: SLF001
-            and id(cc._body_tail) in owned_ids  # noqa: SLF001
-        ):
-            cc._body_tail = _recompute_body_tail(cc)  # noqa: SLF001
-
-    # 4. Unlink owned slots from the doc; clean up AoTEntry.entry_slots
+    # 5. Unlink owned slots from the doc; clean up AoTEntry.entry_slots
     # for live (still-attached) entries. Owned slots are then
     # transplanted to an orphan Document if there are subtree
     # containers / AoTs the user may still hold references to.
@@ -540,9 +507,9 @@ def _collect_subtree(
     val: object,
     containers_out: list[Container],
     aots_out: list[AoT],
-    add_ref: Callable[[SlotRef], None],
+    add_slot: Callable[[Slot], None],
 ) -> None:
-    """Walk ``val``'s container subtree, collecting containers, AoTs and refs."""
+    """Walk ``val``'s container subtree, collecting containers, AoTs and owned slots."""
     from tomlrt._array import AoT  # noqa: PLC0415
     from tomlrt._container import Container  # noqa: PLC0415
 
@@ -551,13 +518,13 @@ def _collect_subtree(
             return
         containers_out.append(val)
         for r in val._refs:  # noqa: SLF001
-            add_ref(r)
+            add_slot(r.slot)
         for child in val.values():
-            _collect_subtree(child, containers_out, aots_out, add_ref)
+            _collect_subtree(child, containers_out, aots_out, add_slot)
     elif isinstance(val, AoT):
         aots_out.append(val)
         for entry in val:
-            _collect_subtree(entry, containers_out, aots_out, add_ref)
+            _collect_subtree(entry, containers_out, aots_out, add_slot)
 
 
 def _surviving_aot_entries(doc: Document, candidates: set[int]) -> set[int]:
@@ -1812,17 +1779,13 @@ def _gather_section_slots(src_table: Container) -> list[Slot]:
         raise RuntimeError(msg)
 
     owned: set[int] = set()
-    seen_refs: set[int] = set()
 
-    def _add_ref(r: SlotRef) -> None:
-        if id(r) in seen_refs:
-            return
-        seen_refs.add(id(r))
-        owned.add(id(r.slot))
+    def _add_slot(s: Slot) -> None:
+        owned.add(id(s))
 
     containers_out: list[Container] = []
     aots_out: list[AoT] = []
-    _collect_subtree(src_table, containers_out, aots_out, _add_ref)
+    _collect_subtree(src_table, containers_out, aots_out, _add_slot)
 
     head_slot: Slot = src_table._header_ref.slot  # noqa: SLF001
     out: list[Slot] = [head_slot]
@@ -2412,94 +2375,30 @@ def unfile_ref(ref: SlotRef) -> None:
     _pop_or_remove(ref.slot._refs, ref)  # noqa: SLF001
 
 
-def _scrub_owned_slots_via_backptrs(owned: Iterable[Slot]) -> None:
+def _scrub_owned_slots_via_backptrs(
+    owned: Iterable[Slot],
+    *,
+    skip_container_ids: frozenset[int] = frozenset(),
+) -> None:
     """Remove every live ref to each slot in ``owned`` via slot back-pointers.
 
     Walks ``slot._refs`` directly (length ≤ path depth, bounded
     independent of doc size) instead of scanning ancestor containers'
     ``_index``/``_refs`` lists.
+
+    ``skip_container_ids`` names containers whose internal refs to
+    owned slots should be left in place — the typical caller is
+    `delete_key`, which transplants the deleted subtree to a fresh
+    orphan doc and needs the subtree containers' internal
+    structure intact. The default (empty) is correct for AoT removal,
+    which discards the popped entries' containers entirely.
     """
     for s in owned:
         # Snapshot — unfile_ref mutates slot._refs.
         for ref in list(s._refs):  # noqa: SLF001
+            if id(ref.container) in skip_container_ids:
+                continue
             unfile_ref(ref)
-
-
-def _candidate_keys_for(c: Container, owned: set[Slot]) -> set[str]:
-    """Local-keys in ``c._index`` that may hold refs to slots in ``owned``."""
-    plen = len(c._path)  # noqa: SLF001
-    keys: set[str] = set()
-    for s in owned:
-        if isinstance(s, KVSlot):
-            host = s.host_path
-            if len(host) > plen and host[:plen] == c._path:  # noqa: SLF001
-                keys.add(host[plen])
-            elif host == c._path and s.key_parts:  # noqa: SLF001
-                keys.add(s.key_parts[0].value)
-        elif isinstance(s, StructuralHeaderSlot):
-            path = s.path
-            if len(path) > plen and path[:plen] == c._path:  # noqa: SLF001
-                keys.add(path[plen])
-    return keys
-
-
-def _remove_owned_refs(
-    c: Container,
-    candidate_keys: set[str],
-    owned_ids: set[int],
-) -> bool:
-    """Bucket-driven removal of refs whose slot id is in ``owned_ids``.
-
-    Walks only the ``_index`` buckets named by ``candidate_keys``,
-    rewrites or drops them, and removes the same refs from
-    ``c._refs`` (using the C-level ``list.remove`` when removals
-    are sparse, a single rebuild otherwise). Also clears
-    ``c._header_ref`` if its slot is owned.
-
-    Caller is responsible for ``_body_tail`` handling — the right
-    policy depends on whether the container is being torn down or
-    is a survivor of a partial delete.
-
-    Returns ``True`` iff anything was removed.
-    """
-    if c._inline:  # noqa: SLF001
-        return False
-    to_remove_ids: set[int] = set()
-    empty_buckets: list[str] = []
-    for lk in candidate_keys:
-        bucket = c._index.get(lk)  # noqa: SLF001
-        if bucket is None:
-            continue
-        # Single-pass partition: derive `kept` and the doomed-ref
-        # ids in one walk; iterating the bucket twice doubles a
-        # cost that already dominates AoT pop on large documents.
-        kept: list[SlotRef] = []
-        local_doomed: list[SlotRef] = []
-        for r in bucket:
-            if id(r.slot) in owned_ids:
-                local_doomed.append(r)
-            else:
-                kept.append(r)
-        if not local_doomed:
-            continue
-        for r in local_doomed:
-            to_remove_ids.add(id(r))
-        if kept:
-            c._index[lk] = kept  # noqa: SLF001
-        else:
-            empty_buckets.append(lk)
-    for lk in empty_buckets:
-        del c._index[lk]  # noqa: SLF001
-    # Own-header ref (local_key=None, not in _index): drop if owned.
-    header_ref = c._header_ref  # noqa: SLF001
-    if header_ref is not None and id(header_ref.slot) in owned_ids:
-        to_remove_ids.add(id(header_ref))
-        c._header_ref = None  # noqa: SLF001
-    if not to_remove_ids:
-        return False
-    refs = c._refs  # noqa: SLF001
-    c._refs = [r for r in refs if id(r) not in to_remove_ids]  # noqa: SLF001
-    return True
 
 
 def remove_aot_entry(aot: AoT, index: int) -> Table:
