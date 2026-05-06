@@ -50,7 +50,7 @@ def _record_ref(c: Container, slot: Slot, local_key: str | None) -> SlotRef:
     so it does not need explicit maintenance here. ``_body_tail`` is
     updated by callers per the body-region rules.
     """
-    ref = SlotRef(slot=slot, container=c)
+    ref = SlotRef(slot, c)
     c._refs.append(ref)  # noqa: SLF001
     if local_key is not None:
         c._index.setdefault(local_key, []).append(ref)  # noqa: SLF001

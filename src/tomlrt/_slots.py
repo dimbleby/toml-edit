@@ -204,7 +204,6 @@ AoTHeaderSlot = StructuralHeaderSlot
 # ---------------------------------------------------------------------------
 
 
-@dataclass(eq=False)
 class SlotRef:
     """A per-container occurrence of a slot.
 
@@ -214,14 +213,15 @@ class SlotRef:
     (slot, container) and exposed via `local_key`.
     """
 
-    slot: Slot
-    container: Container
+    __slots__ = ("container", "slot")
 
-    def __post_init__(self) -> None:
+    def __init__(self, slot: Slot, container: Container) -> None:
+        self.slot = slot
+        self.container = container
         # Register on the slot's back-pointer list so AoT removal
         # can scrub all containers holding refs to a doomed slot
         # without scanning the slot's ancestors.
-        self.slot._refs.append(self)  # noqa: SLF001
+        slot._refs.append(self)  # noqa: SLF001
 
     @property
     def local_key(self) -> str | None:

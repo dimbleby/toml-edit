@@ -144,17 +144,22 @@ def split_eol_section(t: Trivia) -> tuple[Trivia, Trivia]:
 
     If no EOL comment is present on the comma's row, the whole input
     is structural and the EOL half is empty.
+
+    Note: when no comment is present, ``t`` itself is returned as the
+    structural half — callers must treat it as owned by the result and
+    must not retain or mutate the original.
     """
     pieces = t.pieces
+    n = len(pieces)
     j = 0
-    while j < len(pieces) and isinstance(pieces[j], WhitespaceNode):
+    while j < n and isinstance(pieces[j], WhitespaceNode):
         j += 1
-    if j >= len(pieces) or not isinstance(pieces[j], CommentNode):
-        return Trivia(), Trivia(list(pieces))
+    if j >= n or not isinstance(pieces[j], CommentNode):
+        return Trivia(), t
     end = j + 1
-    if end < len(pieces) and isinstance(pieces[end], NewlineNode):
+    if end < n and isinstance(pieces[end], NewlineNode):
         end += 1
-    return Trivia(list(pieces[:end])), Trivia(list(pieces[end:]))
+    return Trivia(pieces[:end]), Trivia(pieces[end:])
 
 
 @dataclass(slots=True, eq=False)

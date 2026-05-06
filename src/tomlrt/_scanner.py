@@ -252,6 +252,32 @@ class _Scanner:
         self.pos = pos
         return WhitespaceNode(src[start:pos])
 
+    def scan_inline_ws_text(self) -> str:
+        """Consume one run of inline whitespace; return raw text (or "").
+
+        Like :meth:`scan_inline_ws` but skips the ``WhitespaceNode``
+        allocation. Used by parser sites that store the result as a
+        plain ``str`` (header inner_pre/inner_post, KV pre_eq/post_eq,
+        inline-table pre_eq/post_eq).
+        """
+        src = self.src
+        end = self.end
+        pos = self.pos
+        if pos >= end:
+            return ""
+        ch = src[pos]
+        if ch != " " and ch != "\t":
+            return ""
+        start = pos
+        pos += 1
+        while pos < end:
+            c = src[pos]
+            if c != " " and c != "\t":
+                break
+            pos += 1
+        self.pos = pos
+        return src[start:pos]
+
     def scan_array_trivia(self) -> Trivia:
         """Consume trivia inside an array (or TOML 1.1 inline table).
 
@@ -629,14 +655,17 @@ class _Scanner:
         msg = f"expected key, got {ch!r}"
         raise self.error(msg)
 
-    def scan_key_separator(self) -> str | None:
-        """Scan an optional dotted-key separator: ``ws "." ws``.
+    def scan_key_separator(self) -> tuple[str, bool]:
+        """Scan an optional dotted-key separator and trailing whitespace.
 
-        Returns the separator's exact lexeme (which may include
-        leading and trailing whitespace) and advances the cursor
-        past it. Returns `None` and leaves the cursor put if the
-        next non-whitespace character is not a dot — that is a
-        regular `pre_eq` whitespace situation, owned by the caller.
+        Returns ``(text, is_separator)``:
+
+        - If the next non-whitespace char is ``.``, consume ``ws "." ws``
+          and return ``(lexeme, True)``.
+        - Otherwise consume only the leading whitespace (if any) and
+          return ``(ws_text, False)``. The caller can use ``ws_text``
+          directly as the ``pre_eq`` / ``inner_post`` field, avoiding
+          a duplicate inline-ws scan.
         """
         src = self.src
         end = self.end
@@ -648,7 +677,8 @@ class _Scanner:
                 break
             ws_end += 1
         if ws_end >= end or src[ws_end] != ".":
-            return None
+            self.pos = ws_end
+            return src[save:ws_end], False
         sep_end = ws_end + 1
         while sep_end < end:
             c = src[sep_end]
@@ -656,7 +686,7 @@ class _Scanner:
                 break
             sep_end += 1
         self.pos = sep_end
-        return src[save:sep_end]
+        return src[save:sep_end], True
 
     # ------------------------------------------------------------------
     # Bare value tokens: bool, special-float keywords, integer, float,
