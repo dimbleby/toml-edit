@@ -2377,40 +2377,39 @@ def _last_aot_slot(aot: AoT) -> Slot | None:
     return None
 
 
+def _pop_or_remove(lst: list[Any], item: Any) -> None:
+    """O(1) pop if ``item`` is at the tail; else C-level ``list.remove``.
+
+    Both branches are C-implemented; the tail check avoids an
+    O(N) scan when the caller is consuming a list in reverse
+    (the common case for batched scrubs).
+    """
+    if lst[-1] is item:
+        lst.pop()
+    else:
+        lst.remove(item)
+
+
 def unfile_ref(ref: SlotRef) -> None:
     """Remove ``ref`` from its container's ``_refs``/``_index`` and from ``slot._refs``.
 
-    Fast tail-case: if ``ref`` is at the end of the relevant list,
-    ``list.pop()`` is O(1); otherwise C-level ``list.remove(specific)``
-    is O(N) but at C speed (no Python-level partition).
-
-    Also clears ``container._header_ref`` if the ref was the
-    container's own-header ref.
+    Each affected list uses the tail-fast-path via
+    `_pop_or_remove`. Also clears ``container._header_ref`` if the
+    ref was the container's own-header ref.
     """
     c = ref.container
     if not c._inline:  # noqa: SLF001
-        refs = c._refs  # noqa: SLF001
-        if refs and refs[-1] is ref:
-            refs.pop()
-        else:
-            refs.remove(ref)
+        _pop_or_remove(c._refs, ref)  # noqa: SLF001
         local_key = ref.local_key
-        if local_key is not None:
-            bucket = c._index.get(local_key)  # noqa: SLF001
-            if bucket is not None:
-                if bucket[-1] is ref:
-                    bucket.pop()
-                else:
-                    bucket.remove(ref)
-                if not bucket:
-                    del c._index[local_key]  # noqa: SLF001
-        elif c._header_ref is ref:  # noqa: SLF001
-            c._header_ref = None  # noqa: SLF001
-    slot_refs = ref.slot._refs  # noqa: SLF001
-    if slot_refs and slot_refs[-1] is ref:
-        slot_refs.pop()
-    else:
-        slot_refs.remove(ref)
+        if local_key is None:
+            if c._header_ref is ref:  # noqa: SLF001
+                c._header_ref = None  # noqa: SLF001
+        else:
+            bucket = c._index[local_key]  # noqa: SLF001
+            _pop_or_remove(bucket, ref)
+            if not bucket:
+                del c._index[local_key]  # noqa: SLF001
+    _pop_or_remove(ref.slot._refs, ref)  # noqa: SLF001
 
 
 def _scrub_owned_slots_via_backptrs(owned: Iterable[Slot]) -> None:
@@ -2501,48 +2500,6 @@ def _remove_owned_refs(
     refs = c._refs  # noqa: SLF001
     c._refs = [r for r in refs if id(r) not in to_remove_ids]  # noqa: SLF001
     return True
-
-
-def _scrub_container_refs(c: Container, owned: set[Slot]) -> None:
-    """Remove every SlotRef in ``c`` (only) that points at a slot in ``owned``.
-
-    Non-recursive; caller is responsible for visiting any nested
-    containers that may also hold refs. Body-tail policy: clear if
-    the old tail is owned (callers of this primitive — currently
-    `remove_aot_entry`'s ancestor walk — don't need a recomputed
-    tail; the next mutation will recompute lazily).
-    """
-    if c._inline:  # noqa: SLF001
-        return
-    owned_ids = {id(s) for s in owned}
-    candidate_keys = _candidate_keys_for(c, owned)
-    if not _remove_owned_refs(c, candidate_keys, owned_ids):
-        return
-    if c._body_tail is not None and c._body_tail in owned:  # noqa: SLF001
-        c._body_tail = None  # noqa: SLF001
-
-
-def _scrub_refs_to_owned_slots(c: Container, owned: set[Slot]) -> None:
-    """Remove SlotRefs to slots in ``owned`` from ``c`` and its live nested values.
-
-    Recurses into nested live `Container` / `Array` / `AoT` values held
-    in dict/list storage. Inline containers are skipped (they can't
-    reference doc-stream slots).
-    """
-    from tomlrt._array import AoT, Array  # noqa: PLC0415
-    from tomlrt._container import Container  # noqa: PLC0415
-
-    _scrub_container_refs(c, owned)
-    # Recurse.
-    for v in list(dict.values(c)):
-        if isinstance(v, Container):
-            _scrub_refs_to_owned_slots(v, owned)
-        elif isinstance(v, AoT):
-            for sub in v:
-                _scrub_refs_to_owned_slots(sub, owned)
-        elif isinstance(v, Array):
-            # Inline arrays don't carry SlotRefs.
-            pass
 
 
 def remove_aot_entry(aot: AoT, index: int) -> Table:

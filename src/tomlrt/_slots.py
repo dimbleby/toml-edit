@@ -12,7 +12,7 @@ slots. Three slot kinds:
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
@@ -91,14 +91,11 @@ class Slot:
         cls = type(self)
         new = cls.__new__(cls)
         memo[id(self)] = new
-        for f in fields(self):
-            name = f.name
-            if name == "_refs":
-                new._refs = []  # noqa: SLF001
-            elif name in ("_prev", "_next"):
-                setattr(new, name, None)
-            else:
-                setattr(new, name, copy.deepcopy(getattr(self, name), memo))
+        state = self.__dict__.copy()
+        state["_refs"] = []
+        state["_prev"] = None
+        state["_next"] = None
+        new.__dict__.update(copy.deepcopy(state, memo))
         return new
 
     def render(self) -> str:  # pragma: no cover - overridden
