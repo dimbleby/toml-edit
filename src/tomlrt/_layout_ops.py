@@ -367,6 +367,39 @@ def append_direct_kv(c: Container, key: str, value: Value) -> None:
     c._body_tail = new_slot  # noqa: SLF001
 
 
+def _invalidate_body_tail_chain(
+    start: Container | None,
+    owned_slot_ids: set[int],
+    *,
+    min_depth: int = 0,
+    recompute: bool,
+) -> None:
+    """Invalidate ``_body_tail`` on the ``start`` → root chain.
+
+    For each container ``cc`` along the chain whose existing
+    ``_body_tail`` slot is in ``owned_slot_ids``, either
+    recompute the tail (eager) or clear it to ``None`` (lazy —
+    next mutation will recompute).
+
+    Walks until either the chain is exhausted or
+    ``len(cc._path) < min_depth``. The depth bound is a
+    correctness short-circuit: an ancestor at depth ``d`` cannot
+    have its body_tail point at a slot whose minimum bottom-depth
+    exceeds ``d``. Common-case leaf-KV deletes never walk past
+    ``c`` itself.
+    """
+    cur = start
+    while cur is not None and len(cur._path) >= min_depth:  # noqa: SLF001
+        if (
+            cur._body_tail is not None  # noqa: SLF001
+            and id(cur._body_tail) in owned_slot_ids  # noqa: SLF001
+        ):
+            cur._body_tail = (  # noqa: SLF001
+                _recompute_body_tail(cur) if recompute else None
+            )
+        cur = cur._parent  # noqa: SLF001
+
+
 def delete_key(c: Container, key: str) -> None:
     """Delete ``key`` from ``c`` — scalar, inline, section, AoT, or dotted-subtree.
 
@@ -432,23 +465,15 @@ def delete_key(c: Container, key: str) -> None:
     skip_ids = frozenset(id(sc) for sc in subtree_containers)
     _scrub_owned_slots_via_backptrs(owned_slots, skip_container_ids=skip_ids)
 
-    # 4. Body-tail recompute on the ancestor chain. An ancestor at
-    # depth ``d < min_owned_depth`` cannot have its body_tail
-    # pointing into the owned set, so we don't need to walk past
-    # that. For the common leaf-KV delete the chain is just ``c``.
+    # 4. Body-tail recompute on the ancestor chain. The
+    # `min_owned_depth` bound short-circuits the walk for the
+    # common leaf-KV case (chain is just ``c`` itself).
     min_owned_depth = len(c._path)  # noqa: SLF001
     for s in owned_slots:
         d = len(s.host_path) if isinstance(s, KVSlot) else 0
         if d < min_owned_depth:
             min_owned_depth = d
-    cur: Container | None = c
-    while cur is not None and len(cur._path) >= min_owned_depth:  # noqa: SLF001
-        if (
-            cur._body_tail is not None  # noqa: SLF001
-            and id(cur._body_tail) in owned_ids  # noqa: SLF001
-        ):
-            cur._body_tail = _recompute_body_tail(cur)  # noqa: SLF001
-        cur = cur._parent  # noqa: SLF001
+    _invalidate_body_tail_chain(c, owned_ids, min_depth=min_owned_depth, recompute=True)
 
     # 5. Unlink owned slots from the doc; clean up AoTEntry.entry_slots
     # for live (still-attached) entries. Owned slots are then
@@ -2497,15 +2522,14 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
     # O(N) C-removes.
     _scrub_owned_slots_via_backptrs(reversed(union_owned_ordered))
 
-    # Body-tail invalidation: clear any `_body_tail` on the parent
-    # chain that points into the popped slot set. Stale tails are
-    # otherwise recomputed lazily, but check explicitly so that
-    # callers iterating right after a pop get a correct anchor.
-    cur: Container | None = parent
-    while cur is not None:
-        if cur._body_tail is not None and cur._body_tail in union_owned:  # noqa: SLF001
-            cur._body_tail = None  # noqa: SLF001
-        cur = cur._parent  # noqa: SLF001
+    # Body-tail invalidation on the parent chain. Use the same
+    # min-depth bound as `delete_key`: the popped slots' min
+    # bottom-depth is 0 (every popped AoT entry includes a
+    # header), so this walks all the way to the doc root —
+    # exactly what we want, since a binding ref to an AoT entry
+    # header lives at every prefix container.
+    union_owned_ids = {id(s) for s in union_owned}
+    _invalidate_body_tail_chain(parent, union_owned_ids, recompute=True)
 
     for owned in owned_per_entry:
         # Unlink in reverse order so the entry's leftmost slot (the
