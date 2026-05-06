@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypeGuard, TypeVar
+from typing import TYPE_CHECKING, Any, TypeGuard, TypeVar, overload
 
 if sys.version_info >= (3, 12):
     from typing import Self, override
@@ -58,6 +58,7 @@ from tomlrt._values import (
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
+    from _typeshed import SupportsKeysAndGetItem
     from typing_extensions import Self
 
     from tomlrt._slots import AoTEntry, Slot, SlotRef
@@ -68,6 +69,8 @@ if TYPE_CHECKING:
 
 
 _T = TypeVar("_T")
+
+_MISSING: Any = object()
 
 
 class Container(dict[str, Any]):
@@ -183,15 +186,27 @@ class Container(dict[str, Any]):
         """Return the value at ``key`` typed as an array-of-tables (`AoT`)."""
         return self._typed_entry(key, AoT, "an AoT")
 
-    def get_table(self, key: str | Sequence[str], default: Any = None) -> Any:
+    @overload
+    def get_table(self, key: str | Sequence[str]) -> Table | None: ...
+    @overload
+    def get_table(self, key: str | Sequence[str], default: _T) -> Table | _T: ...
+    def get_table(self, key: str | Sequence[str], default: object = None) -> object:
         """Like `table(key)` but returns ``default`` if the key is missing."""
         return self._typed_entry_or(key, Table, "a Table", default)
 
-    def get_array(self, key: str | Sequence[str], default: Any = None) -> Any:
+    @overload
+    def get_array(self, key: str | Sequence[str]) -> Array | None: ...
+    @overload
+    def get_array(self, key: str | Sequence[str], default: _T) -> Array | _T: ...
+    def get_array(self, key: str | Sequence[str], default: object = None) -> object:
         """Like `array(key)` but returns ``default`` if the key is missing."""
         return self._typed_entry_or(key, Array, "an Array", default)
 
-    def get_aot(self, key: str | Sequence[str], default: Any = None) -> Any:
+    @overload
+    def get_aot(self, key: str | Sequence[str]) -> AoT | None: ...
+    @overload
+    def get_aot(self, key: str | Sequence[str], default: _T) -> AoT | _T: ...
+    def get_aot(self, key: str | Sequence[str], default: object = None) -> object:
         """Like `aot(key)` but returns ``default`` if the key is missing."""
         return self._typed_entry_or(key, AoT, "an AoT", default)
 
@@ -203,19 +218,19 @@ class Container(dict[str, Any]):
         return v
 
     def _typed_entry_or(
-        self, key: str | Sequence[str], cls: type[_T], label: str, default: Any
-    ) -> _T | Any:
+        self, key: str | Sequence[str], cls: type[_T], label: str, default: object
+    ) -> _T | object:
         try:
             return self._typed_entry(key, cls, label)
         except KeyError:
             return default
 
-    def entry(self, path: str | Sequence[str]) -> Any:
-        """Resolve a (possibly dotted) path; raises ``KeyError`` if missing.
+    def entry(self, key: str | Sequence[str]) -> Any:
+        """Resolve a (possibly dotted) key path; raises ``KeyError`` if missing.
 
         Raises ``TypeError`` if descent passes through a non-table.
         """
-        parts = split_path(path)
+        parts = split_path(key)
         cur: Any = self
         for i, p in enumerate(parts):
             if not isinstance(cur, Container):
@@ -226,10 +241,10 @@ class Container(dict[str, Any]):
             cur = dict.__getitem__(cur, p)
         return cur
 
-    def get_entry(self, path: str | Sequence[str], default: Any = None) -> Any:
-        """Like `entry(path)` but returns ``default`` if the path is missing."""
+    def get_entry(self, key: str | Sequence[str], default: Any = None) -> Any:
+        """Like `entry(key)` but returns ``default`` if the path is missing."""
         try:
-            return self.entry(path)
+            return self.entry(key)
         except KeyError:
             return default
 
@@ -553,17 +568,14 @@ class Container(dict[str, Any]):
             del self[k]
 
     @override
-    def pop(self, key: str, /, *args: Any) -> Any:
-        if len(args) > 1:
-            msg = f"pop expected at most 2 arguments, got {1 + len(args)}"
-            raise TypeError(msg)
+    def pop(self, key: str, default: Any = _MISSING) -> Any:
         if key in self:
             value = dict.__getitem__(self, key)
             del self[key]
             return value
-        if args:
-            return args[0]
-        raise KeyError(key)
+        if default is _MISSING:
+            raise KeyError(key)
+        return default
 
     @override
     def popitem(self) -> tuple[str, Any]:
@@ -600,7 +612,11 @@ class Container(dict[str, Any]):
         return dict.__getitem__(self, key)
 
     @override
-    def __ior__(self, other: Any) -> Self:  # type: ignore[override]
+    def __ior__(  # type: ignore[override]
+        self,
+        other: SupportsKeysAndGetItem[str, Any] | Iterable[tuple[str, Any]],
+        /,
+    ) -> Self:
         self.update(other)
         return self
 
@@ -610,7 +626,7 @@ class Container(dict[str, Any]):
         # continue to work on the copy.
         return _deep_section_clone(self)
 
-    def __deepcopy__(self, memo: dict[int, Any]) -> Container:
+    def __deepcopy__(self, memo: dict[int, object]) -> Container:
         return _deep_section_clone(self)
 
     # ------------------------------------------------------------------
@@ -692,7 +708,7 @@ class Container(dict[str, Any]):
                 dict.__delitem__(parent, my_key)
             cur = parent
 
-    def install(self, path: str | Sequence[str], value: Any) -> Any:
+    def install(self, path: str | Sequence[str], value: TomlInput) -> Any:
         """Set ``value`` at the (possibly dotted) ``path``.
 
         Intermediate sections are created as needed via `ensure_table`.
@@ -776,13 +792,14 @@ class Container(dict[str, Any]):
                 cur[parts[-1]] = value
                 return cur[parts[-1]]
             sub = parts[i:]
+            assert isinstance(value, (Table, Mapping)) or value is None
             return _layout_ops.attach_section_at(cur, sub, value)
         host = self if len(parts) == 1 else self.ensure_table(parts[:-1])
         host[parts[-1]] = value
         return host[parts[-1]]
 
-    def ensure_table(self, path: str | Sequence[str]) -> Table:
-        """Return the section at ``path``, creating it if missing.
+    def ensure_table(self, key: str | Sequence[str]) -> Table:
+        """Return the section at ``key``, creating it if missing.
 
         If any prefix already exists as a section, descent continues
         from there. Intermediate components missing entirely are left
@@ -790,7 +807,7 @@ class Container(dict[str, Any]):
         ``[a.b.c]`` header. An existing non-table at any component
         raises ``TypeError``.
         """
-        parts = validate_path(path)
+        parts = validate_path(key)
         if self._inline:
             msg = "cannot create section table inside an inline-style table"
             raise TOMLError(msg)
@@ -1035,7 +1052,7 @@ class Table(Container):
     __slots__ = ()
 
     @classmethod
-    def section(cls, body: Mapping[str, Any] | None = None) -> Table:
+    def section(cls, mapping: Mapping[str, TomlInput] | None = None) -> Table:
         """Return a detached ``[k]`` standard-section table.
 
         Use from an assignment site:
@@ -1057,13 +1074,13 @@ class Table(Container):
         a time.
         """
         t = cls()
-        if body is not None:
-            for k, v in body.items():
+        if mapping is not None:
+            for k, v in mapping.items():
                 dict.__setitem__(t, k, v)
         return t
 
     @classmethod
-    def inline(cls, body: Mapping[str, Any] | None = None) -> Table:
+    def inline(cls, mapping: Mapping[str, TomlInput] | None = None) -> Table:
         """Return a fresh inline table that *attaches live* on assignment.
 
         Use from an assignment site: ``doc[k] = Table.inline({...})``.
@@ -1084,8 +1101,8 @@ class Table(Container):
         """
         t = cls()
         t._inline = True
-        if body is not None:
-            for k, v in body.items():
+        if mapping is not None:
+            for k, v in mapping.items():
                 _k: object = k
                 if not isinstance(_k, str):
                     msg = f"inline-table key must be str, got {type(_k).__name__}"
@@ -1189,7 +1206,7 @@ class Document(Container):
         return loads(self.render())
 
     @override
-    def __deepcopy__(self, memo: dict[int, Any]) -> Document:
+    def __deepcopy__(self, memo: dict[int, object]) -> Document:
         from tomlrt._public import loads  # noqa: PLC0415
 
         return loads(self.render())
@@ -1409,7 +1426,17 @@ def _coerce_for_document_init(v: Any) -> Any:
 # re-exported for convenience.
 from tomlrt._array import AoT, Array  # noqa: E402
 
-TomlInput = "Mapping[str, Any] | Document"
+if TYPE_CHECKING:
+    from datetime import date, datetime, time
+    from typing import TypeAlias
+
+    Scalar: TypeAlias = str | int | float | bool | datetime | date | time
+    TomlInput: TypeAlias = (
+        "Scalar | Array | AoT | Table | Mapping[str, Any] | list[Any]"
+    )
+else:
+    Scalar = "str | int | float | bool | datetime | date | time"
+    TomlInput = "Scalar | Array | AoT | Table | Mapping[str, Any] | list[Any]"
 
 
 # ---------------------------------------------------------------------------

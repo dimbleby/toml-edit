@@ -1198,8 +1198,7 @@ def _recompute_body_tail(c: Container) -> Slot | None:
     found = _last_kv(
         c,
         lambda s: (
-            s.owner_aot_entry is own_aot
-            and (not has_header or s.host_path == own_path)
+            s.owner_aot_entry is own_aot and (not has_header or s.host_path == own_path)
         ),
     )
     if found is not None:
@@ -1680,8 +1679,7 @@ def _install_cloned_aot_entry(
         insert_after(prev, s, doc)
         prev = s
 
-    parent_ref = SlotRef(
-        slot=cloned_header, container=parent)
+    parent_ref = SlotRef(slot=cloned_header, container=parent)
     _file_ref_at_tail(parent, parent_ref)
 
     _populate_entry_views(

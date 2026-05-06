@@ -44,7 +44,9 @@ from tomlrt._values import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
+
+    from _typeshed import SupportsRichComparison
 
     from tomlrt._values import (
         InlineTableEntry,
@@ -56,7 +58,7 @@ if TYPE_CHECKING:
     else:
         from typing_extensions import Self
 
-    from tomlrt._container import Container, Document, Table
+    from tomlrt._container import Container, Document, Table, TomlInput
 
 
 _T = TypeVar("_T")
@@ -69,7 +71,7 @@ class Array(list[Any]):
 
     def __init__(
         self,
-        items: Any = None,
+        items: Iterable[TomlInput] = (),
         *,
         multiline: bool = False,
         indent: str = "    ",
@@ -86,7 +88,8 @@ class Array(list[Any]):
         self._value: ArrayValue = ArrayValue()
         self._multiline: bool = multiline
         self._attached: bool = False
-        if items is None:
+        items_list = list(items)
+        if not items_list:
             if multiline:
                 self._value.final_trivia = Trivia(
                     [NewlineNode(text="\n"), WhitespaceNode(text=indent)]
@@ -94,7 +97,7 @@ class Array(list[Any]):
             return
         from tomlrt._container import _synth_inline_array  # noqa: PLC0415
 
-        val, arr = _synth_inline_array(list(items), layout_root=None, owner=None)
+        val, arr = _synth_inline_array(items_list, layout_root=None, owner=None)
         self._value = val
         for v in arr:
             list.append(self, v)
@@ -132,32 +135,42 @@ class Array(list[Any]):
     def __copy__(self) -> Array:
         return Array(self.to_list(), multiline=self._multiline)
 
-    def __deepcopy__(self, memo: dict[int, Any]) -> Array:
+    def __deepcopy__(self, memo: dict[int, object]) -> Array:
         return Array(self.to_list(), multiline=self._multiline)
 
-    def array(self, index: int) -> Array:
+    def array(self, index: SupportsIndex) -> Array:
         """Return ``self[index]`` typed as a nested `Array`."""
         return self._typed_item(index, Array, "an Array")
 
-    def table(self, index: int) -> Table:
+    def table(self, index: SupportsIndex) -> Table:
         """Return ``self[index]`` typed as a `Table`."""
         from tomlrt._container import Table  # noqa: PLC0415
 
         return self._typed_item(index, Table, "a Table")
 
-    def get_array(self, index: int, default: Any = None) -> Any:
+    @overload
+    def get_array(self, index: SupportsIndex) -> Array | None: ...
+    @overload
+    def get_array(self, index: SupportsIndex, default: _T) -> Array | _T: ...
+    def get_array(self, index: SupportsIndex, default: object = None) -> object:
         """Like `array(index)` but returns ``default`` for out-of-range."""
-        if index < -len(self) or index >= len(self):
+        i = operator.index(index)
+        if i < -len(self) or i >= len(self):
             return default
         return self.array(index)
 
-    def get_table(self, index: int, default: Any = None) -> Any:
+    @overload
+    def get_table(self, index: SupportsIndex) -> Table | None: ...
+    @overload
+    def get_table(self, index: SupportsIndex, default: _T) -> Table | _T: ...
+    def get_table(self, index: SupportsIndex, default: object = None) -> object:
         """Like `table(index)` but returns ``default`` for out-of-range."""
-        if index < -len(self) or index >= len(self):
+        i = operator.index(index)
+        if i < -len(self) or i >= len(self):
             return default
         return self.table(index)
 
-    def _typed_item(self, index: int, cls: type[_T], label: str) -> _T:
+    def _typed_item(self, index: SupportsIndex, cls: type[_T], label: str) -> _T:
         v = self[index]
         if not isinstance(v, cls):
             msg = f"item at {index} is {type(v).__name__}, not {label}"
@@ -199,7 +212,7 @@ class Array(list[Any]):
         """Leading-comment view, indexed by item position."""
         return ArrayLeadingView(self)
 
-    def set_multiline(self, *, multiline: bool, indent: str | None = None) -> Array:
+    def set_multiline(self, *, multiline: bool, indent: str = "    ") -> Array:
         """Switch this array between flush single-line and multi-line form.
 
         Raises ``TOMLError`` when collapsing a multi-line array that
@@ -209,7 +222,7 @@ class Array(list[Any]):
 
         Returns ``self`` for chaining.
         """
-        ind = "    " if indent is None else indent
+        ind = indent
         items = self._value.items
         if not multiline:
             # Recursively probe for CommentNodes anywhere inside an item
@@ -471,12 +484,20 @@ class Array(list[Any]):
         self._reorder(list(reversed(range(len(self)))))
 
     @override
-    def sort(self, *, key: Any = None, reverse: bool = False) -> None:
+    @override
+    def sort(
+        self,
+        *,
+        key: Callable[[Any], object] | None = None,
+        reverse: bool = False,
+    ) -> None:
         n = len(self)
         if key is None:
-            order = sorted(range(n), key=lambda i: self[i], reverse=reverse)
+            sort_key: Callable[[int], Any] = lambda i: self[i]  # noqa: E731
         else:
-            order = sorted(range(n), key=lambda i: key(self[i]), reverse=reverse)
+            key_fn = key
+            sort_key = lambda i: key_fn(self[i])  # noqa: E731
+        order = sorted(range(n), key=sort_key, reverse=reverse)
         self._reorder(order)
 
     def _reorder(self, order: list[int]) -> None:
@@ -501,24 +522,28 @@ class Array(list[Any]):
         apply_comments(self, new_leadings, new_eols)
 
     @overload
-    def __setitem__(self, key: SupportsIndex, value: Any) -> None: ...
+    def __setitem__(self, index: SupportsIndex, value: Any) -> None: ...
     @overload
-    def __setitem__(self, key: slice, value: Iterable[Any]) -> None: ...
+    def __setitem__(self, index: slice, value: Iterable[Any]) -> None: ...
     @override
     def __setitem__(
         self,
-        key: SupportsIndex | slice,
+        index: SupportsIndex | slice,
         value: Any,
     ) -> None:
-        if isinstance(key, slice):
+        if isinstance(index, slice):
             try:
                 values = list(value)
             except TypeError as exc:
                 msg = "can only assign an iterable"
                 raise TypeError(msg) from exc
             # Compute target indices and replace items in place.
-            indices = list(range(*key.indices(len(self))))
-            if key.step is not None and key.step != 1 and len(values) != len(indices):
+            indices = list(range(*index.indices(len(self))))
+            if (
+                index.step is not None
+                and index.step != 1
+                and len(values) != len(indices)
+            ):
                 msg = (
                     f"attempt to assign sequence of size {len(values)} "
                     f"to extended slice of size {len(indices)}"
@@ -534,27 +559,27 @@ class Array(list[Any]):
             style = self._style()
             # Build the new ArrayItem list segment.
             new_segment: list[ArrayItem] = []
-            slice_start = key.start or 0
+            slice_start = index.start or 0
             for i, cst in enumerate(new_csts):
                 first_in_arr = slice_start == 0 and i == 0 and not items[:slice_start]
                 new_segment.append(
                     _new_item(cst, leading_first=first_in_arr, style=style)
                 )
-            items[key] = new_segment
-            list.__setitem__(self, key, new_decoded)
+            items[index] = new_segment
+            list.__setitem__(self, index, new_decoded)
             _renormalise_commas(items, style, self._value)
             return
         # int index: just replace the value CST in place.
-        i = int(key)
+        i = int(index)
         cst, dec = self._synth_cst(value)
         items = self._value.items
         if i < 0:
             i += len(items)
         items[i].value = cst
-        list.__setitem__(self, key, dec)
+        list.__setitem__(self, index, dec)
 
     @override
-    def __delitem__(self, key: SupportsIndex | slice) -> None:
+    def __delitem__(self, index: SupportsIndex | slice) -> None:
         items = self._value.items
         # Snapshot bracket padding + style before mutation so a delete
         # at index 0 doesn't strip the leading-bracket padding (which
@@ -574,16 +599,16 @@ class Array(list[Any]):
             and not self._value.final_trivia.pieces
         )
         tail_pad = clone_trivia(items[last_idx].trailing) if had_tail_pad else Trivia()
-        if isinstance(key, slice):
-            removed_indices = range(*key.indices(len(items)))
+        if isinstance(index, slice):
+            removed_indices = range(*index.indices(len(items)))
             tail_was_removed = last_idx in removed_indices
         else:
-            i = int(key)
+            i = int(index)
             if i < 0:
                 i += len(items)
             tail_was_removed = i == last_idx
-        del items[key]
-        list.__delitem__(self, key)
+        del items[index]
+        list.__delitem__(self, index)
         if items:
             if had_leading and not items[0].leading.pieces:
                 items[0].leading = leading_first
@@ -594,22 +619,22 @@ class Array(list[Any]):
             self._value.final_trivia = tail_pad
 
     @override
-    def __iadd__(self, other: Any) -> Self:
-        self.extend(other)
+    def __iadd__(self, values: Iterable[Any]) -> Self:
+        self.extend(values)
         return self
 
     @override
-    def __imul__(self, n: SupportsIndex) -> Self:
-        count = int(n)
-        if count <= 0:
+    def __imul__(self, count: SupportsIndex) -> Self:
+        n = int(count)
+        if n <= 0:
             self.clear()
             return self
-        if count == 1:
+        if n == 1:
             return self
-        # Snapshot original items + values, then append count-1 copies.
+        # Snapshot original items + values, then append n-1 copies.
         original_items = list(self._value.items)
         original_values = list(self)
-        for _ in range(count - 1):
+        for _ in range(n - 1):
             for src_item, src_val in zip(original_items, original_values, strict=True):
                 cloned = _clone_item(src_item)
                 style = self._style()
@@ -955,15 +980,14 @@ class AoT(list["Table"]):
 
     __slots__ = ("_layout_root", "_parent", "_path")
 
-    def __init__(self, entries: Any = None) -> None:
+    def __init__(self, entries: Iterable[Mapping[str, TomlInput]] = ()) -> None:
         """Construct a standalone array-of-tables."""
         super().__init__()
         self._layout_root: Document | None = None
         self._path: tuple[str, ...] = ()
         self._parent: Container | None = None
-        if entries is not None:
-            for e in entries:
-                list.append(self, _make_unattached_entry(e))
+        for e in entries:
+            list.append(self, _make_unattached_entry(e))
 
     def to_list(self) -> list[dict[str, Any]]:
         """Materialise a list of plain-Python ``dict``s (recursive)."""
@@ -972,19 +996,19 @@ class AoT(list["Table"]):
     def __copy__(self) -> AoT:
         return AoT(self.to_list())
 
-    def __deepcopy__(self, memo: dict[int, Any]) -> AoT:
+    def __deepcopy__(self, memo: dict[int, object]) -> AoT:
         return AoT(self.to_list())
 
-    def add(self, body: Mapping[str, Any] | None = None) -> Table:
+    def add(self, entry: Mapping[str, TomlInput] | None = None) -> Table:
         """Append a fresh ``[[path]]`` entry and return its `Table` view.
 
-        ``body`` may be a Mapping (initial body content) or ``None``
+        ``entry`` may be a Mapping (initial body content) or ``None``
         (empty entry). The AoT must be attached to a document.
         """
         if self._layout_root is None:
-            list.append(self, _make_unattached_entry(body))
+            list.append(self, _make_unattached_entry(entry))
             return self[-1]
-        return _layout_ops.add_aot_entry(self, body)
+        return _layout_ops.add_aot_entry(self, entry)
 
     def _add_entry_attached(self, value: Mapping[str, Any]) -> Table:
         """Dispatch a new attached AoT entry from ``value``.
@@ -1036,19 +1060,19 @@ class AoT(list["Table"]):
         return _layout_ops.remove_aot_entry(self, idx)
 
     @override
-    def __delitem__(self, key: SupportsIndex | slice) -> None:
-        if isinstance(key, slice):
+    def __delitem__(self, index: SupportsIndex | slice) -> None:
+        if isinstance(index, slice):
             if self._layout_root is None:
-                list.__delitem__(self, key)
+                list.__delitem__(self, index)
                 return
-            indices = sorted(range(*key.indices(len(self))), reverse=True)
+            indices = sorted(range(*index.indices(len(self))), reverse=True)
             for i in indices:
                 _layout_ops.remove_aot_entry(self, i)
             return
         if self._layout_root is None:
-            list.__delitem__(self, key)
+            list.__delitem__(self, index)
             return
-        _layout_ops.remove_aot_entry(self, int(key))
+        _layout_ops.remove_aot_entry(self, int(index))
 
     @override
     def clear(self) -> None:
@@ -1059,14 +1083,18 @@ class AoT(list["Table"]):
             _layout_ops.remove_aot_entry(self, -1)
 
     @overload
-    def __setitem__(self, index: SupportsIndex, value: Mapping[str, Any]) -> None: ...
+    def __setitem__(
+        self, index: SupportsIndex, value: Mapping[str, TomlInput]
+    ) -> None: ...
     @overload
-    def __setitem__(self, index: slice, value: Iterable[Mapping[str, Any]]) -> None: ...
+    def __setitem__(
+        self, index: slice, value: Iterable[Mapping[str, TomlInput]]
+    ) -> None: ...
     @override
     def __setitem__(
         self,
         index: SupportsIndex | slice,
-        value: Mapping[str, Any] | Iterable[Mapping[str, Any]],
+        value: Mapping[str, TomlInput] | Iterable[Mapping[str, TomlInput]],
     ) -> None:
         if isinstance(index, slice):
             try:
@@ -1127,7 +1155,7 @@ class AoT(list["Table"]):
         self._replace_entry_attached(operator.index(index), value)  # ty: ignore[invalid-argument-type]
 
     @override
-    def append(self, value: Table | Mapping[str, Any]) -> None:
+    def append(self, value: Table | Mapping[str, TomlInput]) -> None:
         # Same semantics as `add(body)` but with no return value (list API).
         if self._layout_root is None:
             assert isinstance(value, dict)
@@ -1136,12 +1164,14 @@ class AoT(list["Table"]):
         self._add_entry_attached(value)
 
     @override
-    def extend(self, values: Iterable[Table | Mapping[str, Any]]) -> None:
+    def extend(self, values: Iterable[Table | Mapping[str, TomlInput]]) -> None:
         for v in values:
             self.append(v)
 
     @override
-    def insert(self, index: SupportsIndex, value: Table | Mapping[str, Any]) -> None:
+    def insert(
+        self, index: SupportsIndex, value: Table | Mapping[str, TomlInput]
+    ) -> None:
         if self._layout_root is None:
             assert isinstance(value, dict)
             list.insert(self, index, _make_unattached_entry(value))
@@ -1159,7 +1189,7 @@ class AoT(list["Table"]):
             _layout_ops.renormalise_aot_order(self, new_order)
 
     @override
-    def remove(self, value: Any) -> None:
+    def remove(self, value: Mapping[str, TomlInput]) -> None:
         for i, t in enumerate(self):
             if t is value or t == value:
                 del self[i]
@@ -1176,8 +1206,13 @@ class AoT(list["Table"]):
         _layout_ops.renormalise_aot_order(self, new_order)
 
     @override
-    def sort(self, *args: Any, **kwargs: Any) -> None:
-        new_order = sorted(self, *args, **kwargs)
+    def sort(  # type: ignore[override]
+        self,
+        *,
+        key: Callable[[Table], SupportsRichComparison],
+        reverse: bool = False,
+    ) -> None:
+        new_order = sorted(self, key=key, reverse=reverse)
         if self._layout_root is None:
             list.clear(self)
             for t in new_order:
@@ -1186,17 +1221,17 @@ class AoT(list["Table"]):
         _layout_ops.renormalise_aot_order(self, new_order)
 
     @override
-    def __iadd__(self, other: Any) -> Self:  # type: ignore[override]
-        self.extend(other)
+    def __iadd__(self, values: Iterable[Mapping[str, TomlInput]]) -> Self:  # type: ignore[override]
+        self.extend(values)
         return self
 
     @override
-    def __imul__(self, n: SupportsIndex) -> Self:
-        count = int(n)
-        if count <= 0:
+    def __imul__(self, count: SupportsIndex) -> Self:
+        n = int(count)
+        if n <= 0:
             self.clear()
             return self
-        if count == 1 or self._layout_root is None:
+        if n == 1 or self._layout_root is None:
             return self
         # Preflight: probe every entry's clone-eligibility BEFORE we
         # start mutating the document, so a failure on entry N does
@@ -1204,13 +1239,13 @@ class AoT(list["Table"]):
         originals = list(self)
         for e in originals:
             _layout_ops.check_clone_aot_entry(self, e)
-        for _ in range(count - 1):
+        for _ in range(n - 1):
             for e in originals:
                 _layout_ops.clone_aot_entry(self, e)
         return self
 
 
-def _make_unattached_entry(body: Mapping[str, Any] | None) -> Table:
+def _make_unattached_entry(body: Mapping[str, TomlInput] | None) -> Table:
     """Build a fresh unattached `Table` view as an AoT-entry placeholder."""
     from tomlrt._container import Table  # noqa: PLC0415
 
