@@ -88,8 +88,7 @@ class Array(list[Any]):
 
         ``Array([1, 2, 3])`` builds an inline array;
         ``Array([1, 2, 3], multiline=True)`` lays it out one item per
-        line with ``indent`` indentation. Such an array is *detached*
-        until assigned into a document (``doc[k] = arr``).
+        line with ``indent`` indentation.
         """
         super().__init__()
 
