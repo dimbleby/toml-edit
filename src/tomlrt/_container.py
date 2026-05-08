@@ -1042,95 +1042,20 @@ class Container(dict[str, Any]):
 class Table(Container):
     """A logical TOML table.
 
-    All mapping flavours in tomlrt (top-level document, standard
-    table, inline table, and the synthetic mappings spawned by dotted
-    keys) inherit from [`Table`][tomlrt.Table], which is itself a subclass of
-    `dict`. So values typed as ``Table`` cover every nested
-    mapping you can encounter while walking a document, *and*
-    ``isinstance(t, dict)`` is ``True`` and ``**t`` works.
-
-    **Storage model**
-
-    A [`Table`][tomlrt.Table] is a *view* over the parsed concrete syntax
-    tree (CST) — the physical tree of nodes that records every
-    byte of the original document, including whitespace, comments,
-    quote style and key order. Every mutation writes to the CST
-    first and the dict storage is then refreshed from there. The
-    CST is the single source of truth — `render` and every
-    iteration ultimately read from it; the dict storage is a cache
-    that mirrors the CST data and exists for two reasons:
-
-    * fast ``dict``-style lookup, ``len``, ``in``, iteration, and
-      ``**`` unpacking; and
-    * stable object identity for nested containers, so that
-      ``doc["foo"] is doc["foo"]``.
-
-    Once a [`Table`][tomlrt.Table] is *detached* (see below) the CST link is
-    severed and the dict storage takes over as the only source of
-    truth for that orphan subtree.
-
-    **Held references**
-
-    Held references behave like ordinary Python dict references:
-
-    * If the binding goes away (``del doc['foo']``), the held
-      ``Table`` is *orphaned*: its dict storage is intact and reads
-      still work, but it is no longer connected to the document and
-      mutations through it do not appear in [`Document.render`][tomlrt.Document.render].
-    * Re-binding the path (``doc['foo'] = {...}`` or
-      ``doc.install('foo', Table.section())``) installs a *fresh* ``Table``;
-      held references to the old table are unaffected.
-
-    **Live vs snapshot containers**
-
-    Assignment of a *container* value follows one rule: a container
-    is attached to at most one CST location.
-
-    * Assigning a fresh, unattached [`Array`][tomlrt.Array],
-      [`Table.section`][tomlrt.Table.section] result,
-      [`Table.inline`][tomlrt.Table.inline] result, or
-      [`AoT`][tomlrt.AoT] *attaches in place*: the user's reference
-      becomes the live view at the destination, so later mutations
-      through that reference show up in the document.
-      ``doc[k] is myvalue`` after the assign.
-    * Assigning a container that is already attached somewhere
-      (any document, including ``self``) deep-clones the source.
-      The two slots are independent — mutations to one don't bleed
-      into the other.
-    * Plain `dict` and `list` values are *snapshot* on assignment.
-      Mutations to the original mapping / list after assignment are
-      *not* reflected in the document.
-      Use [`Table.section`][tomlrt.Table.section],
-      [`Table.inline`][tomlrt.Table.inline], or
-      [`Array`][tomlrt.Array] to opt in to live
-      semantics. Typed containers nested inside a plain dict / list
-      still attach live recursively, even though the surrounding
-      plain container is a snapshot.
+    Every nested mapping in a document is a [`Table`][tomlrt.Table].
+    `Table` is a `dict` subclass, so ``isinstance(t, dict)`` holds
+    and it can be passed wherever a `dict` or `Mapping` is expected.
     """
 
     __slots__ = ()
 
     @classmethod
     def section(cls, mapping: Mapping[str, TomlInput] | None = None) -> Table:
-        """Return a detached ``[k]`` standard-section table.
+        """Return a standard-section table, optionally populated from ``mapping``.
 
-        Use from an assignment site:
+        Use from an assignment site to install a ``[k]`` block:
 
             doc[k] = Table.section({"x": 1})
-
-        The returned [`Table`][tomlrt.Table] is *live*: it is not yet
-        connected to any document, but mutations -- ``t[k] = v``,
-        ``t.update(...)``, nested
-        [`Table.section`][tomlrt.Table.section] /
-        [`AoT`][tomlrt.AoT] / [`Array`][tomlrt.Array] assignments --
-        are recorded against its own private CST and survive into the
-        document on assignment. Assigning the table installs it in
-        place: ``doc[k] is t`` afterwards, and further mutations
-        through ``t`` are visible in [`dumps`][tomlrt.dumps].
-
-        Assigning a section table that is already attached somewhere
-        deep-clones it; a single CST section lives at one location at
-        a time.
         """
         t = cls()
         if mapping is not None:
@@ -1140,23 +1065,11 @@ class Table(Container):
 
     @classmethod
     def inline(cls, mapping: Mapping[str, TomlInput] | None = None) -> Table:
-        """Return a fresh inline table that *attaches live* on assignment.
+        """Return an inline table, optionally populated from ``mapping``.
 
-        Use from an assignment site: ``doc[k] = Table.inline({...})``.
-        Unlike a plain ``dict`` (which is snapshotted on assignment),
-        the returned object becomes the *live* view at the assignment
-        site: subsequent mutations through the original reference are
-        reflected in the document, and ``doc[k] is the_inline`` after
-        assignment.
+        Use from an assignment site to install a ``{x = 1}`` value:
 
-        The inline table can be populated incrementally before
-        assignment (``t = Table.inline(); t["a"] = 1; doc[k] = t``);
-        all such mutations end up in the document.
-
-        If the same inline-table object is assigned a second time
-        (or after it has already been installed elsewhere), it is
-        cloned: a single inline table is attached to at most one
-        location in at most one document.
+            doc[k] = Table.inline({"x": 1})
         """
         t = cls()
         t._inline = True
@@ -1171,7 +1084,13 @@ class Table(Container):
 
 
 class Document(Container):
-    """Top-level TOML document. Subclass of [`Table`][tomlrt.Table]."""
+    """Top-level TOML document.
+
+    A [`Document`][tomlrt.Document] is the root of a parsed TOML
+    file. It is a `dict` subclass, so ``isinstance(doc, dict)``
+    holds and it can be passed wherever a `dict` or `Mapping` is
+    expected.
+    """
 
     __slots__ = ("_head", "_is_private", "_newline", "_prelude", "_tail", "_trailing")
 

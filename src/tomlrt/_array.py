@@ -69,7 +69,11 @@ _T = TypeVar("_T")
 
 
 class Array(list[Any]):
-    """An inline TOML array."""
+    """An inline TOML array.
+
+    `Array` is a `list` subclass, so ``isinstance(arr, list)`` holds
+    and it can be passed wherever a `list` or `Sequence` is expected.
+    """
 
     __slots__ = ("_attached", "_multiline", "_value")
 
@@ -948,7 +952,12 @@ def _renormalise_commas(items: list[ArrayItem], style: _ArrayStyle) -> None:
 
 
 class AoT(list["Table"]):
-    """An Array-of-tables, e.g. ``[[products]]`` repeated."""
+    """An Array-of-tables, e.g. ``[[products]]`` repeated.
+
+    `AoT` is a `list[Table]` subclass, so ``isinstance(aot, list)``
+    holds and it can be passed wherever a `list` or `Sequence` is
+    expected.
+    """
 
     __slots__ = ("_layout_root", "_parent", "_path")
 
