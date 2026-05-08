@@ -40,6 +40,7 @@ class ParseResult:
     slots: list[Slot] = field(default_factory=list)
     trailing: Trivia = field(default_factory=Trivia)
     newline: str = "\n"
+    prelude: str = ""
 
 
 class _Parser:
@@ -61,6 +62,16 @@ class _Parser:
         sc = self._sc
         src = sc.src
         end = sc.end
+
+        # A leading UTF-8 BOM (U+FEFF) is permitted by TOML 1.1 only at
+        # the very start of the document. Strip it from the parse
+        # stream and stash it on `Document` as a prelude — keeping it
+        # orthogonal to the slot / trivia plumbing means user mutations
+        # (delete first slot, set leading_comments, ...) can never
+        # silently drop or duplicate it.
+        if sc.pos < end and src[sc.pos] == "\ufeff":
+            result.prelude = "\ufeff"
+            sc.pos += 1
 
         while sc.pos < end:
             leading = sc.scan_doc_trivia()

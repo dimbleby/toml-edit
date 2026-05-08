@@ -63,6 +63,18 @@ _RE_BARE_KEY: Final = re.compile(r"[A-Za-z0-9_\-]+")
 _HEX_DIGITS: Final[frozenset[str]] = frozenset("0123456789abcdefABCDEF")
 _OCT_DIGITS: Final[frozenset[str]] = frozenset("01234567")
 _BIN_DIGITS: Final[frozenset[str]] = frozenset("01")
+_DEC_DIGITS: Final[frozenset[str]] = frozenset("0123456789")
+
+
+def _is_ascii_digits(s: str) -> bool:
+    """Return True iff ``s`` is non-empty and contains only ASCII ``0-9``.
+
+    ``str.isdigit`` accepts Unicode decimal digits (e.g. Arabic-Indic
+    ``\u0660``) and ``int(s)`` will then happily parse them — but TOML
+    integer / float literals are restricted to the ASCII digit set.
+    """
+    return bool(s) and all(c in _DEC_DIGITS for c in s)
+
 
 # First character that ends a bare-value token (whitespace, newline,
 # array/table close, comma, comment).
@@ -806,7 +818,7 @@ class _Scanner:
             msg = f"consecutive underscores in {token!r}"
             raise self.error(msg, at=at)
         digits_only = body.replace("_", "")
-        if not digits_only.isdigit():
+        if not _is_ascii_digits(digits_only):
             msg = f"invalid integer {token!r}"
             raise self.error(msg, at=at)
         if len(digits_only) > 1 and digits_only.startswith("0"):
@@ -827,8 +839,8 @@ class _Scanner:
         for i, c in enumerate(body):
             if c == "_" and not (
                 0 < i < len(body) - 1
-                and body[i - 1].isdigit()
-                and body[i + 1].isdigit()
+                and body[i - 1] in _DEC_DIGITS
+                and body[i + 1] in _DEC_DIGITS
             ):
                 msg = f"misplaced underscore in {token!r}"
                 raise self.error(msg, at=at)
@@ -848,7 +860,7 @@ class _Scanner:
                 raise self.error(msg, at=at)
             if exponent[0] in "+-":
                 exponent = exponent[1:]
-            if not exponent.isdigit():
+            if not _is_ascii_digits(exponent):
                 msg = f"invalid float exponent in {token!r}"
                 raise self.error(msg, at=at)
         else:
@@ -859,14 +871,14 @@ class _Scanner:
             if not int_part or not frac_part:
                 msg = f"invalid float {token!r}"
                 raise self.error(msg, at=at)
-            if not int_part.isdigit() or not frac_part.isdigit():
+            if not _is_ascii_digits(int_part) or not _is_ascii_digits(frac_part):
                 msg = f"invalid float {token!r}"
                 raise self.error(msg, at=at)
             if len(int_part) > 1 and int_part.startswith("0"):
                 msg = f"leading zeros not allowed in float {token!r}"
                 raise self.error(msg, at=at)
         else:
-            if not mantissa.isdigit():
+            if not _is_ascii_digits(mantissa):
                 msg = f"invalid float {token!r}"
                 raise self.error(msg, at=at)
             if len(mantissa) > 1 and mantissa.startswith("0"):

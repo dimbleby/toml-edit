@@ -1173,7 +1173,7 @@ class Table(Container):
 class Document(Container):
     """Top-level TOML document. Subclass of [`Table`][tomlrt.Table]."""
 
-    __slots__ = ("_head", "_is_private", "_newline", "_tail", "_trailing")
+    __slots__ = ("_head", "_is_private", "_newline", "_prelude", "_tail", "_trailing")
 
     def __init__(self, data: Mapping[str, Any] | None = None) -> None:
         """Return a fresh empty document, optionally populated from ``data``.
@@ -1194,6 +1194,7 @@ class Document(Container):
         self._tail: Slot | None = None
         self._trailing: Trivia = Trivia()
         self._newline: str = "\n"
+        self._prelude: str = ""
         self._is_private: bool = False
         self._layout_root = self
         if data is not None:
