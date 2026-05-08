@@ -13,7 +13,8 @@ from __future__ import annotations
 import copy
 import sys
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypeGuard, TypeVar, overload
+from datetime import date, datetime, time
+from typing import TYPE_CHECKING, Any, TypeAlias, TypeGuard, TypeVar, overload
 
 if sys.version_info >= (3, 12):
     from typing import Self, override
@@ -1408,17 +1409,33 @@ def _coerce_for_document_init(v: Any) -> Any:
 # re-exported for convenience.
 from tomlrt._array import AoT, Array  # noqa: E402
 
-if TYPE_CHECKING:
-    from datetime import date, datetime, time
-    from typing import TypeAlias
+TomlInput: TypeAlias = (
+    str
+    | int
+    | float
+    | bool
+    | datetime
+    | date
+    | time
+    | Array
+    | AoT
+    | Table
+    | Mapping[str, Any]
+    | list[Any]
+)
+"""What you can pass *in* to mutators and factories: any
+[`Table`][tomlrt.Table], [`Array`][tomlrt.Array], or
+[`AoT`][tomlrt.AoT], any TOML scalar (`str`, `int`, `float`, `bool`,
+`datetime`, `date`, `time`), or any plain `Mapping[str, Any]` /
+`list[Any]` -- the latter two become an inline table/section or
+inline array respectively.
 
-    Scalar: TypeAlias = str | int | float | bool | datetime | date | time
-    TomlInput: TypeAlias = (
-        "Scalar | Array | AoT | Table | Mapping[str, Any] | list[Any]"
-    )
-else:
-    Scalar = "str | int | float | bool | datetime | date | time"
-    TomlInput = "Scalar | Array | AoT | Table | Mapping[str, Any] | list[Any]"
+The nested `list` / `Mapping` arms intentionally use `Any` for
+elements: tightening to a recursive alias would trip over Python's
+invariant container generics (a `list[int]` is not assignable to
+`list[TomlInput]`). Invalid elements are rejected at runtime when
+the value is assigned.
+"""
 
 
 # ---------------------------------------------------------------------------
