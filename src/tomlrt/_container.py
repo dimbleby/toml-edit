@@ -1427,8 +1427,7 @@ TomlInput: TypeAlias = (
 [`Table`][tomlrt.Table], [`Array`][tomlrt.Array], or
 [`AoT`][tomlrt.AoT], any TOML scalar (`str`, `int`, `float`, `bool`,
 `datetime`, `date`, `time`), or any plain `Mapping[str, Any]` /
-`list[Any]` -- the latter two become an inline table/section or
-inline array respectively.
+`list[Any]`.
 
 The nested `list` / `Mapping` arms intentionally use `Any` for
 elements: tightening to a recursive alias would trip over Python's
