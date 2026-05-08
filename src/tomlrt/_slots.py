@@ -12,7 +12,7 @@ slots. Three slot kinds:
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
@@ -34,7 +34,7 @@ from tomlrt._trivia import EolTrivia
 # ---------------------------------------------------------------------------
 
 
-@dataclass(eq=False)
+@dataclass(slots=True, eq=False)
 class AoTEntry:
     """Identifies one entry of an array-of-tables.
 
@@ -53,7 +53,7 @@ class AoTEntry:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(eq=False)
+@dataclass(slots=True, eq=False)
 class Slot:
     """Base for physical slots.
 
@@ -88,21 +88,24 @@ class Slot:
         Following ``_prev``/``_next`` would otherwise drag the entire
         source document into the deepcopy.
         """
-        cls = type(self)
-        new = cls.__new__(cls)
+        new = type(self).__new__(type(self))
         memo[id(self)] = new
-        state = self.__dict__.copy()
-        state["_refs"] = []
-        state["_prev"] = None
-        state["_next"] = None
-        new.__dict__.update(copy.deepcopy(state, memo))
+        for f in fields(self):
+            match f.name:
+                case "_prev" | "_next":
+                    value: Any = None
+                case "_refs":
+                    value = []
+                case _:
+                    value = copy.deepcopy(getattr(self, f.name), memo)
+            setattr(new, f.name, value)
         return new
 
     def render(self) -> str:  # pragma: no cover - overridden
         raise NotImplementedError
 
 
-@dataclass(eq=False)
+@dataclass(slots=True, eq=False)
 class KVSlot(Slot):
     """A single ``key = value`` line."""
 
@@ -150,7 +153,7 @@ class KVSlot(Slot):
         )
 
 
-@dataclass(eq=False)
+@dataclass(slots=True, eq=False)
 class StructuralHeaderSlot(Slot):
     """One ``[a.b]`` or ``[[a.b]]`` header line."""
 
