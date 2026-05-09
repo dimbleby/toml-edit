@@ -200,7 +200,7 @@ def delete_entry(t: Container, key: str) -> bool:
         idx, removed = found
         iv.entries.pop(idx)
         _fix_tail_after_delete(iv, idx, removed)
-        _fix_head_after_delete(iv, idx, removed)
+        _fix_head_after_delete(iv, idx)
         return True
 
     # Prefix delete: dotted-prefix container.
@@ -216,9 +216,8 @@ def delete_entry(t: Container, key: str) -> bool:
     # Tail fixup: only if the original tail was actually removed.
     if last_removed_idx == original_len - 1:
         _fix_tail_after_delete(iv, len(iv.entries), last_removed_entry)
-    if first_removed_was_head and iv.entries:
-        # Canonical: entries[0].leading == Trivia() after head delete.
-        iv.entries[0].leading = Trivia()
+    if first_removed_was_head:
+        _fix_head_after_delete(iv, 0)
     return True
 
 
@@ -249,11 +248,7 @@ def _fix_tail_after_delete(
             new_last.trailing = removed.trailing
 
 
-def _fix_head_after_delete(
-    iv: InlineTableValue,
-    removed_idx: int,
-    removed: InlineTableEntry,  # noqa: ARG001
-) -> None:
+def _fix_head_after_delete(iv: InlineTableValue, removed_idx: int) -> None:
     """Restore canonical entries[0].leading == Trivia() after head delete.
 
     Under the canonical model, the bracket pad before entries[0] lives
