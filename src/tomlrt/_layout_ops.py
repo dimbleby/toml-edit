@@ -32,6 +32,7 @@ import contextlib
 import copy
 from typing import TYPE_CHECKING, Any, Literal
 
+from tomlrt._kind import _Kind
 from tomlrt._scalar import is_scalar
 from tomlrt._slots import (
     AoTEntry,
@@ -290,7 +291,7 @@ def append_direct_kv(c: Container, key: str, value: Value) -> None:
     * everything else → direct single-keypart KV with anchor =
       body_tail / header_ref / head-of-doc seam.
     """
-    if c._path and c._header_ref is None:  # noqa: SLF001
+    if c._kind is _Kind.IMPLICIT_SECTION:  # noqa: SLF001
         # Implicit / headerless non-root container. A fresh
         # ``host_path = c._path`` slot would render in whatever scope
         # the previous header (or the doc root) established, not in
@@ -684,7 +685,7 @@ def _is_body_kv(c: Container, s: Slot) -> bool:
     """
     if not isinstance(s, KVSlot) or s.owner_aot_entry is not c._owner_aot_entry:  # noqa: SLF001
         return False
-    has_header = c._header_ref is not None  # noqa: SLF001
+    has_header = c._kind is _Kind.SECTION  # noqa: SLF001
     return not has_header or s.host_path == c._path  # noqa: SLF001
 
 
