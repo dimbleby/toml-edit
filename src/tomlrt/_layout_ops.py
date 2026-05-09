@@ -666,6 +666,28 @@ def _is_direct_kv(c: Container, s: Slot) -> bool:
     )
 
 
+def _is_host_kv(c: Container, s: Slot) -> bool:
+    """True iff ``s`` is a KV of ``c`` (any keypart length, same owner)."""
+    return (
+        isinstance(s, KVSlot)
+        and s.host_path == c._path  # noqa: SLF001
+        and s.owner_aot_entry is c._owner_aot_entry  # noqa: SLF001
+    )
+
+
+def _is_body_kv(c: Container, s: Slot) -> bool:
+    """True iff ``s`` is a body-region KV of ``c``.
+
+    For a header-bearing container, the body is restricted to its own
+    host_path; for a header-less container (e.g. an implicit table or
+    the document root) any KV with a matching owner counts.
+    """
+    if not isinstance(s, KVSlot) or s.owner_aot_entry is not c._owner_aot_entry:  # noqa: SLF001
+        return False
+    has_header = c._header_ref is not None  # noqa: SLF001
+    return not has_header or s.host_path == c._path  # noqa: SLF001
+
+
 def _last_direct_kv(c: Container) -> KVSlot | None:
     """Return the most-recent direct KV slot of ``c`` in doc-stream order.
 
@@ -678,16 +700,7 @@ def _last_direct_kv(c: Container) -> KVSlot | None:
     if body_tail is not None and _is_direct_kv(c, body_tail):
         assert isinstance(body_tail, KVSlot)
         return body_tail
-    own_path = c._path  # noqa: SLF001
-    own_aot = c._owner_aot_entry  # noqa: SLF001
-    return _last_kv(
-        c,
-        lambda s: (
-            s.host_path == own_path
-            and len(s.key_parts) == 1
-            and s.owner_aot_entry is own_aot
-        ),
-    )
+    return _last_kv(c, lambda s: _is_direct_kv(c, s))
 
 
 def _extract_indent(leading: Trivia) -> str:
@@ -811,12 +824,7 @@ def _kv_separator_leading(c: Container, doc: Document) -> Trivia:
 
 def _last_host_kv(host: Container) -> KVSlot | None:
     """Last KV slot whose ``host_path`` matches ``host._path`` (any keypath length)."""
-    own_path = host._path  # noqa: SLF001
-    own_aot = host._owner_aot_entry  # noqa: SLF001
-    return _last_kv(
-        host,
-        lambda s: s.host_path == own_path and s.owner_aot_entry is own_aot,
-    )
+    return _last_kv(host, lambda s: _is_host_kv(host, s))
 
 
 def _host_kv_separator_leading(host: Container, doc: Document) -> Trivia:
@@ -1238,21 +1246,12 @@ def _find_ref_index_by_slot(c: Container, slot: Slot) -> int:
 
 def _recompute_body_tail(c: Container) -> Slot | None:
     """Last body-region ref's slot in ``c._refs`` (mirrors invariants rule)."""
-    has_header = c._header_ref is not None  # noqa: SLF001
-    own_aot = c._owner_aot_entry  # noqa: SLF001
-    own_path = c._path  # noqa: SLF001
-    found = _last_kv(
-        c,
-        lambda s: (
-            s.owner_aot_entry is own_aot and (not has_header or s.host_path == own_path)
-        ),
-    )
+    found = _last_kv(c, lambda s: _is_body_kv(c, s))
     if found is not None:
         return found
-    if has_header:
+    if c._header_ref is not None:  # noqa: SLF001
         # Header-only container falls back to its own header.
-        header_ref = c._header_ref  # noqa: SLF001
-        return header_ref.slot if header_ref is not None else None
+        return c._header_ref.slot  # noqa: SLF001
     return None
 
 
