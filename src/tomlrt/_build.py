@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from tomlrt._array import AoT, Array
 from tomlrt._container import Container, Document, Table
+from tomlrt._kind import _Kind
 from tomlrt._slots import KVSlot, SlotRef, StructuralHeaderSlot
 from tomlrt._values import (
     ArrayValue,
@@ -72,7 +73,7 @@ def _maybe_advance_body_tail(c: Container, slot: Slot) -> None:
         return
     if slot.owner_aot_entry is not c._owner_aot_entry:  # noqa: SLF001
         return
-    if c._header_ref is not None and slot.host_path != c._path:  # noqa: SLF001
+    if c._kind is _Kind.SECTION and slot.host_path != c._path:  # noqa: SLF001
         return
     c._body_tail = slot  # noqa: SLF001
 

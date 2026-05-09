@@ -32,6 +32,7 @@ else:
     from typing_extensions import override
 
 from tomlrt._errors import TOMLError
+from tomlrt._kind import _Kind
 from tomlrt._slots import KVSlot, StructuralHeaderSlot
 from tomlrt._trivia import (
     CommentNode,
@@ -319,9 +320,10 @@ def _header_slot(c: Container) -> StructuralHeaderSlot | None:
     if c._inline:  # noqa: SLF001
         msg = "header comment API is not available on inline tables"
         raise TOMLError(msg)
-    hr = c._header_ref  # noqa: SLF001
-    if hr is None:
+    if c._kind is not _Kind.SECTION:  # noqa: SLF001
         return None
+    hr = c._header_ref  # noqa: SLF001
+    assert hr is not None  # implied by SECTION
     slot = hr.slot
     assert isinstance(slot, StructuralHeaderSlot)
     return slot
