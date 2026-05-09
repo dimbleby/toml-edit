@@ -5,6 +5,8 @@ A format-preserving TOML reader and writer for Python.
 Parse a document, edit it, dump it, and the bytes you didn't touch round-trip
 exactly — comments, whitespace, string style, and number formatting all intact.
 
+Supports TOML 1.1.
+
 ```python
 import tomlrt
 
