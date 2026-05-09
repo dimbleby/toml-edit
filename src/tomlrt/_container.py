@@ -36,6 +36,7 @@ from tomlrt._comments import (
     _header_leading_set,
 )
 from tomlrt._errors import TOMLError
+from tomlrt._kind import _Kind
 from tomlrt._paths import split_path, validate_path
 from tomlrt._render import render
 from tomlrt._scalar import (
@@ -112,6 +113,19 @@ class Container(dict[str, Any]):
         self._header_ref: SlotRef | None = None
         self._body_tail: Slot | None = None
         self._value: InlineTableValue | None = None
+
+    @property
+    def _kind(self) -> _Kind:
+        """The shape this container is in. See :class:`_Kind`."""
+        if self._inline:
+            if self._value is not None:
+                return _Kind.INLINE_ROOT
+            if self._layout_root is None:
+                return _Kind.INLINE_FACTORY
+            return _Kind.INLINE_DOTTED_INNER
+        if self._header_ref is not None:
+            return _Kind.SECTION
+        return _Kind.IMPLICIT_SECTION
 
     @property
     def comments(self) -> EolCommentView:
@@ -745,13 +759,12 @@ class Container(dict[str, Any]):
         cur: Container | None = self
         while (
             cur is not None
-            and cur._value is None  # noqa: SLF001
+            and cur._kind is _Kind.INLINE_DOTTED_INNER  # noqa: SLF001
             and len(cur) == 0
-            and cur._parent is not None  # noqa: SLF001
-            and cur._parent._inline  # noqa: SLF001
             and cur._path  # noqa: SLF001
         ):
             parent = cur._parent  # noqa: SLF001
+            assert parent is not None  # implied by INLINE_DOTTED_INNER
             my_key = cur._path[-1]  # noqa: SLF001
             if my_key in parent:
                 dict.__delitem__(parent, my_key)
@@ -1120,6 +1133,11 @@ class Document(Container):
         if data is not None:
             for k, v in data.items():
                 self[k] = _coerce_for_document_init(v)
+
+    @property
+    @override
+    def _kind(self) -> _Kind:
+        return _Kind.DOCUMENT
 
     def render(self) -> str:
         """Serialize the document back to a TOML string.
