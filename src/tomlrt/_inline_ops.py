@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from tomlrt._kind import _Kind
 from tomlrt._trivia import (
     Trivia,
     WhitespaceNode,
@@ -46,12 +47,18 @@ if TYPE_CHECKING:
 def _outermost_inline(t: Container) -> Container:
     """Walk up `_parent` until reaching the inline table that owns `_value`."""
     cur = t
-    while cur._value is None:  # noqa: SLF001
+    while cur._kind is _Kind.INLINE_DOTTED_INNER:  # noqa: SLF001
         parent = cur._parent  # noqa: SLF001
-        if parent is None or not parent._inline:  # noqa: SLF001
-            msg = "internal: inline-table chain has no _value-bearing root"
+        if parent is None:
+            msg = "internal: inline-dotted-inner without _parent"
             raise AssertionError(msg)
         cur = parent
+    if cur._kind is not _Kind.INLINE_ROOT:  # noqa: SLF001
+        msg = (
+            f"internal: inline-table chain reached {cur._kind.name}; "  # noqa: SLF001
+            "expected INLINE_ROOT"
+        )
+        raise AssertionError(msg)
     return cur
 
 
