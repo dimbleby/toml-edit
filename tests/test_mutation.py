@@ -1167,6 +1167,40 @@ def test_ensure_table_accepts_list_path() -> None:
     assert tomlrt.dumps(doc) == "[tool.ruff]\nline-length = 88\n"
 
 
+def test_insert_into_implicit_parent_after_chained_ensure_table() -> None:
+    # Regression: chained ensure_table calls left the implicit parent's
+    # ancestor chain without a binding ref to the deepest header (the
+    # parent's own synthetic header was demoted), so a later mutation on
+    # the implicit parent tripped an internal anchor-not-found assertion.
+    doc = tomlrt.Document()
+    doc.ensure_table("t").ensure_table("u")["k"] = 1
+    assert tomlrt.dumps(doc) == "[t.u]\nk = 1\n"
+    doc["t"]["v"] = 1
+    assert tomlrt.dumps(doc) == "[t]\nv = 1\n\n[t.u]\nk = 1\n"
+
+
+def test_insert_into_implicit_parent_after_multi_ensure_table() -> None:
+    # Same regression via attach_section_at (multi-component path).
+    doc = tomlrt.Document()
+    a = doc.ensure_table("a")
+    a.ensure_table(["b", "c"])["k"] = 1
+    assert tomlrt.dumps(doc) == "[a.b.c]\nk = 1\n"
+    doc["a"]["v"] = 1
+    assert tomlrt.dumps(doc) == "[a]\nv = 1\n\n[a.b.c]\nk = 1\n"
+
+
+def test_insert_into_implicit_parent_after_aot_attach() -> None:
+    # Same regression via add_aot_entry: assigning an AoT under a
+    # synthetic-empty section demotes the section's header, leaving
+    # ancestors without a binding ref into the now-implicit subtree.
+    doc = tomlrt.Document()
+    doc["tool"] = Table.section({})
+    doc["tool"]["list"] = AoT([{"name": "foo"}])
+    assert tomlrt.dumps(doc) == '[[tool.list]]\nname = "foo"\n'
+    doc["tool"]["v"] = 1
+    assert tomlrt.dumps(doc) == '[tool]\nv = 1\n\n[[tool.list]]\nname = "foo"\n'
+
+
 # ---------------------------------------------------------------------------
 # AoT.add — append-and-return-handle convenience
 # ---------------------------------------------------------------------------

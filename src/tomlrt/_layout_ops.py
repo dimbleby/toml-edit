@@ -84,6 +84,23 @@ def _file_ref_at_tail(c: Container, ref: SlotRef) -> None:
         c._index.setdefault(ref.local_key, []).append(ref)  # noqa: SLF001
 
 
+def _file_header_binding_chain(
+    deepest: Container, header: StructuralHeaderSlot
+) -> None:
+    """File a binding ref to ``header`` on ``deepest`` and every ancestor.
+
+    Mirrors the parser / ``_build`` behaviour where each strict
+    ancestor of a section carries an ``_index`` entry pointing at the
+    section's header. Without the ancestor refs, a later demotion of
+    a sibling synthetic header (which scrubs ancestor refs to *that*
+    header) can leave the ancestor chain with no binding ref into the
+    subtree.
+    """
+    _file_ref_at_tail(deepest, SlotRef(slot=header, container=deepest))
+    for anc in _ancestor_chain(deepest):
+        _file_ref_at_tail(anc, SlotRef(slot=header, container=anc))
+
+
 def _file_synthetic_header_and_kv(
     c: Container,
     *,
@@ -1576,8 +1593,7 @@ def add_aot_entry(
         insert_after(anchor, header, doc)
 
     # File parent-chain refs for this entry's header.
-    parent_ref = SlotRef(slot=header, container=parent)
-    _file_ref_at_tail(parent, parent_ref)
+    _file_header_binding_chain(parent, header)
 
     # Append the new entry to the AoT view list.
     list.append(aot, entry_table)
@@ -1740,8 +1756,7 @@ def _install_cloned_aot_entry(
         insert_after(prev, s, doc)
         prev = s
 
-    parent_ref = SlotRef(slot=cloned_header, container=parent)
-    _file_ref_at_tail(parent, parent_ref)
+    _file_header_binding_chain(parent, cloned_header)
 
     _populate_entry_views(
         entry_table=entry_table,
@@ -1827,8 +1842,7 @@ def _install_cloned_section(
 
     _splice_block_at_parent_anchor(cloned_slots, parent, doc)
 
-    parent_ref = SlotRef(slot=cloned_header, container=parent)
-    _file_ref_at_tail(parent, parent_ref)
+    _file_header_binding_chain(parent, cloned_header)
 
     _populate_entry_views(
         entry_table=section,
@@ -2217,8 +2231,6 @@ def attach_section_at(
     if not sub:
         msg = "sub_path must not be empty"
         raise ValueError(msg)
-    if len(sub) == 1:
-        return attach_section(parent, sub[0], source)
 
     layout_root = parent._layout_root  # noqa: SLF001
     if layout_root is None:  # pragma: no cover
@@ -2282,113 +2294,24 @@ def attach_section_at(
         owner.entry_slots.append(header)
         section._owner_aot_entry = owner  # noqa: SLF001
 
-    # File the binding ref under the deepest implicit parent.
+    # File the binding ref under the deepest implicit parent and
+    # propagate ancestor-prefix bindings up to the doc root.
     deepest_parent = chain[-1]
-    parent_ref = SlotRef(slot=header, container=deepest_parent)
-    _file_ref_at_tail(deepest_parent, parent_ref)
+    _file_header_binding_chain(deepest_parent, header)
     dict.__setitem__(deepest_parent, sub[-1], section)
-
-    # Also propagate ancestor-prefix bindings so the implicit ancestors
-    # have an _index entry with this header as a contributor.
-    for j in range(len(sub) - 1):
-        anc = chain[j]
-        comp = sub[j]
-        anc_ref = SlotRef(slot=header, container=anc)
-        _file_ref_at_tail(anc, anc_ref)
-
-    _maybe_demote_synthetic_empty_header(parent)
-
-    for k, v in pending:
-        if not (is_scalar(v) or _is_synth_inline(v)):
-            section[k] = v
-            continue
-        cst, dec = _synth_value(
-            v,
-            layout_root=doc,
-            parent=section,
-            path=(*full_path, k),
-            owner=owner,
-        )
-        append_direct_kv(section, k, cst)
-        dict.__setitem__(section, k, dec)
-    return section
-
-
-def attach_section(
-    parent: Container, key: str, source: Mapping[str, Any] | Container | None = None
-) -> Table:
-    """Synthesise ``[parent_path.key]`` at end-of-doc and attach.
-
-    ``source`` may be ``None`` (empty section) or a Mapping (initial body).
-    Returns the live `Table` view.
-    """
-    from tomlrt._container import (  # noqa: PLC0415
-        Table,
-        _is_synth_inline,
-        _synth_value,
-    )
-
-    layout_root = parent._layout_root  # noqa: SLF001
-    if layout_root is None:  # pragma: no cover
-        msg = "internal: parent has no layout root"
-        raise AssertionError(msg)
-    doc = layout_root
-    new_path = (*parent._path, key)  # noqa: SLF001
-
-    leading = _build_section_leading(doc)
-    owner = parent._owner_aot_entry  # noqa: SLF001
-    header = _new_section_header(
-        new_path,
-        leading=leading,
-        doc=doc,
-        kind="table",
-        owner_aot_entry=owner,
-    )
-
-    # Rehome the source if it is an unattached Table; otherwise build new.
-    if isinstance(source, Table) and source._layout_root is None:  # noqa: SLF001
-        section = source
-        pending: list[tuple[str, object]] = list(source.items())
-        dict.clear(section)
-    else:
-        section = Table()
-        pending = list(_items_for_synth(source)) if source is not None else []
-
-    _wire_section_container(
-        section,
-        doc=doc,
-        path=new_path,
-        parent=parent,
-        owner=None,
-        header=header,
-    )
-
-    _splice_block_at_parent_anchor([header], parent, doc)
-    if owner is not None:
-        # Own the new header on the AoT entry so a later delete of the
-        # entry takes the promoted section with it.
-        owner.entry_slots.append(header)
-        section._owner_aot_entry = owner  # noqa: SLF001
-
-    parent_ref = SlotRef(slot=header, container=parent)
-    _file_ref_at_tail(parent, parent_ref)
-    dict.__setitem__(parent, key, section)
 
     _maybe_demote_synthetic_empty_header(parent)
 
     # Process scalars (and synth-inlines) before nested structural
     # children. TOML semantics require all direct KVs of a section to
     # appear before any sub-section header — re-opening a section
-    # after a child header is illegal. Re-ordering here also avoids
-    # a subtle bug: the recursive ``section[k] = v`` path may demote
-    # ``section``'s synthetic empty header on its first sub-section
-    # attach, leaving subsequent scalar siblings with no header to
-    # bind to and triggering ``_synthesise_header_then_insert_kv``,
-    # whose ancestor-binding walk does not maintain ``parent_ref``
-    # entries on the grand-ancestor chain that attach_section would
-    # have skipped. Process all scalars first so the section's KV
-    # body is fully populated (and the header is no longer empty)
-    # before any sub-section attach can demote it.
+    # after a child header is illegal. The ordering is also a defence
+    # against an interaction with header demotion: the recursive
+    # ``section[k] = v`` path may demote ``section``'s synthetic
+    # empty header on its first sub-section attach. Processing
+    # scalars first ensures the section's KV body is fully populated
+    # (and the header therefore non-empty / not demote-eligible)
+    # before any sub-section attach can run.
     scalars: list[tuple[str, object]] = []
     structurals: list[tuple[str, object]] = []
     for k, v in pending:
@@ -2401,13 +2324,29 @@ def attach_section(
             v,
             layout_root=doc,
             parent=section,
-            path=(*new_path, k),
+            path=(*full_path, k),
             owner=owner,
         )
         append_direct_kv(section, k, cst)
         dict.__setitem__(section, k, dec)
     for k, v in structurals:
         section[k] = v
+    return section
+
+
+def attach_section(
+    parent: Container, key: str, source: Mapping[str, Any] | Container | None = None
+) -> Table:
+    """Synthesise ``[parent_path.key]`` at end-of-doc and attach.
+
+    Thin wrapper around `attach_section_at` for the single-component
+    case. ``source`` may be ``None`` (empty section) or a Mapping
+    (initial body). Returns the live `Table` view.
+    """
+    section = attach_section_at(parent, (key,), source)
+    from tomlrt._container import Table  # noqa: PLC0415
+
+    assert isinstance(section, Table)
     return section
 
 
