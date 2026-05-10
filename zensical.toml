@@ -53,6 +53,7 @@ paths = ["src"]
 
 [project.plugins.mkdocstrings.handlers.python.options]
 docstring_style = "google"
+inherited_members = true
 show_root_heading = true
 show_root_full_path = false
 show_bases = false
