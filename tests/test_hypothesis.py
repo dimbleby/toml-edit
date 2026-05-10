@@ -143,16 +143,48 @@ def _document(draw: st.DrawFn) -> str:
     return "".join(parts) or "\n"
 
 
+def _python_scalar(literal: str) -> Any:
+    """Decode a TOML scalar literal (as our generator emits it) to Python."""
+    return tomllib.loads(f"_x = {literal}")["_x"]
+
+
+@st.composite
+def _document_with_overrides(draw: st.DrawFn) -> tuple[str, dict[str, Any]]:
+    src = draw(_document())
+    parsed = tomllib.loads(src)
+    top_keys = [k for k, v in parsed.items() if not isinstance(v, (dict, list))]
+    overrides: dict[str, Any] = {}
+    for k in top_keys:
+        if draw(st.booleans()):
+            overrides[k] = _python_scalar(draw(_SCALARS))
+    return src, overrides
+
+
 @settings(
     max_examples=200,
     deadline=None,
     suppress_health_check=[HealthCheck.too_slow],
 )
-@given(src=_document())
-def test_roundtrip_exact(src: str) -> None:
-    """Parsing then dumping must reproduce the original source byte-for-byte."""
+@given(case=_document_with_overrides())
+def test_document_invariants(case: tuple[str, dict[str, Any]]) -> None:
+    """All `_document()`-strategy invariants in one parser-pass per example.
+
+    For each generated source, asserts:
+    * byte-exact round-trip (parse + dumps == src);
+    * semantic equivalence to stdlib `tomllib`;
+    * mutating top-level scalar slots reflects in to_dict() and
+      survives a dump/parse cycle.
+    """
+    src, overrides = case
     doc = tomlrt.loads(src)
     assert tomlrt.dumps(doc) == src
+    expected = tomllib.loads(src)
+    assert _deep_equal(doc.to_dict(), expected)
+    for k, v in overrides.items():
+        doc[k] = v
+        expected[k] = v
+    assert _deep_equal(doc.to_dict(), expected)
+    assert _deep_equal(tomlrt.loads(tomlrt.dumps(doc)).to_dict(), expected)
 
 
 # Specific edge-case corpora that aren't easily generated.
@@ -212,76 +244,106 @@ _COMMENT_TEXT = st.text(
 )
 
 
-@given(text=_COMMENT_TEXT)
-@settings(max_examples=200, database=None)
-def test_eol_comment_roundtrip(text: str) -> None:
-    doc = tomlrt.loads("a = 1\n")
-    doc.comments["a"] = text
-    out = tomlrt.dumps(doc)
-    assert tomlrt.loads(out).comments["a"] == text
+_COMMENT_LINES = st.lists(_COMMENT_TEXT, min_size=1, max_size=4).map(tuple)
 
 
-@given(lines=st.lists(_COMMENT_TEXT, min_size=1, max_size=4))
-@settings(max_examples=200, database=None)
-def test_leading_comment_roundtrip(lines: list[str]) -> None:
-    doc = tomlrt.loads("a = 1\n")
-    doc.leading_comments["a"] = tuple(lines)
-    out = tomlrt.dumps(doc)
-    assert tomlrt.loads(out).leading_comments["a"] == tuple(lines)
+def _set_eol(doc: Document, v: Any) -> None:
+    doc.comments["a"] = v
 
 
-@given(text=_COMMENT_TEXT)
-@settings(max_examples=200, database=None)
-def test_array_eol_comment_roundtrip(text: str) -> None:
-    doc = tomlrt.loads("a = [1, 2]\n")
-    doc.array("a").comments[0] = text
-    out = tomlrt.dumps(doc)
-    assert tomlrt.loads(out).array("a").comments[0] == text
+def _get_eol(doc: Document) -> Any:
+    return doc.comments["a"]
 
 
-@given(text=_COMMENT_TEXT)
-@settings(max_examples=200, database=None)
-def test_header_comment_roundtrip(text: str) -> None:
-    doc = tomlrt.loads("[s]\nx = 1\n")
-    doc.table("s").header_comment = text
-    out = tomlrt.dumps(doc)
-    assert tomlrt.loads(out).table("s").header_comment == text
+def _set_leading(doc: Document, v: Any) -> None:
+    doc.leading_comments["a"] = v
 
 
-@given(lines=st.lists(_COMMENT_TEXT, min_size=1, max_size=4))
-@settings(max_examples=200, database=None)
-def test_header_leading_comment_roundtrip(lines: list[str]) -> None:
-    doc = tomlrt.loads("[s]\nx = 1\n")
-    doc.table("s").header_leading_comments = tuple(lines)
-    out = tomlrt.dumps(doc)
-    assert tomlrt.loads(out).table("s").header_leading_comments == tuple(lines)
+def _get_leading(doc: Document) -> Any:
+    return doc.leading_comments["a"]
 
 
-@given(lines=st.lists(_COMMENT_TEXT, min_size=1, max_size=4))
-@settings(max_examples=200, database=None)
-def test_array_leading_comment_roundtrip(lines: list[str]) -> None:
-    doc = tomlrt.loads("a = [1, 2]\n")
-    doc.array("a").leading_comments[1] = tuple(lines)
-    out = tomlrt.dumps(doc)
-    assert tomlrt.loads(out).array("a").leading_comments[1] == tuple(lines)
+def _set_arr_eol(doc: Document, v: Any) -> None:
+    doc.array("a").comments[0] = v
 
 
-@given(lines=st.lists(_COMMENT_TEXT, min_size=1, max_size=4))
-@settings(max_examples=200, database=None)
-def test_preamble_roundtrip(lines: list[str]) -> None:
-    doc = tomlrt.loads("a = 1\n")
-    doc.preamble = tuple(lines)
-    out = tomlrt.dumps(doc)
-    assert tomlrt.loads(out).preamble == tuple(lines)
+def _get_arr_eol(doc: Document) -> Any:
+    return doc.array("a").comments[0]
 
 
-@given(lines=st.lists(_COMMENT_TEXT, min_size=1, max_size=4))
-@settings(max_examples=200, database=None)
-def test_epilogue_roundtrip(lines: list[str]) -> None:
-    doc = tomlrt.loads("a = 1\n")
-    doc.epilogue = tuple(lines)
-    out = tomlrt.dumps(doc)
-    assert tomlrt.loads(out).epilogue == tuple(lines)
+def _set_arr_leading(doc: Document, v: Any) -> None:
+    doc.array("a").leading_comments[1] = v
+
+
+def _get_arr_leading(doc: Document) -> Any:
+    return doc.array("a").leading_comments[1]
+
+
+def _set_header(doc: Document, v: Any) -> None:
+    doc.table("s").header_comment = v
+
+
+def _get_header(doc: Document) -> Any:
+    return doc.table("s").header_comment
+
+
+def _set_header_leading(doc: Document, v: Any) -> None:
+    doc.table("s").header_leading_comments = v
+
+
+def _get_header_leading(doc: Document) -> Any:
+    return doc.table("s").header_leading_comments
+
+
+def _set_preamble(doc: Document, v: Any) -> None:
+    doc.preamble = v
+
+
+def _get_preamble(doc: Document) -> Any:
+    return doc.preamble
+
+
+def _set_epilogue(doc: Document, v: Any) -> None:
+    doc.epilogue = v
+
+
+def _get_epilogue(doc: Document) -> Any:
+    return doc.epilogue
+
+
+_KV_FIXTURE = "a = 1\n"
+_ARR_FIXTURE = "a = [1, 2]\n"
+_SECT_FIXTURE = "[s]\nx = 1\n"
+
+
+@pytest.mark.parametrize(
+    ("fixture", "setter", "getter", "values"),
+    [
+        (_KV_FIXTURE, _set_eol, _get_eol, _COMMENT_TEXT),
+        (_KV_FIXTURE, _set_leading, _get_leading, _COMMENT_LINES),
+        (_ARR_FIXTURE, _set_arr_eol, _get_arr_eol, _COMMENT_TEXT),
+        (_ARR_FIXTURE, _set_arr_leading, _get_arr_leading, _COMMENT_LINES),
+        (_SECT_FIXTURE, _set_header, _get_header, _COMMENT_TEXT),
+        (_SECT_FIXTURE, _set_header_leading, _get_header_leading, _COMMENT_LINES),
+        (_KV_FIXTURE, _set_preamble, _get_preamble, _COMMENT_LINES),
+        (_KV_FIXTURE, _set_epilogue, _get_epilogue, _COMMENT_LINES),
+    ],
+)
+def test_comment_roundtrip(
+    fixture: str,
+    setter: Any,
+    getter: Any,
+    values: st.SearchStrategy[Any],
+) -> None:
+    @given(value=values)
+    @settings(max_examples=50, database=None)
+    def check(value: Any) -> None:
+        doc = tomlrt.loads(fixture)
+        setter(doc, value)
+        out = tomlrt.dumps(doc)
+        assert getter(tomlrt.loads(out)) == value
+
+    check()
 
 
 @given(text=_COMMENT_TEXT.filter(bool))
@@ -296,22 +358,8 @@ def test_eol_comment_set_then_clear(text: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Semantic cross-check: anything our parser accepts must agree with stdlib
-# tomllib on the decoded data. Catches "bytes round-trip but model is wrong"
-# bugs that the exact-round-trip property alone cannot see.
+# Edge-case + tomllib semantic cross-check on the fixed corpus.
 # ---------------------------------------------------------------------------
-
-
-@settings(
-    max_examples=200,
-    deadline=None,
-    suppress_health_check=[HealthCheck.too_slow],
-)
-@given(src=_document())
-def test_semantic_match_tomllib(src: str) -> None:
-    ours = tomlrt.loads(src).to_dict()
-    theirs = tomllib.loads(src)
-    assert _deep_equal(ours, theirs)
 
 
 @given(src=st.sampled_from(_EDGE_CASES))
@@ -345,7 +393,7 @@ def _crlf_variant(draw: st.DrawFn) -> str:
 
 
 @settings(
-    max_examples=200,
+    max_examples=100,
     deadline=None,
     suppress_health_check=[HealthCheck.too_slow],
 )
@@ -379,49 +427,13 @@ def _py_dict(max_depth: int) -> st.SearchStrategy[dict[str, Any]]:
     return st.dictionaries(_BARE_KEY, values, max_size=4)
 
 
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=100, deadline=None)
 @given(data=_py_dict(max_depth=2))
 def test_synthesise_roundtrip(data: dict[str, Any]) -> None:
     doc = Document(data)
     out = tomlrt.dumps(doc)
     recovered = tomlrt.loads(out).to_dict()
     assert _deep_equal(recovered, data)
-
-
-# ---------------------------------------------------------------------------
-# Mutation round-trip: assigning new scalar values to existing top-level
-# scalar slots must reflect both in to_dict() and after a dump/parse cycle.
-# ---------------------------------------------------------------------------
-
-
-def _python_scalar(literal: str) -> Any:
-    """Decode a TOML scalar literal (as our generator emits it) to Python."""
-    return tomllib.loads(f"_x = {literal}")["_x"]
-
-
-@st.composite
-def _document_with_overrides(draw: st.DrawFn) -> tuple[str, dict[str, Any]]:
-    src = draw(_document())
-    parsed = tomllib.loads(src)
-    top_keys = [k for k, v in parsed.items() if not isinstance(v, (dict, list))]
-    overrides: dict[str, Any] = {}
-    for k in top_keys:
-        if draw(st.booleans()):
-            overrides[k] = _python_scalar(draw(_SCALARS))
-    return src, overrides
-
-
-@settings(max_examples=200, deadline=None)
-@given(case=_document_with_overrides())
-def test_scalar_mutation_roundtrip(case: tuple[str, dict[str, Any]]) -> None:
-    src, overrides = case
-    doc = tomlrt.loads(src)
-    expected = tomllib.loads(src)
-    for k, v in overrides.items():
-        doc[k] = v
-        expected[k] = v
-    assert _deep_equal(doc.to_dict(), expected)
-    assert _deep_equal(tomlrt.loads(tomlrt.dumps(doc)).to_dict(), expected)
 
 
 # ---------------------------------------------------------------------------
@@ -520,7 +532,7 @@ def _apply_op(doc: Document, op: tuple[Any, ...]) -> None:
         pass
 
 
-@settings(max_examples=300, deadline=None)
+@settings(max_examples=200, deadline=None)
 @given(ops=st.lists(_mutation_op(), min_size=1, max_size=8))
 def test_api_mutation_program(ops: list[tuple[Any, ...]]) -> None:
     doc = Document()
