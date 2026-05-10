@@ -866,13 +866,6 @@ class Container(dict[str, Any]):
         implicit; only the deepest component gets an explicit
         ``[a.b.c]`` header. An existing non-table at any component
         raises ``TypeError``.
-
-        An existing inline-flavoured table at the leaf is returned
-        as-is (it satisfies the contract of "table at ``key``"),
-        but inline tables cannot be descended through (TOML inline
-        tables are immutable in the spec sense — sub-tables and
-        dotted keys cannot extend an already-defined inline) and
-        new sections cannot be created underneath one.
         """
         parts = validate_path(key)
         cur: Container = self
