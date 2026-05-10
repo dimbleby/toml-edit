@@ -312,6 +312,29 @@ def test_array_multiline_layout_preserved_through_live_attach() -> None:
     assert "\n    2" in out
 
 
+def test_array_multiline_live_attach_into_crlf_document() -> None:
+    # Regression: an unattached ``Array(multiline=True)`` bakes ``\n``
+    # into its CST; live-attaching it into a CRLF-newlined document
+    # must retarget those newlines so the dump stays homogeneous.
+    doc = tomlrt.loads('name = "x"\r\n')
+    doc["xs"] = Array(["foo", "bar"], multiline=True)
+    out = tomlrt.dumps(doc)
+    assert "\n" not in out.replace("\r\n", "")
+
+
+def test_array_detached_from_crlf_reattached_into_lf_document() -> None:
+    # Regression: an Array displaced from a CRLF doc keeps its ``\r\n``
+    # newlines in its CST; re-attaching it into an LF doc must retarget
+    # them down to ``\n`` so the dump stays homogeneous.
+    doc1 = tomlrt.loads("xs = [\r\n    1,\r\n    2,\r\n]\r\n")
+    arr = doc1["xs"]
+    doc1["xs"] = []  # detach arr
+    doc2 = tomlrt.loads("")
+    doc2["ys"] = arr
+    out = tomlrt.dumps(doc2)
+    assert "\r" not in out
+
+
 def test_plain_list_assignment_is_snapshot() -> None:
     doc = tomlrt.loads("")
     plain = [1, 2, 3]

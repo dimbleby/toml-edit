@@ -1518,6 +1518,7 @@ def _synth_value(
     # as freshly-constructed; arrays carry no such heavy state.
     if (_is_inline_table(v) or isinstance(v, Array)) and not v._attached:  # noqa: SLF001
         if isinstance(v, Array):
+            _retarget_to_doc(v._value, layout_root)  # noqa: SLF001
             return _live_attach_array(v)
         if v._layout_root is not None:  # noqa: SLF001
             _reset_inline_for_rehome(v)
@@ -1532,13 +1533,11 @@ def _synth_value(
     # ``Mapping`` / ``list`` inputs that have no CST to clone.
     if _is_inline_table(v) or isinstance(v, Array):
         from tomlrt._build import _decode_value  # noqa: PLC0415
-        from tomlrt._values import retarget_value_newlines  # noqa: PLC0415
 
         src_val = v._value  # noqa: SLF001
         assert src_val is not None
         cloned = copy.deepcopy(src_val)
-        if layout_root is not None:
-            retarget_value_newlines(cloned, layout_root._newline)  # noqa: SLF001
+        _retarget_to_doc(cloned, layout_root)
         new = _decode_value(
             cloned, layout_root=layout_root, parent=parent, path=path, owner=owner
         )
@@ -1580,11 +1579,29 @@ def _live_attach_inline_table(
     )
 
 
+def _retarget_to_doc(val: Value, layout_root: Document | None) -> None:
+    r"""Retarget ``val``'s baked-in newlines to ``layout_root``'s line ending.
+
+    Called whenever pre-existing inline CST is dragged into a
+    destination doc — both the deep-clone path (cross-document graft
+    of an attached value) and the live-attach path for an unattached
+    ``Array(multiline=True)`` factory whose constructor hard-codes
+    ``\n``. Without this the destination dump ends up with mixed
+    ``\n`` / ``\r\n`` newlines.
+    """
+    from tomlrt._values import retarget_value_newlines  # noqa: PLC0415
+
+    if layout_root is not None:
+        retarget_value_newlines(val, layout_root._newline)  # noqa: SLF001
+
+
 def _live_attach_array(a: Array) -> tuple[ArrayValue, Array]:
-    """Rehome an unattached `Array` into ``layout_root``.
+    """Rehome an unattached `Array` into the destination doc.
 
     The Array always has a backing ``ArrayValue`` (the constructor
     initialises one); just mark it attached and hand back the value.
+    Newline retargeting is the caller's responsibility (see
+    :func:`_retarget_to_doc`).
     """
     a._attached = True  # noqa: SLF001
     return a._value, a  # noqa: SLF001
