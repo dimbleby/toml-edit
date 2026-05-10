@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Live-attaching an `Array` into a document with a different line
+  ending no longer produces mixed `\n` / `\r\n` newlines.
+
 ## [1.4.1] - 2026-05-09
 
 ### Fixed
