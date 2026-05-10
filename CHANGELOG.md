@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Mutating an implicit table whose only descendants were created via
+  chained `ensure_table` / nested AoT attaches no longer trips an
+  internal anchor-not-found assertion.
+
 ## [1.4.0] - 2026-05-08
 
 - Rewrite internals for improved performance
