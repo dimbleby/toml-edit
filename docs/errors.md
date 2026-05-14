@@ -39,5 +39,5 @@ the shape `"{message} (line L, column C)"`:
 try:
     tomlrt.loads("a = ?")
 except tomlrt.TOMLParseError as exc:
-    print(str(exc))  # invalid integer '?' (line 1, column 5)
+    print(exc)  # invalid integer '?' (line 1, column 5)
 ```
