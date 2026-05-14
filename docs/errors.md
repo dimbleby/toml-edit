@@ -30,3 +30,14 @@ except tomlrt.TOMLParseError as exc:
 | `line`    | 1-based line number                 |
 | `col`     | 1-based column number               |
 | `offset`  | 0-based byte offset into the source |
+
+The human-readable description of the problem is the exception's
+string form — `str(exc)` (equivalently `exc.args[0]`) — which has
+the shape `"{message} (line L, column C)"`:
+
+```python
+try:
+    tomlrt.loads("a = ?")
+except tomlrt.TOMLParseError as exc:
+    print(str(exc))  # invalid integer '?' (line 1, column 5)
+```
