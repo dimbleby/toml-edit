@@ -33,12 +33,6 @@ code.
       members:
         - __init__
         - render
-        - preamble
-        - epilogue
-        - header_comment
-        - header_leading_comments
-        - comments
-        - leading_comments
         - table
         - array
         - aot
@@ -51,6 +45,12 @@ code.
         - ensure_table
         - promote_inline
         - promote_array
+        - preamble
+        - epilogue
+        - header_comment
+        - header_leading_comments
+        - comments
+        - leading_comments
         - to_dict
 
 ::: tomlrt.Table
@@ -58,10 +58,6 @@ code.
       members:
         - section
         - inline
-        - header_comment
-        - header_leading_comments
-        - comments
-        - leading_comments
         - table
         - array
         - aot
@@ -74,6 +70,10 @@ code.
         - ensure_table
         - promote_inline
         - promote_array
+        - header_comment
+        - header_leading_comments
+        - comments
+        - leading_comments
         - to_dict
 
 ::: tomlrt.Array
@@ -82,12 +82,12 @@ code.
         - __init__
         - multiline
         - set_multiline
-        - comments
-        - leading_comments
         - table
         - array
         - get_table
         - get_array
+        - comments
+        - leading_comments
         - to_list
 
 ::: tomlrt.AoT
@@ -109,7 +109,6 @@ code.
 ::: tomlrt.TOMLParseError
     options:
       members:
-        - __init__
         - line
         - col
         - offset

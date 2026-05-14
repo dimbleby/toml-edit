@@ -10,6 +10,10 @@ class TOMLError(Exception):
 class TOMLParseError(TOMLError, ValueError):
     """Raised when a TOML document cannot be parsed.
 
+    The human-readable problem description is available via
+    ``str(exc)`` (or ``exc.args[0]``) and has the form
+    ``"{message} (line L, column C)"``.
+
     Attributes:
         line: 1-based line number where the error was detected.
         col:  1-based column number where the error was detected.
