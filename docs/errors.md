@@ -1,11 +1,10 @@
 # Errors
 
-tomlrt raises a small, focused exception hierarchy.
+tomlrt raises a small exception hierarchy.
 
 ## `TOMLError`
 
 Base class for everything tomlrt raises.
-Catch this when you want to treat any tomlrt-originated failure uniformly:
 
 ```python
 try:
@@ -31,6 +30,3 @@ except tomlrt.TOMLParseError as exc:
 | `line`    | 1-based line number                 |
 | `col`     | 1-based column number               |
 | `offset`  | 0-based byte offset into the source |
-
-`TOMLParseError` is a subclass of `TOMLError`, so catching the base class is
-enough when you don't care to distinguish parse failures from edit-time errors.
