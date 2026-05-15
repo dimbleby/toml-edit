@@ -580,8 +580,6 @@ class Container(dict[str, Any]):
         if self._inline:
             self._inline_delitem(key)
             return
-        if key not in self:
-            raise KeyError(key)
         _layout_ops.delete_key(self, key)
 
     # ------------------------------------------------------------------
