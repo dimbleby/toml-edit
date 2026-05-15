@@ -1019,7 +1019,7 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
         # structural-replace path: the previous binding's slots
         # were just deleted, leaving ``c`` purely implicit and
         # empty. Append at end of doc; the outer caller's
-        # ``move_slots_to_anchor`` will reposition the synthesised
+        # ``_move_slots_to_anchor`` will reposition the synthesised
         # block at the captured anchor.
         _synthesise_header_then_insert_kv_at_doc_tail(c, key, value)
         return
@@ -1091,7 +1091,7 @@ def _synthesise_header_then_insert_kv_at_doc_tail(
 
     Used by the structural-replace path when ``c``'s previous
     contributors were just deleted, leaving ``c`` empty and implicit.
-    The outer caller (typically ``move_slots_to_anchor``) is
+    The outer caller (typically ``_move_slots_to_anchor``) is
     responsible for repositioning the resulting block to the captured
     anchor when one exists.
     """
@@ -2845,26 +2845,114 @@ def _gather_value_owned_slots(val: object) -> list[Slot]:
     return []
 
 
-def move_slots_to_anchor(
+def _gather_new_binding_slots(
     parent: Container,
     key: str,
+    *,
+    prior_header_ref: SlotRef | None,
+) -> list[Slot]:
+    """Return the slots that physically host ``parent[key]``'s freshest binding.
+
+    Used by ``Container._structural_overwrite`` to figure out what to
+    move to the captured anchor after the ``del + set`` reinstall.
+
+    * For section / AoT bindings: defers to ``_gather_value_owned_slots``.
+    * For scalar / inline bindings: the primary KVSlot at
+      ``parent._index[key][0].slot``, prepended with
+      ``parent._header_ref.slot`` iff the parent's header_ref changed
+      since ``prior_header_ref`` was captured (i.e. an enclosing
+      ``[parent._path]`` header was synthesised together with the new
+      KV — the implicit-parent case).
+    """
+    val = dict.__getitem__(parent, key)
+    owned = _gather_value_owned_slots(val)
+    if owned:
+        return owned
+    refs = parent._index.get(key)  # noqa: SLF001
+    if not refs:
+        return []
+    kv_slot = refs[0].slot
+    current_header_ref = parent._header_ref  # noqa: SLF001
+    if (
+        current_header_ref is not None
+        and current_header_ref is not prior_header_ref
+        and current_header_ref.slot._next is kv_slot  # noqa: SLF001
+    ):
+        return [current_header_ref.slot, kv_slot]
+    return [kv_slot]
+
+
+def _binding_root(s: Slot) -> tuple[str, ...] | None:
+    """Return the slot's binding root path, or None if not applicable.
+
+    The binding root is the path of the table-key the slot owns:
+    ``StructuralHeaderSlot.path`` for section / AoT-entry headers, and
+    ``(*KVSlot.host_path, key_parts[0].value)`` for KVs (the first
+    dotted-key part is what ``host_path``'s table sees as bound).
+    """
+    if isinstance(s, StructuralHeaderSlot):
+        return tuple(s.path)
+    if isinstance(s, KVSlot):
+        return (*s.host_path, s.key_parts[0].value)
+    return None  # pragma: no cover
+
+
+def _find_binding_successor(parent: Container, key: str) -> Slot | None:
+    """Return the slot just after the first contiguous run bound under ``parent[key]``.
+
+    Walks the doc-stream forward from ``parent._index[key][0].slot``,
+    consuming consecutive slots whose binding root starts with
+    ``(*parent._path, key)``, and returns the first non-matching slot
+    (or ``None`` if the run extends to doc tail).
+
+    Used by ``Container._structural_overwrite`` to capture the original
+    successor of the binding's region — its ``leading`` is restored
+    after the new binding is moved back to the saved anchor, so that
+    the visual gap between the binding and what came after it survives
+    the ``del + set`` round-trip.
+
+    The "first contiguous run" choice (rather than "last of all
+    matches across the whole doc") matches the semantics of
+    ``_move_slots_to_anchor``: the new binding is spliced at the
+    saved anchor, so its true post-move successor is the slot that
+    originally followed the *first* contiguous run, not the last.
+    """
+    refs = parent._index.get(key)  # noqa: SLF001
+    if not refs:
+        return None
+    path_prefix = (*parent._path, key)  # noqa: SLF001
+    plen = len(path_prefix)
+    cur: Slot | None = refs[0].slot
+    while cur is not None:
+        root = _binding_root(cur)
+        if root is None or root[:plen] != path_prefix:
+            return cur
+        cur = cur._next  # noqa: SLF001
+    return None
+
+
+def _move_slots_to_anchor(
+    parent: Container,
+    slots: list[Slot],
     saved_anchor_prev: Slot | None,
     saved_leading_pieces: list[TriviaPiece],
 ) -> None:
-    """Move ``parent[key]``'s owned slots to ``saved_anchor_prev``.
+    """Move ``slots`` to ``saved_anchor_prev`` in the doc-stream.
 
-    Splices the slot block immediately after ``saved_anchor_prev`` (or
-    to doc head if None), applies ``saved_leading_pieces`` to the new
-    head, and resorts the affected ancestor ``_refs``. Used by the
+    Splices the (contiguous) slot block immediately after
+    ``saved_anchor_prev`` (or to doc head if None), applies
+    ``saved_leading_pieces`` to the new head, and resorts the
+    affected ancestor ``_refs``. Used by the
     ``Container.__setitem__`` position-preserving structural replace
     path: capture old position + leading before the replacement is
     installed at end-of-doc, then move it back.
+
+    ``slots`` must be in doc-stream order and contiguous in the
+    linked list (i.e. ``slots[i]._next is slots[i + 1]`` for all i).
     """
     doc = parent._layout_root  # noqa: SLF001
     if doc is None:
         return
-    val = dict.__getitem__(parent, key)
-    slots = _gather_value_owned_slots(val)
     if not slots:
         # Empty AoT or other slotless binding — nothing to move.
         return
@@ -2935,7 +3023,6 @@ __all__ = [
     "insert_after",
     "insert_before",
     "insert_before_head",
-    "move_slots_to_anchor",
     "remove_aot_entry",
     "renormalise_aot_order",
     "replace_aot_entry",

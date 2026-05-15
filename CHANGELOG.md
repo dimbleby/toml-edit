@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Overwriting an implicit table with a scalar or inline value now
+  preserves the original position in the document instead of moving
+  the binding to the end.
+
 ## [1.4.2] - 2026-05-10
 
 ### Fixed
