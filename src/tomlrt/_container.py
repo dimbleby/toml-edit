@@ -1492,11 +1492,17 @@ def _synth_value(
     if (_is_inline_table(v) or isinstance(v, Array)) and not v._attached:  # noqa: SLF001
         if isinstance(v, Array):
             _retarget_to_doc(v._value, layout_root)  # noqa: SLF001
-            return _live_attach_array(v)
+            v._attached = True  # noqa: SLF001
+            return v._value, v  # noqa: SLF001
         if v._layout_root is not None:  # noqa: SLF001
             _reset_inline_for_rehome(v)
-        return _live_attach_inline_table(
-            v, layout_root=layout_root, parent=parent, path=path, owner=owner
+        return _populate_inline_table(
+            v,
+            list(v.items()),
+            layout_root=layout_root,
+            parent=parent,
+            path=path,
+            owner=owner,
         )
     # Cross-document (or same-doc live) inline value — deep-clone the
     # CST so the destination preserves the source's formatting
@@ -1517,39 +1523,19 @@ def _synth_value(
         return cloned, new
     # Plain ``Mapping`` → inline table (synthesise from items).
     if isinstance(v, Mapping):
-        return _synth_inline_table(
-            v, layout_root=layout_root, parent=parent, path=path, owner=owner
+        return _populate_inline_table(
+            Table(),
+            list(v.items()),
+            layout_root=layout_root,
+            parent=parent,
+            path=path,
+            owner=owner,
         )
     # Plain ``list`` → inline array (synthesise from items).
     if isinstance(v, list):
         return _synth_inline_array(v, layout_root=layout_root, owner=owner)
     msg = f"Cannot convert {type(v).__name__} to a TOML value"
     raise TypeError(msg)
-
-
-def _live_attach_inline_table(
-    t: Container,
-    *,
-    layout_root: Document | None,
-    parent: Container | None,
-    path: tuple[str, ...],
-    owner: AoTEntry | None,
-) -> tuple[InlineTableValue, Container]:
-    """Rehome an unattached inline `Table` into ``layout_root``.
-
-    Builds an ``InlineTableValue`` from ``t``'s current dict contents,
-    points ``t._value`` at it, and records the position. Returns
-    ``(value, t)`` so the caller stores ``t`` itself (preserving
-    user-visible identity) in the parent dict.
-    """
-    return _populate_inline_table(
-        t,
-        list(t.items()),
-        layout_root=layout_root,
-        parent=parent,
-        path=path,
-        owner=owner,
-    )
 
 
 def _retarget_to_doc(val: Value, layout_root: Document | None) -> None:
@@ -1568,36 +1554,6 @@ def _retarget_to_doc(val: Value, layout_root: Document | None) -> None:
         retarget_value_newlines(val, layout_root._newline)  # noqa: SLF001
 
 
-def _live_attach_array(a: Array) -> tuple[ArrayValue, Array]:
-    """Rehome an unattached `Array` into the destination doc.
-
-    The Array always has a backing ``ArrayValue`` (the constructor
-    initialises one); just mark it attached and hand back the value.
-    Newline retargeting is the caller's responsibility (see
-    :func:`_retarget_to_doc`).
-    """
-    a._attached = True  # noqa: SLF001
-    return a._value, a  # noqa: SLF001
-
-
-def _synth_inline_table(
-    d: Mapping[Any, Any],
-    *,
-    layout_root: Document | None,
-    parent: Container | None,
-    path: tuple[str, ...],
-    owner: AoTEntry | None,
-) -> tuple[InlineTableValue, Table]:
-    return _populate_inline_table(
-        Table(),
-        list(d.items()),
-        layout_root=layout_root,
-        parent=parent,
-        path=path,
-        owner=owner,
-    )
-
-
 def _populate_inline_table(
     table: Table | Container,
     items: list[tuple[Any, Any]],
@@ -1609,10 +1565,9 @@ def _populate_inline_table(
 ) -> tuple[InlineTableValue, Any]:
     """Wire ``table`` as an inline view and populate its entries.
 
-    Shared body of :func:`_live_attach_inline_table` (reuses the
-    user's ``Table.inline()`` instance) and :func:`_synth_inline_table`
-    (allocates a fresh ``Table``). Both flavours produce the same
-    ``InlineTableValue`` shape: each entry is laid out as
+    Two callers: the live-attach path (passes a user-supplied
+    ``Table.inline()`` so identity is preserved) and the plain-Mapping
+    synth path (passes a fresh ``Table()``). Each entry is laid out as
     ``" k = v"`` with comma-then-space separators except after the
     last entry, and a single trailing space when non-empty.
     """
