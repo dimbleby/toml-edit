@@ -141,9 +141,10 @@ them. Read roughly in this order:
   bookkeeping; KV / section / AoT-entry append; subtree rehome.
   By far the largest file. Internal hot-path conventions:
   - **Reverse-walks of `c._refs`** go through `_last_kv(c, predicate)`.
-    The wrappers (`_last_direct_kv`, `_last_host_kv`,
-    `_recompute_body_tail`) are *semantic* — they exist so the
-    predicate is named once. Don't add a fourth ad-hoc walk.
+    The wrappers (`_last_direct_kv`, `_recompute_body_tail`) exist
+    where the same predicate composition is reused or carries a
+    fast-path; one-off walks pass the predicate inline. Don't add a
+    third ad-hoc walk.
   - **Bulk ref removal** goes through `_remove_owned_refs(c,
     candidate_keys, owned_ids)`. Callers own only the body-tail
     policy (clear vs recompute).
