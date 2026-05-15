@@ -919,11 +919,6 @@ def _last_host_kv(host: Container) -> KVSlot | None:
     return _last_kv(host, lambda s: _is_host_kv(host, s))
 
 
-def _host_kv_separator_leading(host: Container, doc: Document) -> Trivia:
-    """Pick leading trivia for a new dotted-KV slot whose host is ``host``."""
-    return _kv_leading_after(_last_host_kv(host), doc)
-
-
 def _new_kv_slot(
     c: Container,
     key: str,
@@ -1024,7 +1019,7 @@ def _append_dotted_kv_under_implicit(c: Container, key: str, value: Value) -> No
     parts = [make_keypart(k) for k in keypath]
     seps = ["."] * (len(parts) - 1)
     new_slot = KVSlot(
-        leading=_host_kv_separator_leading(host, doc),
+        leading=_kv_leading_after(_last_host_kv(host), doc),
         host_path=host._path,  # noqa: SLF001
         key_parts=parts,
         key_seps=seps,
@@ -1379,11 +1374,6 @@ def _new_section_header(
     return slot
 
 
-def _doc_tail_anchor(doc: Document) -> Slot | None:
-    """Return the slot to insert *after* when appending at end-of-doc."""
-    return doc._tail  # noqa: SLF001
-
-
 def _belongs_to_parent_extent(
     slot: Slot,
     base_path: tuple[str, ...],
@@ -1438,7 +1428,7 @@ def _parent_subtree_tail(parent: Container) -> Slot | None:
 
 def _splice_at_end(slot: Slot, doc: Document) -> None:
     """Insert ``slot`` at the end of the doc-stream."""
-    anchor = _doc_tail_anchor(doc)
+    anchor = doc._tail  # noqa: SLF001
     if anchor is None:
         # Empty doc.
         insert_before_head(slot, doc)
