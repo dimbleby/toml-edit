@@ -410,9 +410,7 @@ def append_direct_kv(c: Container, key: str, value: Value) -> None:
         msg = "insert into AoT entry sub-table body is not yet supported"
         raise NotImplementedError(msg)
     layout_root = c._layout_root  # noqa: SLF001
-    if layout_root is None:  # pragma: no cover
-        msg = "internal: container has no layout root"
-        raise AssertionError(msg)
+    assert layout_root is not None
     doc = layout_root
     # Capture the anchor *before* mutating any cache.
     body_tail = c._body_tail  # noqa: SLF001
@@ -526,9 +524,7 @@ def delete_key(c: Container, key: str) -> None:
         raise KeyError(key)
     val = dict.__getitem__(c, key)
     layout_root = c._layout_root  # noqa: SLF001
-    if layout_root is None:  # pragma: no cover
-        msg = "internal: container has no layout root"
-        raise AssertionError(msg)
+    assert layout_root is not None
     doc = layout_root
 
     # 1. Owned-slot identity set + retained slot objects (for unlink).
@@ -1239,9 +1235,7 @@ def _append_kv_in_aot_entry(c: Container, key: str, value: Value) -> None:
     keeps the entry's `entry_slots` list in doc-stream order.
     """
     layout_root = c._layout_root  # noqa: SLF001
-    if layout_root is None:  # pragma: no cover
-        msg = "internal: container has no layout root"
-        raise AssertionError(msg)
+    assert layout_root is not None
     doc = layout_root
     owner = c._owner_aot_entry  # noqa: SLF001
     assert owner is not None
@@ -2297,9 +2291,7 @@ def attach_section_at(
         raise ValueError(msg)
 
     layout_root = parent._layout_root  # noqa: SLF001
-    if layout_root is None:  # pragma: no cover
-        msg = "internal: parent has no layout root"
-        raise AssertionError(msg)
+    assert layout_root is not None
     doc = layout_root
     full_path = (*parent._path, *sub)  # noqa: SLF001
 
