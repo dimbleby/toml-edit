@@ -914,11 +914,6 @@ def _kv_separator_leading(c: Container, doc: Document) -> Trivia:
     return _kv_leading_after(None, doc, fallback_indent=fallback)
 
 
-def _last_host_kv(host: Container) -> KVSlot | None:
-    """Last KV slot whose ``host_path`` matches ``host._path`` (any keypath length)."""
-    return _last_kv(host, lambda s: _is_host_kv(host, s))
-
-
 def _new_kv_slot(
     c: Container,
     key: str,
@@ -1019,7 +1014,7 @@ def _append_dotted_kv_under_implicit(c: Container, key: str, value: Value) -> No
     parts = [make_keypart(k) for k in keypath]
     seps = ["."] * (len(parts) - 1)
     new_slot = KVSlot(
-        leading=_kv_leading_after(_last_host_kv(host), doc),
+        leading=_kv_leading_after(_last_kv(host, lambda s: _is_host_kv(host, s)), doc),
         host_path=host._path,  # noqa: SLF001
         key_parts=parts,
         key_seps=seps,
