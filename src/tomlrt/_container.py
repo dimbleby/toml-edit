@@ -43,7 +43,7 @@ from tomlrt._scalar import (
     coerce_scalar,
     is_scalar,
 )
-from tomlrt._slots import KVSlot, Slot, StructuralHeaderSlot
+from tomlrt._slots import KVSlot, StructuralHeaderSlot
 from tomlrt._trivia import (
     NewlineNode,
     Trivia,
@@ -65,7 +65,6 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
     from tomlrt._slots import AoTEntry, Slot, SlotRef
-    from tomlrt._trivia import TriviaPiece
     from tomlrt._values import (
         Value,
     )
@@ -403,36 +402,7 @@ class Container(dict[str, Any]):
 
     def _structural_overwrite(self, key: str, value: Any) -> None:
         """Replace ``key`` by deleting then reinstalling at the saved anchor."""
-        primary_refs = list(self._index.get(key, ()))
-        saved_anchor_prev: Slot | None = None
-        saved_leading_pieces: list[TriviaPiece] = []
-        successor_slot: Slot | None = None
-        successor_leading: list[TriviaPiece] | None = None
-        if primary_refs:
-            old_primary = primary_refs[0].slot
-            saved_anchor_prev = old_primary._prev  # noqa: SLF001
-            saved_leading_pieces = list(old_primary.leading.pieces)
-            successor_slot = _layout_ops._find_binding_successor(self, key)  # noqa: SLF001
-            if successor_slot is not None:
-                successor_leading = list(successor_slot.leading.pieces)
-        del self[key]
-        doc = self._layout_root
-        assert doc is not None
-        with _layout_ops.record_install(doc) as new_slots:
-            self[key] = value
-        if not primary_refs or not new_slots:
-            return
-        _layout_ops._move_slots_to_anchor(  # noqa: SLF001
-            self, new_slots, saved_anchor_prev, saved_leading_pieces
-        )
-        # Restore the successor's leading only if it's still the live
-        # slot immediately following the moved block — otherwise we'd
-        # risk overwriting a detached/orphaned slot's trivia or the
-        # wrong boundary.
-        if successor_slot is None or successor_leading is None:
-            return
-        if new_slots[-1]._next is successor_slot:  # noqa: SLF001
-            successor_slot.leading.pieces = list(successor_leading)
+        _layout_ops.reposition_install(self, key, value)
 
     def _insert_new(self, key: str, value: Any) -> None:
         """Bind ``key`` for the first time at the document tail."""

@@ -68,7 +68,7 @@ if TYPE_CHECKING:
 
 
 @contextlib.contextmanager
-def record_install(doc: Document) -> Iterator[list[Slot]]:
+def _record_install(doc: Document) -> Iterator[list[Slot]]:
     """Capture every slot constructed during the with-block.
 
     Each call to ``_new_kv_slot`` / ``_new_section_header`` inside the
@@ -77,10 +77,10 @@ def record_install(doc: Document) -> Iterator[list[Slot]]:
     in creation order — which matches doc-stream order for every
     install primitive in this module.
 
-    Used by ``Container._structural_overwrite`` to learn what
-    ``del + set`` just installed without having to re-derive it from
-    ``_index`` / ``_header_ref`` snapshots. Re-entrancy: nested
-    contexts stack; only the innermost is active.
+    Used by ``reposition_install`` to learn what ``del + set`` just
+    installed without having to re-derive it from ``_index`` /
+    ``_header_ref`` snapshots. Re-entrancy: nested contexts stack;
+    only the innermost is active.
     """
     prev = doc._install_recorder  # noqa: SLF001
     recorder: list[Slot] = []
@@ -96,6 +96,49 @@ def _record_new_slot(doc: Document, slot: Slot) -> None:
     recorder = doc._install_recorder  # noqa: SLF001
     if recorder is not None:
         recorder.append(slot)
+
+
+def reposition_install(parent: Container, key: str, value: Any) -> None:
+    """Replace ``parent[key]`` while preserving its physical position.
+
+    Snapshots the bound region's anchor, leading, and successor leading;
+    deletes the binding; reinstalls via ``parent[key] = value``;
+    captures the freshly-built slots through ``_record_install``;
+    moves them back to the saved anchor; and restores the successor's
+    leading if the moved block still sits immediately before it.
+
+    The successor restore covers leading perturbations from both the
+    delete side (``unlink_slot`` stripping a new doc-head's blank
+    lines) and the install side (``_synthesise_header_then_insert_kv``
+    rewriting the descendant's leading, ``append_direct_kv``'s
+    head-of-doc blank-line guard).
+    """
+    primary_refs = list(parent._index.get(key, ()))  # noqa: SLF001
+    saved_anchor_prev: Slot | None = None
+    saved_leading_pieces: list[TriviaPiece] = []
+    successor_slot: Slot | None = None
+    successor_leading: list[TriviaPiece] | None = None
+    if primary_refs:
+        old_primary = primary_refs[0].slot
+        saved_anchor_prev = old_primary._prev  # noqa: SLF001
+        saved_leading_pieces = list(old_primary.leading.pieces)
+        successor_slot = _find_binding_successor(parent, key)
+        if successor_slot is not None:
+            successor_leading = list(successor_slot.leading.pieces)
+    del parent[key]
+    doc = parent._layout_root  # noqa: SLF001
+    assert doc is not None
+    with _record_install(doc) as new_slots:
+        parent[key] = value
+    if not primary_refs or not new_slots:
+        return
+    _move_slots_to_anchor(parent, new_slots, saved_anchor_prev, saved_leading_pieces)
+    if (
+        successor_slot is not None
+        and successor_leading is not None
+        and new_slots[-1]._next is successor_slot  # noqa: SLF001
+    ):
+        successor_slot.leading.pieces = list(successor_leading)
 
 
 def _ancestor_chain(c: Container) -> list[Container]:
@@ -2991,9 +3034,9 @@ __all__ = [
     "insert_after",
     "insert_before",
     "insert_before_head",
-    "record_install",
     "remove_aot_entry",
     "renormalise_aot_order",
     "replace_aot_entry",
+    "reposition_install",
     "unlink_slot",
 ]
