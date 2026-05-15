@@ -2576,7 +2576,7 @@ def test_assign_over_aot_keeps_dict_view_in_sync() -> None:
     doc["tool"]["source"] = {}
     assert isinstance(doc["tool"]["source"], tomlrt.Table)
     assert dict(doc["tool"]["source"]) == {}
-    assert tomlrt.dumps(doc) == "[tool]\nsource = {}\n"
+    assert tomlrt.dumps(doc) == "[tool]\n\nsource = {}\n"
 
 
 def test_del_then_assign_keeps_dict_view_in_sync() -> None:
@@ -3322,3 +3322,192 @@ def test_displaced_inline_view_detaches_on_overwrite() -> None:
     del doc["a"]
     doc["new"] = it
     assert doc["new"] is it
+
+
+def test_scalar_overwrite_of_implicit_table_preserves_position() -> None:
+    """Replacing an implicit-parent's table-shaped child with a scalar.
+
+    Regression: assigning a scalar to a key that previously bound a
+    table (which only existed implicitly via a nested header) used to
+    materialise a fresh ``[parent]`` block at the end of the document.
+    Now the synthesised ``[parent]`` + ``key = value`` block is moved
+    back to the position formerly occupied by the deleted child header.
+    """
+    src = td("""
+        [foo.bar.baz]
+        quux = 1
+
+        [this]
+        that = 2
+        """)
+    doc = tomlrt.loads(src)
+    doc["foo"]["bar"] = 3
+    assert tomlrt.dumps(doc) == td("""
+        [foo]
+        bar = 3
+
+        [this]
+        that = 2
+        """)
+
+
+def test_scalar_overwrite_of_explicit_subsection_preserves_position() -> None:
+    """Scalar over an explicit ``[foo.bar]`` lands in ``[foo]``'s body.
+
+    The blank line that originally preceded ``[foo.bar]`` is preserved
+    on the new binding's leading — the structural-overwrite path
+    restores the captured anchor's leading verbatim.
+    """
+    src = td("""
+        [foo]
+        x = 1
+
+        [foo.bar]
+        y = 2
+
+        [other]
+        z = 3
+        """)
+    doc = tomlrt.loads(src)
+    doc["foo"]["bar"] = 99
+    assert tomlrt.dumps(doc) == td("""
+        [foo]
+        x = 1
+
+        bar = 99
+
+        [other]
+        z = 3
+        """)
+
+
+def test_synth_inline_overwrite_of_implicit_table_preserves_position() -> None:
+    """Same shape as the scalar case but with a ``{}`` (synth-inline) value."""
+    src = td("""
+        [foo.bar.baz]
+        quux = 1
+
+        [this]
+        that = 2
+        """)
+    doc = tomlrt.loads(src)
+    doc["foo"]["bar"] = {"q": 1}
+    assert tomlrt.dumps(doc) == td("""
+        [foo]
+        bar = { q = 1 }
+
+        [this]
+        that = 2
+        """)
+
+
+def test_scalar_overwrite_at_doc_tail_preserves_position() -> None:
+    """Implicit-parent at doc tail: the synthesised block stays at tail."""
+    src = td("""
+        [other]
+        z = 3
+
+        [foo.bar.baz]
+        quux = 1
+        """)
+    doc = tomlrt.loads(src)
+    doc["foo"]["bar"] = 7
+    assert tomlrt.dumps(doc) == td("""
+        [other]
+        z = 3
+
+        [foo]
+        bar = 7
+        """)
+
+
+def test_scalar_overwrite_of_discontiguous_implicit_binding() -> None:
+    """Replacing an implicit binding whose region spans interleaved sections.
+
+    ``a.b`` is built from ``[a.b]`` plus the later ``[a.b.c]``, with
+    an unrelated ``[d]`` in between. The structural overwrite captures
+    the original successor of the *first* contiguous run (``[d]``)
+    and restores its leading after the move so the visual gap between
+    ``a.b``'s former physical location and ``[d]`` survives.
+    """
+    src = td("""
+        [a.b]
+        x = 1
+
+        [d]
+        y = 2
+
+        [a.b.c]
+        z = 3
+        """)
+    doc = tomlrt.loads(src)
+    doc["a"]["b"] = 99
+    assert tomlrt.dumps(doc) == td("""
+        [a]
+        b = 99
+
+        [d]
+        y = 2
+        """)
+
+
+def test_scalar_overwrite_inside_aot_entry_preserves_position() -> None:
+    """Scalar over a nested ``[a.sub]`` inside the second ``[[a]]`` entry.
+
+    The structural-overwrite machinery routes through
+    ``Container._structural_overwrite`` on the AoT-entry's table view
+    (the parent), and the synthesised KV must land where ``[a.sub]``
+    used to be — between the second and third ``[[a]]`` entries.
+    """
+    src = td("""
+        [[a]]
+        x = 1
+
+        [[a]]
+        x = 2
+
+        [a.sub]
+        z = 9
+
+        [[a]]
+        x = 3
+        """)
+    doc = tomlrt.loads(src)
+    doc["a"][1]["sub"] = 7
+    assert tomlrt.dumps(doc) == td("""
+        [[a]]
+        x = 1
+
+        [[a]]
+        x = 2
+
+        sub = 7
+
+        [[a]]
+        x = 3
+        """)
+
+
+def test_section_overwrite_inside_aot_entry_preserves_position() -> None:
+    """Same shape as the scalar case but replacing with a section table."""
+    src = td("""
+        [[a]]
+        x = 1
+
+        [a.sub]
+        z = 9
+
+        [[a]]
+        x = 2
+        """)
+    doc = tomlrt.loads(src)
+    doc["a"][0]["sub"] = {"q": 1}
+    assert tomlrt.dumps(doc) == td("""
+        [[a]]
+        x = 1
+
+        sub = { q = 1 }
+
+        [[a]]
+        x = 2
+        """)

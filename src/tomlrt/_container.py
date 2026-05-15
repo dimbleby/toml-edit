@@ -392,7 +392,7 @@ class Container(dict[str, Any]):
             or _is_section(value)
             or isinstance(value, Mapping)
         ):
-            self._structural_overwrite(key, value, current)
+            self._structural_overwrite(key, value)
             return
         # Unsupported value type — TypeError, not NIE.
         msg = (
@@ -401,7 +401,7 @@ class Container(dict[str, Any]):
         )
         raise TypeError(msg)
 
-    def _structural_overwrite(self, key: str, value: Any, current: Any) -> None:
+    def _structural_overwrite(self, key: str, value: Any) -> None:
         """Replace ``key`` by deleting then reinstalling at the saved anchor."""
         # Snapshot rather than alias the live index list — the
         # ``del self[key]`` below mutates ``self._index[key]`` in place.
@@ -410,23 +410,29 @@ class Container(dict[str, Any]):
         saved_leading_pieces: list[TriviaPiece] = []
         successor_slot = None
         successor_leading: list[TriviaPiece] | None = None
+        # Snapshot the parent's header_ref so we can detect whether
+        # the ``del + set`` synthesised a fresh ``[self._path]`` header
+        # (the implicit-parent case): if so it must move with the new
+        # KV, even when the new value is a scalar.
+        prior_header_ref = self._header_ref
         if primary_refs:
             old_primary = primary_refs[0].slot
             saved_anchor_prev = old_primary._prev  # noqa: SLF001
             saved_leading_pieces = list(old_primary.leading.pieces)
-            owned = _layout_ops._gather_value_owned_slots(current)  # noqa: SLF001
-            if owned:
-                successor_slot = owned[-1]._next  # noqa: SLF001
-                if successor_slot is not None:
-                    successor_leading = list(successor_slot.leading.pieces)
+            successor_slot = _layout_ops._find_binding_successor(self, key)  # noqa: SLF001
+            if successor_slot is not None:
+                successor_leading = list(successor_slot.leading.pieces)
         del self[key]
         self[key] = value
-        if not primary_refs or not (
-            isinstance(value, AoT) or _is_section(value) or isinstance(value, Mapping)
-        ):
+        if not primary_refs:
             return
-        _layout_ops.move_slots_to_anchor(
-            self, key, saved_anchor_prev, saved_leading_pieces
+        new_slots = _layout_ops._gather_new_binding_slots(  # noqa: SLF001
+            self, key, prior_header_ref=prior_header_ref
+        )
+        if not new_slots:
+            return
+        _layout_ops._move_slots_to_anchor(  # noqa: SLF001
+            self, new_slots, saved_anchor_prev, saved_leading_pieces
         )
         # Restore the successor's leading only if it's still the live
         # slot immediately following the moved block — otherwise we'd
@@ -434,10 +440,7 @@ class Container(dict[str, Any]):
         # wrong boundary.
         if successor_slot is None or successor_leading is None:
             return
-        new_owned = _layout_ops._gather_value_owned_slots(  # noqa: SLF001
-            dict.__getitem__(self, key)
-        )
-        if new_owned and new_owned[-1]._next is successor_slot:  # noqa: SLF001
+        if new_slots[-1]._next is successor_slot:  # noqa: SLF001
             successor_slot.leading.pieces = list(successor_leading)
 
     def _insert_new(self, key: str, value: Any) -> None:
