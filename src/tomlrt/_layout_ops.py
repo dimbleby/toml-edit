@@ -53,7 +53,7 @@ from tomlrt._values import make_keypart, make_keyparts
 HeaderKind = Literal["table", "aot-entry"]
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 
     from tomlrt._array import AoT, Array
     from tomlrt._container import Container, Document, Table
@@ -65,6 +65,37 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 # Pure linked-list ops
 # ---------------------------------------------------------------------------
+
+
+@contextlib.contextmanager
+def record_install(doc: Document) -> Iterator[list[Slot]]:
+    """Capture every slot constructed during the with-block.
+
+    Each call to ``_new_kv_slot`` / ``_new_section_header`` inside the
+    block (and the one bare ``KVSlot(...)`` in
+    ``_append_dotted_kv_under_implicit``) appends to the yielded list,
+    in creation order — which matches doc-stream order for every
+    install primitive in this module.
+
+    Used by ``Container._structural_overwrite`` to learn what
+    ``del + set`` just installed without having to re-derive it from
+    ``_index`` / ``_header_ref`` snapshots. Re-entrancy: nested
+    contexts stack; only the innermost is active.
+    """
+    prev = doc._install_recorder  # noqa: SLF001
+    recorder: list[Slot] = []
+    doc._install_recorder = recorder  # noqa: SLF001
+    try:
+        yield recorder
+    finally:
+        doc._install_recorder = prev  # noqa: SLF001
+
+
+def _record_new_slot(doc: Document, slot: Slot) -> None:
+    """Append ``slot`` to ``doc``'s active install recorder, if any."""
+    recorder = doc._install_recorder  # noqa: SLF001
+    if recorder is not None:
+        recorder.append(slot)
 
 
 def _ancestor_chain(c: Container) -> list[Container]:
@@ -860,7 +891,7 @@ def _new_kv_slot(
     leading: Trivia,
 ) -> KVSlot:
     """Synthesise a fresh single-keypart KV slot under ``c``."""
-    return KVSlot(
+    slot = KVSlot(
         leading=leading,
         host_path=c._path,  # noqa: SLF001
         key_parts=[make_keypart(key)],
@@ -871,6 +902,8 @@ def _new_kv_slot(
         eol=_default_eol(doc),
         owner_aot_entry=owner,
     )
+    _record_new_slot(doc, slot)
+    return slot
 
 
 def _build_kv_slot(c: Container, key: str, value: Value, doc: Document) -> KVSlot:
@@ -958,6 +991,7 @@ def _append_dotted_kv_under_implicit(c: Container, key: str, value: Value) -> No
         eol=_default_eol(doc),
         owner_aot_entry=owner,
     )
+    _record_new_slot(doc, new_slot)
 
     insert_after(body_tail, new_slot, doc)
 
@@ -1287,7 +1321,7 @@ def _new_section_header(
     entry: AoTEntry | None = None,
     owner_aot_entry: AoTEntry | None = None,
 ) -> StructuralHeaderSlot:
-    return StructuralHeaderSlot(
+    slot = StructuralHeaderSlot(
         leading=leading,
         kind=kind,
         path=path,
@@ -1298,6 +1332,8 @@ def _new_section_header(
         owner_aot_entry=owner_aot_entry,
         synthetic=True,
     )
+    _record_new_slot(doc, slot)
+    return slot
 
 
 def _doc_tail_anchor(doc: Document) -> Slot | None:
@@ -2819,84 +2855,6 @@ def _resort_refs_by_doc_order(containers: list[Container], doc: Document) -> Non
             refs.sort(key=lambda r: position.get(id(r.slot), 0))
 
 
-def _gather_value_owned_slots(val: object) -> list[Slot]:
-    """Return all physical slots logically owned by ``val`` in doc-stream order.
-
-    For a section Table: header + body + nested sub-section slots.
-    For an AoT: every entry's ``entry_slots``, in entry order.
-    For anything else (scalar, inline, empty AoT): the empty list.
-    """
-    from tomlrt._array import AoT  # noqa: PLC0415
-    from tomlrt._container import Container  # noqa: PLC0415
-
-    if isinstance(val, AoT):
-        out: list[Slot] = []
-        for et in val:
-            e = et._owner_aot_entry  # noqa: SLF001
-            if e is not None:
-                out.extend(e.entry_slots)
-        return out
-    if (
-        isinstance(val, Container)
-        and not val._inline  # noqa: SLF001
-        and val._header_ref is not None  # noqa: SLF001
-    ):
-        return list(_gather_section_slots(val))
-    return []
-
-
-def _gather_new_binding_slots(
-    parent: Container,
-    key: str,
-    *,
-    prior_header_ref: SlotRef | None,
-) -> list[Slot]:
-    """Return the slots that physically host ``parent[key]``'s freshest binding.
-
-    Used by ``Container._structural_overwrite`` to figure out what to
-    move to the captured anchor after the ``del + set`` reinstall.
-
-    * For section / AoT bindings: defers to ``_gather_value_owned_slots``.
-    * For scalar / inline bindings: the primary KVSlot at
-      ``parent._index[key][0].slot``, prepended with
-      ``parent._header_ref.slot`` iff the parent's header_ref changed
-      since ``prior_header_ref`` was captured (i.e. an enclosing
-      ``[parent._path]`` header was synthesised together with the new
-      KV — the implicit-parent case).
-    """
-    val = dict.__getitem__(parent, key)
-    owned = _gather_value_owned_slots(val)
-    if owned:
-        return owned
-    refs = parent._index.get(key)  # noqa: SLF001
-    if not refs:
-        return []
-    kv_slot = refs[0].slot
-    current_header_ref = parent._header_ref  # noqa: SLF001
-    if (
-        current_header_ref is not None
-        and current_header_ref is not prior_header_ref
-        and current_header_ref.slot._next is kv_slot  # noqa: SLF001
-    ):
-        return [current_header_ref.slot, kv_slot]
-    return [kv_slot]
-
-
-def _binding_root(s: Slot) -> tuple[str, ...] | None:
-    """Return the slot's binding root path, or None if not applicable.
-
-    The binding root is the path of the table-key the slot owns:
-    ``StructuralHeaderSlot.path`` for section / AoT-entry headers, and
-    ``(*KVSlot.host_path, key_parts[0].value)`` for KVs (the first
-    dotted-key part is what ``host_path``'s table sees as bound).
-    """
-    if isinstance(s, StructuralHeaderSlot):
-        return tuple(s.path)
-    if isinstance(s, KVSlot):
-        return (*s.host_path, s.key_parts[0].value)
-    return None  # pragma: no cover
-
-
 def _find_binding_successor(parent: Container, key: str) -> Slot | None:
     """Return the slot just after the first contiguous run bound under ``parent[key]``.
 
@@ -2924,7 +2882,17 @@ def _find_binding_successor(parent: Container, key: str) -> Slot | None:
     plen = len(path_prefix)
     cur: Slot | None = refs[0].slot
     while cur is not None:
-        root = _binding_root(cur)
+        # The slot's "binding root" is the table-key it owns:
+        # ``StructuralHeaderSlot.path`` for headers, and
+        # ``(*KVSlot.host_path, key_parts[0].value)`` for KVs (the
+        # first dotted-key part is what ``host_path``'s table sees as
+        # bound).
+        if isinstance(cur, StructuralHeaderSlot):
+            root: tuple[str, ...] | None = tuple(cur.path)
+        elif isinstance(cur, KVSlot):
+            root = (*cur.host_path, cur.key_parts[0].value)
+        else:
+            root = None
         if root is None or root[:plen] != path_prefix:
             return cur
         cur = cur._next  # noqa: SLF001
@@ -3023,6 +2991,7 @@ __all__ = [
     "insert_after",
     "insert_before",
     "insert_before_head",
+    "record_install",
     "remove_aot_entry",
     "renormalise_aot_order",
     "replace_aot_entry",

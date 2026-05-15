@@ -372,6 +372,7 @@ def build_from_parse(result: ParseResult) -> Document:
     doc._newline = result.newline  # noqa: SLF001
     doc._prelude = result.prelude  # noqa: SLF001
     doc._is_private = False  # noqa: SLF001
+    doc._install_recorder = None  # noqa: SLF001
     doc._layout_root = doc  # noqa: SLF001
     build_initial_containers(doc, result.slots)
     return doc

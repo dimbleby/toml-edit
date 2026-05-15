@@ -43,7 +43,7 @@ from tomlrt._scalar import (
     coerce_scalar,
     is_scalar,
 )
-from tomlrt._slots import KVSlot, StructuralHeaderSlot
+from tomlrt._slots import KVSlot, Slot, StructuralHeaderSlot
 from tomlrt._trivia import (
     NewlineNode,
     Trivia,
@@ -403,18 +403,11 @@ class Container(dict[str, Any]):
 
     def _structural_overwrite(self, key: str, value: Any) -> None:
         """Replace ``key`` by deleting then reinstalling at the saved anchor."""
-        # Snapshot rather than alias the live index list — the
-        # ``del self[key]`` below mutates ``self._index[key]`` in place.
         primary_refs = list(self._index.get(key, ()))
-        saved_anchor_prev = None
+        saved_anchor_prev: Slot | None = None
         saved_leading_pieces: list[TriviaPiece] = []
-        successor_slot = None
+        successor_slot: Slot | None = None
         successor_leading: list[TriviaPiece] | None = None
-        # Snapshot the parent's header_ref so we can detect whether
-        # the ``del + set`` synthesised a fresh ``[self._path]`` header
-        # (the implicit-parent case): if so it must move with the new
-        # KV, even when the new value is a scalar.
-        prior_header_ref = self._header_ref
         if primary_refs:
             old_primary = primary_refs[0].slot
             saved_anchor_prev = old_primary._prev  # noqa: SLF001
@@ -423,13 +416,11 @@ class Container(dict[str, Any]):
             if successor_slot is not None:
                 successor_leading = list(successor_slot.leading.pieces)
         del self[key]
-        self[key] = value
-        if not primary_refs:
-            return
-        new_slots = _layout_ops._gather_new_binding_slots(  # noqa: SLF001
-            self, key, prior_header_ref=prior_header_ref
-        )
-        if not new_slots:
+        doc = self._layout_root
+        assert doc is not None
+        with _layout_ops.record_install(doc) as new_slots:
+            self[key] = value
+        if not primary_refs or not new_slots:
             return
         _layout_ops._move_slots_to_anchor(  # noqa: SLF001
             self, new_slots, saved_anchor_prev, saved_leading_pieces
@@ -1102,7 +1093,15 @@ class Document(Container):
     expected.
     """
 
-    __slots__ = ("_head", "_is_private", "_newline", "_prelude", "_tail", "_trailing")
+    __slots__ = (
+        "_head",
+        "_install_recorder",
+        "_is_private",
+        "_newline",
+        "_prelude",
+        "_tail",
+        "_trailing",
+    )
 
     def __init__(self, data: Mapping[str, Any] | None = None) -> None:
         """Return a fresh empty document, optionally populated from ``data``.
@@ -1125,6 +1124,7 @@ class Document(Container):
         self._newline: str = "\n"
         self._prelude: str = ""
         self._is_private: bool = False
+        self._install_recorder: list[Slot] | None = None
         self._layout_root = self
         if data is not None:
             for k, v in data.items():
