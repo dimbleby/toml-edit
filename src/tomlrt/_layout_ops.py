@@ -59,7 +59,7 @@ if TYPE_CHECKING:
     from tomlrt._container import Container, Document, Table
     from tomlrt._slots import Slot
     from tomlrt._trivia import TriviaPiece
-    from tomlrt._values import Value
+    from tomlrt._values import KeyPart, Value
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +131,8 @@ def reposition_install(parent: Container, key: str, value: Any) -> None:
     with _record_install(doc) as new_slots:
         parent[key] = value
     if not primary_refs or not new_slots:
+        # ``not new_slots`` covers slotless bindings (e.g. an empty
+        # AoT) — no physical region exists to reposition.
         return
     _move_slots_to_anchor(parent, new_slots, saved_anchor_prev, saved_leading_pieces)
     if (
@@ -202,7 +204,15 @@ def _file_synthetic_header_and_kv(
     c._refs.insert(header_ref_index, own_header_ref)  # noqa: SLF001
     c._header_ref = own_header_ref  # noqa: SLF001
 
-    new_kv = _new_kv_slot(c, key, value, doc, owner, leading=Trivia())
+    new_kv = _new_kv_slot(
+        host_path=c._path,  # noqa: SLF001
+        key_parts=[make_keypart(key)],
+        key_seps=[],
+        value=value,
+        doc=doc,
+        owner=owner,
+        leading=Trivia(),
+    )
     insert_after(header_slot, new_kv, doc)
     kv_ref = SlotRef(slot=new_kv, container=c)
     c._refs.insert(header_ref_index + 1, kv_ref)  # noqa: SLF001
@@ -911,20 +921,21 @@ def _kv_separator_leading(c: Container, doc: Document) -> Trivia:
 
 
 def _new_kv_slot(
-    c: Container,
-    key: str,
+    *,
+    host_path: tuple[str, ...],
+    key_parts: list[KeyPart],
+    key_seps: list[str],
     value: Value,
     doc: Document,
     owner: AoTEntry | None,
-    *,
     leading: Trivia,
 ) -> KVSlot:
-    """Synthesise a fresh single-keypart KV slot under ``c``."""
+    """Synthesise a fresh KV slot, recording it on the active install recorder."""
     slot = KVSlot(
         leading=leading,
-        host_path=c._path,  # noqa: SLF001
-        key_parts=[make_keypart(key)],
-        key_seps=[],
+        host_path=host_path,
+        key_parts=key_parts,
+        key_seps=key_seps,
         pre_eq=" ",
         post_eq=" ",
         value=value,
@@ -949,10 +960,11 @@ def _build_kv_slot(c: Container, key: str, value: Value, doc: Document) -> KVSlo
         _ensure_terminator(anchor_slot, doc)
 
     return _new_kv_slot(
-        c,
-        key,
-        value,
-        doc,
+        host_path=c._path,  # noqa: SLF001
+        key_parts=[make_keypart(key)],
+        key_seps=[],
+        value=value,
+        doc=doc,
         owner=c._owner_aot_entry,  # noqa: SLF001
         leading=_kv_separator_leading(c, doc),
     )
@@ -1009,18 +1021,15 @@ def _append_dotted_kv_under_implicit(c: Container, key: str, value: Value) -> No
     keypath = (*c._path[len(host._path) :], key)  # noqa: SLF001
     parts = [make_keypart(k) for k in keypath]
     seps = ["."] * (len(parts) - 1)
-    new_slot = KVSlot(
-        leading=_kv_leading_after(_last_kv(host, lambda s: _is_host_kv(host, s)), doc),
+    new_slot = _new_kv_slot(
         host_path=host._path,  # noqa: SLF001
         key_parts=parts,
         key_seps=seps,
-        pre_eq=" ",
-        post_eq=" ",
         value=value,
-        eol=_default_eol(doc),
-        owner_aot_entry=owner,
+        doc=doc,
+        owner=owner,
+        leading=_kv_leading_after(_last_kv(host, lambda s: _is_host_kv(host, s)), doc),
     )
-    _record_new_slot(doc, new_slot)
 
     insert_after(body_tail, new_slot, doc)
 
@@ -2908,12 +2917,11 @@ def _find_binding_successor(parent: Container, key: str) -> Slot | None:
         # first dotted-key part is what ``host_path``'s table sees as
         # bound).
         if isinstance(cur, StructuralHeaderSlot):
-            root: tuple[str, ...] | None = tuple(cur.path)
-        elif isinstance(cur, KVSlot):
-            root = (*cur.host_path, cur.key_parts[0].value)
+            root: tuple[str, ...] = tuple(cur.path)
         else:
-            root = None
-        if root is None or root[:plen] != path_prefix:
+            assert isinstance(cur, KVSlot)
+            root = (*cur.host_path, cur.key_parts[0].value)
+        if root[:plen] != path_prefix:
             return cur
         cur = cur._next  # noqa: SLF001
     return None
