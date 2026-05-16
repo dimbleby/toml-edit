@@ -700,12 +700,10 @@ class _Scanner:
         self.pos = sep_end
         return src[save:sep_end], True
 
-    # ------------------------------------------------------------------
     # Bare value tokens: bool, special-float keywords, integer, float,
-    # date / time / datetime. The parser dispatches strings, arrays and
-    # inline tables itself; everything else funnels through
+    # date / time / datetime. The parser dispatches strings, arrays
+    # and inline tables itself; everything else funnels through
     # ``scan_value_atom``.
-    # ------------------------------------------------------------------
 
     def scan_value_atom(self) -> Value:
         """Scan a non-container, non-string value at the cursor.

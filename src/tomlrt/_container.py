@@ -792,15 +792,9 @@ class Container(dict[str, Any]):
                 cur[parts[-1]] = value
                 return cur[parts[-1]]
             if is_aot:
-                # Multi-component AoT install: build implicit chain via
-                # ensure_table on the prefix-of-leaf, then bind the AoT.
-                # We do this by going through attach_section_at-style
-                # implicit chain construction, but for AoT we still need
-                # a per-entry header; easiest path is to bind the AoT at
-                # the deepest existing container under the missing tail.
-                # Walk implicit intermediates and let __setitem__ handle
-                # the final binding (which routes through attach_empty_aot
-                # / add_aot_entry).
+                # Multi-component AoT install: walk implicit
+                # intermediates, then let __setitem__ handle the
+                # final binding through add_aot_entry.
                 for p in parts[i : len(parts) - 1]:
                     implicit = Table()
                     implicit._wire(  # noqa: SLF001
@@ -1503,11 +1497,9 @@ def _synth_value(
             owner=owner,
         )
     # Cross-document (or same-doc live) inline value — deep-clone the
-    # CST so the destination preserves the source's formatting
-    # (whitespace, comments, key style, trailing-comma) rather than
-    # being re-synthesised as a freshly-spaced ``{ k = v }`` /
-    # ``[a, b]``.  Falls through to the synth paths below for plain
-    # ``Mapping`` / ``list`` inputs that have no CST to clone.
+    # CST so the destination preserves the source's formatting rather
+    # than being re-synthesised. Plain Mapping / list inputs have no
+    # CST to clone and fall through to the synth paths below.
     if _is_inline_table(v) or isinstance(v, Array):
         from tomlrt._build import _decode_value  # noqa: PLC0415
 

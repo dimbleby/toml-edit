@@ -573,16 +573,11 @@ def delete_key(c: Container, key: str) -> None:
             min_owned_depth = d
     _invalidate_body_tail_chain(c, owned_ids, min_depth=min_owned_depth, recompute=True)
 
-    # 5. Unlink owned slots from the doc; clean up AoTEntry.entry_slots
-    # for live (still-attached) entries. Owned slots are then
-    # transplanted to an orphan Document if there are subtree
-    # containers / AoTs the user may still hold references to.
-    #
-    # Skip the entry_slots strip for AoTEntries that belong to AoTs
-    # being moved to the orphan — those entries are leaving with
-    # their slots, and we want their `entry_slots` lists intact so
-    # downstream `clone_aot` / re-install paths can read the full
-    # CST instead of rebuilding from dict storage.
+    # 5. Unlink owned slots; transplant to an orphan Document if any
+    # subtree containers / AoTs may still be user-referenced. Skip
+    # the entry_slots strip for AoTEntries whose AoT is itself being
+    # moved — those entries leave with their slots intact so
+    # downstream clone_aot / re-install can read the full CST.
     moving_aot_entry_ids: set[int] = set()
     for ao in subtree_aots:
         for entry_table in list.__iter__(ao):
@@ -1289,15 +1284,10 @@ def _ensure_terminator(slot: Slot, doc: Document) -> None:
 def _ensure_leading_blank_line(slot: Slot, doc: Document) -> None:
     """Ensure ``slot.leading`` begins with a blank line.
 
-    Used by the section-only-doc head-insert path (3d-5) to separate
-    a freshly inserted top-level KV from the section header that
-    used to be the doc head.
-
-    A run of `pieces` is considered to "start with a blank line"
-    when the first non-whitespace piece is a `NewlineNode` (i.e.
-    optional leading indent then a bare newline). If a comment
-    appears before any newline, we prepend a fresh `NewlineNode`
-    so the comment block is visually detached from the new KV.
+    A run of ``pieces`` starts with a blank line when the first
+    non-whitespace piece is a ``NewlineNode``. If a comment appears
+    first, prepend a fresh ``NewlineNode`` so the comment block stays
+    visually detached from the slot.
     """
     pieces = slot.leading.pieces
     for p in pieces:
@@ -1305,7 +1295,6 @@ def _ensure_leading_blank_line(slot: Slot, doc: Document) -> None:
             return
         if isinstance(p, CommentNode):
             break
-        # WhitespaceNode: keep scanning.
     pieces.insert(0, NewlineNode(text=doc._newline))  # noqa: SLF001
 
 
@@ -1659,21 +1648,15 @@ def add_aot_entry(
         _ensure_terminator(anchor, doc)
         insert_after(anchor, header, doc)
 
-    # File parent-chain refs for this entry's header.
     _file_header_binding_chain(parent, header)
-
-    # Append the new entry to the AoT view list.
     list.append(aot, entry_table)
 
-    # If this is the very first entry of the AoT and the parent was
-    # an empty synthetic placeholder section (e.g.
-    # `doc["tool"] = Table.section({}); doc["tool"]["list"] = AoT(...)`),
-    # the parent's header is now redundant — the dotted-implicit
-    # anchor lives entirely in `[[tool.list]]`.
+    # First entry under a synthetic placeholder section makes the
+    # parent header redundant — the dotted-implicit anchor lives
+    # entirely in `[[tool.list]]`.
     if ordinal == 0:
         _maybe_demote_synthetic_empty_header(parent)
 
-    # Populate body.
     for k, v in body_items:
         if not (is_scalar(v) or _is_synth_inline(v)):
             entry_table[k] = v

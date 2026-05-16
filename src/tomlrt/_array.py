@@ -260,7 +260,6 @@ class Array(list[Any]):
             )
             _renormalise_commas(items, flush_style)
             return self
-        # multiline=True
         self._multiline = True
         if not items:
             value.final_trivia = Trivia(
@@ -1011,11 +1010,9 @@ class AoT(list["Table"]):
             return
         _layout_ops.replace_aot_entry(self, index, value)
 
-    # ------------------------------------------------------------------
-    # Supported list-mutator surface.
-    # Anything not implemented here is overridden below to fail closed
-    # rather than corrupt the doc-stream via inherited `list` behaviour.
-    # ------------------------------------------------------------------
+    # Supported list-mutator surface. Anything not implemented here
+    # is overridden below to fail closed rather than corrupt the
+    # doc-stream via inherited `list` behaviour.
 
     @override
     def pop(self, index: SupportsIndex = -1) -> Table:
