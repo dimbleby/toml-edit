@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from tomlrt._container import Container
-    from tomlrt._trivia import Trivia
+    from tomlrt._trivia import EolTrivia, Trivia
     from tomlrt._values import KeyPart, Value
 
 import sys
@@ -27,7 +27,6 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override
 
-from tomlrt._trivia import EolTrivia
 from tomlrt._values import render_dotted
 
 # ---------------------------------------------------------------------------
@@ -125,7 +124,7 @@ class KVSlot(Slot):
     pre_eq: str = ""
     post_eq: str = ""
     value: Value = field(kw_only=True)
-    eol: EolTrivia = field(default_factory=lambda: EolTrivia(None, None, None))
+    eol: EolTrivia = field(kw_only=True)
 
     key: tuple[str, ...] = field(kw_only=True)
     """Decoded dotted-key path.
@@ -153,7 +152,7 @@ class KVSlot(Slot):
 class StructuralHeaderSlot(Slot):
     """One ``[a.b]`` or ``[[a.b]]`` header line."""
 
-    kind: Literal["table", "aot-entry"] = "table"
+    kind: Literal["table", "aot-entry"] = field(kw_only=True)
     path: tuple[str, ...] = field(kw_only=True)
     """Full decoded path of the section / AoT entry header."""
 
@@ -161,7 +160,7 @@ class StructuralHeaderSlot(Slot):
     key_seps: list[str] = field(default_factory=list)
     inner_pre: str = ""
     inner_post: str = ""
-    eol: EolTrivia = field(default_factory=lambda: EolTrivia(None, None, None))
+    eol: EolTrivia = field(kw_only=True)
 
     entry: AoTEntry | None = None
     """The AoT entry this header opens, when ``kind == 'aot-entry'``."""
