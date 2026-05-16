@@ -1072,14 +1072,11 @@ def _append_dotted_kv_under_implicit(c: Container, key: str, value: Value) -> No
         if anc._body_tail is body_tail:  # noqa: SLF001
             anc._body_tail = new_slot  # noqa: SLF001
 
-    # Maintain AoTEntry.entry_slots in doc-stream order.
+    # Maintain AoTEntry.entry_slots in doc-stream order. body_tail is by
+    # invariant filed in entry_slots when owner is set.
     if owner is not None:
-        try:
-            anchor_idx = owner.entry_slots.index(body_tail)
-        except ValueError:
-            owner.entry_slots.append(new_slot)
-        else:
-            owner.entry_slots.insert(anchor_idx + 1, new_slot)
+        anchor_idx = owner.entry_slots.index(body_tail)
+        owner.entry_slots.insert(anchor_idx + 1, new_slot)
 
 
 def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> None:
@@ -1158,16 +1155,12 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
         header_ref_index=0,
     )
 
-    # Maintain the AoT entry's slot list when applicable.
+    # Maintain the AoT entry's slot list when applicable. anchor_slot is by
+    # invariant filed in entry_slots when owner is set.
     if owner is not None:
-        try:
-            anchor_idx = owner.entry_slots.index(anchor_slot)
-        except ValueError:
-            owner.entry_slots.append(header_slot)
-            owner.entry_slots.append(new_kv)
-        else:
-            owner.entry_slots.insert(anchor_idx, header_slot)
-            owner.entry_slots.insert(anchor_idx + 1, new_kv)
+        anchor_idx = owner.entry_slots.index(anchor_slot)
+        owner.entry_slots.insert(anchor_idx, header_slot)
+        owner.entry_slots.insert(anchor_idx + 1, new_kv)
 
 
 def _synthesise_header_then_insert_kv_at_doc_tail(
@@ -1275,14 +1268,10 @@ def _append_kv_in_aot_entry(c: Container, key: str, value: Value) -> None:
     c._index.setdefault(key, []).append(new_ref)  # noqa: SLF001
     c._body_tail = new_slot  # noqa: SLF001
 
-    # Maintain entry_slots in doc-stream order. Insert after the anchor
-    # if it is in the list, else append.
-    try:
-        idx = owner.entry_slots.index(anchor)
-    except ValueError:
-        owner.entry_slots.append(new_slot)
-    else:
-        owner.entry_slots.insert(idx + 1, new_slot)
+    # Maintain entry_slots in doc-stream order. The anchor is by invariant
+    # the header_ref slot (no body yet) or a body slot already filed.
+    idx = owner.entry_slots.index(anchor)
+    owner.entry_slots.insert(idx + 1, new_slot)
 
 
 def _ensure_terminator(slot: Slot, doc: Document) -> None:
@@ -1605,12 +1594,10 @@ def add_aot_entry(
     )
 
     parent = aot._parent  # noqa: SLF001
-    layout_root = aot._layout_root  # noqa: SLF001
+    doc = aot._attached_doc  # noqa: SLF001
     path = aot._path  # noqa: SLF001
-    if layout_root is None or parent is None or not path:
-        msg = "AoT.add requires the AoT to be attached to a document"
-        raise RuntimeError(msg)
-    doc = layout_root
+    assert parent is not None
+    assert path
 
     ordinal = len(aot)
     entry = AoTEntry(path=path, ordinal=ordinal)
@@ -1786,11 +1773,9 @@ def _install_cloned_aot_entry(
     from tomlrt._container import Table  # noqa: PLC0415
 
     parent = aot._parent  # noqa: SLF001
-    layout_root = aot._layout_root  # noqa: SLF001
-    if layout_root is None or parent is None or not target_path:
-        msg = "AoT entry install requires the AoT to be attached to a document"
-        raise RuntimeError(msg)
-    doc = layout_root
+    doc = aot._attached_doc  # noqa: SLF001
+    assert parent is not None
+    assert target_path
 
     ordinal = len(aot)
     new_entry = AoTEntry(path=target_path, ordinal=ordinal)
@@ -2226,13 +2211,7 @@ def check_clone_aot_entry(aot: AoT, src_entry_table: Container) -> None:
     effects. Used by `AoT.__imul__` to preflight every source entry
     so a failure on entry N does not leave entries 0..N-1 cloned.
     """
-    if (
-        aot._layout_root is None  # noqa: SLF001
-        or aot._parent is None  # noqa: SLF001
-        or not aot._path  # noqa: SLF001
-    ):
-        msg = "AoT.clone_entry requires the AoT to be attached to a document"
-        raise RuntimeError(msg)
+    _ = aot._attached_doc  # noqa: SLF001  # asserts attached invariants
     src_entry = src_entry_table._owner_aot_entry  # noqa: SLF001
     if src_entry is None:  # pragma: no cover
         msg = "Source entry has no owning AoTEntry"
@@ -2610,12 +2589,9 @@ def replace_aot_entry_with_clone(
     if index < 0:
         index += n
 
-    layout_root = aot._layout_root  # noqa: SLF001
+    doc = aot._attached_doc  # noqa: SLF001
     path = aot._path  # noqa: SLF001
-    if layout_root is None or not path:
-        msg = "replace_aot_entry_with_clone requires the AoT to be attached"
-        raise RuntimeError(msg)
-    doc = layout_root
+    assert path  # invariant of _attached_doc
 
     dst_entry_table = aot[index]
     if dst_entry_table is src_entry_table:
@@ -2623,9 +2599,8 @@ def replace_aot_entry_with_clone(
 
     dst_entry = dst_entry_table._owner_aot_entry  # noqa: SLF001
     src_entry = src_entry_table._owner_aot_entry  # noqa: SLF001
-    if dst_entry is None or src_entry is None:
-        msg = "replace_aot_entry_with_clone needs AoT-entry tables on both sides"
-        raise RuntimeError(msg)
+    assert dst_entry is not None
+    assert src_entry is not None
 
     src_slots = _validate_clonable_aot_entry(src_entry)
     src_prefix = src_entry.path
