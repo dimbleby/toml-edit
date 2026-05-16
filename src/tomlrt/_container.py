@@ -484,7 +484,7 @@ class Container(dict[str, Any]):
             # preservation. AoT object identity is still preserved.
             for src_entry in preserved_entries:
                 assert src_entry is not None
-                _layout_ops.clone_aot_entry_from(value, src_entry)
+                _layout_ops.clone_aot_entry(value, src_entry)
         else:
             for entry_table in existing_entries:
                 _layout_ops.add_aot_entry(value, None, rehome=entry_table)
