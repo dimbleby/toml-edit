@@ -1331,8 +1331,8 @@ def _find_ref_index_by_slot(c: Container, slot: Slot) -> int:
             return lo
         lo += 1
         hi -= 1
-    msg = "internal: anchor slot not found in c._refs"
-    raise AssertionError(msg)
+    msg = "internal: anchor slot not found in c._refs"  # pragma: no cover
+    raise AssertionError(msg)  # pragma: no cover
 
 
 def _recompute_body_tail(c: Container) -> Slot | None:

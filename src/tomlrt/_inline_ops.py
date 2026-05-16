@@ -48,11 +48,11 @@ def _outermost_inline(t: Container) -> Container:
     cur = t
     while cur._kind is _Kind.INLINE_DOTTED_INNER:  # noqa: SLF001
         parent = cur._parent  # noqa: SLF001
-        if parent is None:
+        if parent is None:  # pragma: no cover -- invariant
             msg = "internal: inline-dotted-inner without _parent"
             raise AssertionError(msg)
         cur = parent
-    if cur._kind is not _Kind.INLINE_ROOT:  # noqa: SLF001
+    if cur._kind is not _Kind.INLINE_ROOT:  # noqa: SLF001  # pragma: no cover -- invariant
         msg = (
             f"internal: inline-table chain reached {cur._kind.name}; "  # noqa: SLF001
             "expected INLINE_ROOT"

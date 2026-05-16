@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, SupportsIndex, TypeVar, overload
 
 if sys.version_info >= (3, 12):
     from typing import override
-else:
+else:  # pragma: no cover -- backport for Python < 3.12
     from typing_extensions import override
 
 from copy import deepcopy
