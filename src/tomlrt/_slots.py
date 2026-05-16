@@ -127,13 +127,18 @@ class KVSlot(Slot):
     value: Value | None = None
     eol: EolTrivia = field(default_factory=lambda: EolTrivia(None, None, None))
 
+    key: tuple[str, ...] = ()
+    """Decoded dotted-key path.
+
+    Populated by the parser (which already built the tuple to call
+    the validator) and is the canonical source of the decoded path
+    for builder + downstream consumers. Mutation-side construction
+    sites leave it as ``()`` — only parser-built slots are read by
+    ``build_initial_containers`` / ``_apply_kv``.
+    """
+
     def render_key(self) -> str:
         return render_dotted(self.key_parts, self.key_seps)
-
-    @property
-    def key(self) -> tuple[str, ...]:
-        """Decoded dotted key path."""
-        return tuple([p.value for p in self.key_parts])
 
     @override
     def render(self) -> str:

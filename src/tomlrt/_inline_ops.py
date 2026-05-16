@@ -143,6 +143,7 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
         trailing=Trivia(),
         has_comma=False,
         post_comma_trivia=Trivia(),
+        key_path=key_path,
     )
 
     if not iv.entries:

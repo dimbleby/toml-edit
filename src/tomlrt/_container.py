@@ -1590,6 +1590,7 @@ def _populate_inline_table(
             trailing=Trivia(),
             has_comma=not is_last,
             post_comma_trivia=Trivia(),
+            key_path=(k,),
         )
         val.entries.append(entry)
         dict.__setitem__(table, k, sub_dec)

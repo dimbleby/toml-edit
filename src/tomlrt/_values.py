@@ -216,6 +216,17 @@ class InlineTableEntry:
     has_comma: bool
     post_comma_trivia: Trivia
 
+    key_path: tuple[str, ...] = ()
+    """Decoded dotted-key path.
+
+    Set by every construction site (parser, mutation, synthesis). The
+    parser passes the tuple it already built for inline-key conflict
+    detection; mutation paths pass the path they were given. Read by
+    ``_validator._register_inline_table`` and
+    ``_build._decode_inline_table`` (also reached via cross-document
+    clone of inline-table entries).
+    """
+
     def render_key(self) -> str:
         return render_dotted(self.key_parts, self.key_seps)
 
