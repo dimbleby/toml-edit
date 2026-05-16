@@ -34,10 +34,9 @@ from tomlrt._trivia import (
     Trivia,
     WhitespaceNode,
     clone_trivia,
-    split_above_block,
     trivia_has_comment,
 )
-from tomlrt._values import InlineTableEntry, make_keyparts
+from tomlrt._values import InlineTableEntry, inter_item_separator, make_keyparts
 
 if TYPE_CHECKING:
     from tomlrt._container import Container
@@ -160,13 +159,10 @@ def append_entry(t: Container, key: str, new_value: Value) -> None:
         return
 
     # Inter-entry separator: structural pad portion of entries[1].leading
-    # (mirrors :func:`_array._detect_style`). Cloning the full leading
-    # would replicate any above-entry comment block onto the new entry.
-    if len(iv.entries) >= 2:
-        pad, _above = split_above_block(iv.entries[1].leading)
-        inter_sep = pad if pad.pieces else clone_trivia(iv.entries[1].leading)
-    else:
-        inter_sep = _ws(" ")
+    # (mirrors :func:`tomlrt._array._detect_style`). Cloning the full
+    # leading would replicate any above-entry comment block onto the
+    # new entry.
+    inter_sep = inter_item_separator(iv.entries)
 
     last = iv.entries[-1]
     keep_trailing_comma = last.has_comma
