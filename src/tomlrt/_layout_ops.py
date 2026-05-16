@@ -1692,11 +1692,17 @@ def add_aot_entry(
 
 def clone_aot_entry(
     aot: AoT,
-    src_entry_table: Container,
+    src: Container | AoTEntry,
     *,
     dst_path: tuple[str, ...] | None = None,
 ) -> Table:
-    """Append a deep CST clone of ``src_entry_table`` to ``aot``.
+    """Append a deep CST clone of ``src`` to ``aot``.
+
+    ``src`` is either an attached entry's ``Table`` (the live-source
+    case used by ``parent[k] = some_entry_table`` and AoT extension)
+    or a bare ``AoTEntry`` (the AoT private-orphan rehome path where
+    the source table has already been reset but the underlying
+    ``AoTEntry.entry_slots`` are intact in a private orphan document).
 
     Preserves the source entry's per-slot leading / EOL / lexeme bytes
     so per-entry comments and trailing-comment formatting survive.
@@ -1712,35 +1718,28 @@ def clone_aot_entry(
 
     Returns the new ``Table`` view.
     """
-    src_entry = src_entry_table._owner_aot_entry  # noqa: SLF001
-    if src_entry is None:  # pragma: no cover
-        msg = "Source entry has no owning AoTEntry"
-        raise RuntimeError(msg)
-    src_layout_root = src_entry_table._layout_root  # noqa: SLF001
-    return _clone_aot_entry_impl(
+    if isinstance(src, AoTEntry):
+        src_entry: AoTEntry = src
+        src_layout_root: Document | None = None
+    else:
+        owner = src._owner_aot_entry  # noqa: SLF001
+        if owner is None:  # pragma: no cover
+            msg = "Source entry has no owning AoTEntry"
+            raise RuntimeError(msg)
+        src_entry = owner
+        src_layout_root = src._layout_root  # noqa: SLF001
+
+    layout_root = aot._layout_root  # noqa: SLF001
+    path = aot._path  # noqa: SLF001
+    target_path = dst_path if dst_path is not None else path
+    src_slots = _validate_clonable_aot_entry(src_entry)
+    same_aot_clone = target_path == src_entry.path and src_layout_root is layout_root
+    return _install_cloned_aot_entry(
         aot,
-        src_entry,
-        src_layout_root=src_layout_root,
-        dst_path=dst_path,
-    )
-
-
-def clone_aot_entry_from(aot: AoT, src_entry: AoTEntry) -> Table:
-    """Like ``clone_aot_entry`` but driven by a bare ``AoTEntry``.
-
-    Used by the AoT private-orphan rehome path where the source entry
-    table has already been reset (so its ``_owner_aot_entry`` /
-    ``_layout_root`` are gone) but the underlying ``AoTEntry``'s
-    ``entry_slots`` are intact in a private orphan document. We
-    deep-clone those slots into a fresh entry under ``aot``,
-    preserving per-KV trivia and any nested sub-section formatting
-    that the lossy ``add_aot_entry(rehome=)`` path would drop.
-    """
-    return _clone_aot_entry_impl(
-        aot,
-        src_entry,
-        src_layout_root=None,
-        dst_path=None,
+        src_slots,
+        src_entry.path,
+        target_path=target_path,
+        rewrite_separator=same_aot_clone,
     )
 
 
@@ -1835,27 +1834,6 @@ def _install_cloned_aot_entry(
 
     list.append(aot, entry_table)
     return entry_table
-
-
-def _clone_aot_entry_impl(
-    aot: AoT,
-    src_entry: AoTEntry,
-    *,
-    src_layout_root: Document | None,
-    dst_path: tuple[str, ...] | None,
-) -> Table:
-    layout_root = aot._layout_root  # noqa: SLF001
-    path = aot._path  # noqa: SLF001
-    target_path = dst_path if dst_path is not None else path
-    src_slots = _validate_clonable_aot_entry(src_entry)
-    same_aot_clone = target_path == src_entry.path and src_layout_root is layout_root
-    return _install_cloned_aot_entry(
-        aot,
-        src_slots,
-        src_entry.path,
-        target_path=target_path,
-        rewrite_separator=same_aot_clone,
-    )
 
 
 def _install_cloned_section(
