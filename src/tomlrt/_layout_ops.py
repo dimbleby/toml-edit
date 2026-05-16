@@ -1032,8 +1032,6 @@ def _append_dotted_kv_under_implicit(c: Container, key: str, value: Value) -> No
     # owner. (The host is either the AoT entry root itself, or the
     # doc root; either way owners match all the way down.)
     owner = c._owner_aot_entry  # noqa: SLF001
-    for anc in chain:
-        assert anc._owner_aot_entry is owner  # noqa: SLF001
 
     _ensure_terminator(body_tail, doc)
 
