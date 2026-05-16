@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from tomlrt._kind import _Kind
 from tomlrt._scalar import is_scalar
@@ -49,8 +49,6 @@ from tomlrt._trivia import (
     WhitespaceNode,
 )
 from tomlrt._values import make_keyparts
-
-HeaderKind = Literal["table", "aot-entry"]
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
@@ -1105,7 +1103,6 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
         c._path,  # noqa: SLF001
         leading=adopted_leading,
         doc=doc,
-        kind="table",
         owner_aot_entry=owner,
     )
     insert_before(anchor_slot, header_slot, doc)
@@ -1172,7 +1169,6 @@ def _synthesise_header_then_insert_kv_at_doc_tail(
         c._path,  # noqa: SLF001
         leading=_build_section_leading(doc),
         doc=doc,
-        kind="table",
         owner_aot_entry=owner,
     )
     # When ``c`` lives inside an AoT entry, the synthesised header
@@ -1343,13 +1339,11 @@ def _new_section_header(
     *,
     leading: Trivia,
     doc: Document,
-    kind: HeaderKind = "table",
     entry: AoTEntry | None = None,
     owner_aot_entry: AoTEntry | None = None,
 ) -> StructuralHeaderSlot:
     slot = StructuralHeaderSlot(
         leading=leading,
-        kind=kind,
         path=path,
         key_parts=make_keyparts(path),
         key_seps=["."] * (len(path) - 1),
@@ -1608,7 +1602,6 @@ def add_aot_entry(
         path,
         leading=leading,
         doc=doc,
-        kind="aot-entry",
         entry=entry,
         owner_aot_entry=entry,
     )
@@ -1761,10 +1754,10 @@ def _install_cloned_aot_entry(
 ) -> Table:
     """Common installer for appending a cloned aot-entry to ``aot``.
 
-    Deep-clones ``src_slots`` (head_kind="aot-entry"), wires a fresh
-    entry container, splices the entry's slots after the AoT's last
-    slot (or at doc end), files the parent binding ref, and populates
-    child views.
+    Deep-clones ``src_slots`` (head becomes an aot-entry via
+    ``new_entry``), wires a fresh entry container, splices the entry's
+    slots after the AoT's last slot (or at doc end), files the parent
+    binding ref, and populates child views.
 
     ``rewrite_separator``: if True, the source's structural leading
     is replaced with destination-style preamble (entry 0) or the
@@ -1791,7 +1784,6 @@ def _install_cloned_aot_entry(
         body_owner=new_entry,
         src_prefix=src_prefix,
         target_prefix=target_path,
-        head_kind="aot-entry",
         dst_newline=doc._newline,  # noqa: SLF001
     )
 
@@ -1854,7 +1846,6 @@ def _install_cloned_section(
         body_owner=parent._owner_aot_entry,  # noqa: SLF001
         src_prefix=src_prefix,
         target_prefix=target_path,
-        head_kind="table",
         dst_newline=doc._newline,  # noqa: SLF001
     )
 
@@ -2016,24 +2007,26 @@ def _clone_entry_slots(
     body_owner: AoTEntry | None,
     src_prefix: tuple[str, ...],
     target_prefix: tuple[str, ...],
-    head_kind: HeaderKind,
     dst_newline: str,
     has_header: bool = True,
 ) -> list[Slot]:
     r"""Deep-clone an entry's slot list with path/owner rebasing.
 
     When ``has_header`` is True (default), the first slot must be the
-    entry header and its ``kind`` is set to ``head_kind``. When
-    False, the slot list is treated as body-only — useful for
-    in-place body replacement that keeps the destination's existing
-    header.
+    entry header. Its ``entry`` is set to ``new_entry`` — so passing
+    ``new_entry=None`` converts an aot-entry header to a table
+    header, and passing a non-None ``new_entry`` does the inverse.
+    When ``has_header`` is False, the slot list is treated as
+    body-only (e.g. for in-place body replacement that keeps the
+    destination's existing header).
 
     ``body_owner`` is written to every slot's ``owner_aot_entry`` (so
     cloning into a table that itself sits under another AoT entry
     keeps physical ownership coherent). ``new_entry`` is the
-    AoTEntry the cloned slots are *logically* owned by — used only
-    for ``entry`` back-pointers on aot-entry headers and for the
-    ``entry_slots`` membership list.
+    AoTEntry the cloned slots are *logically* owned by — used for
+    the head's ``entry`` back-pointer and for the ``entry_slots``
+    membership list, and propagated to any nested aot-entry header
+    in the body.
 
     ``dst_newline`` is the destination document's line ending; every
     cloned slot's structural-newline trivia is retargeted to it so a
@@ -2054,7 +2047,10 @@ def _clone_entry_slots(
             c.path = _rebase_path(c.path, src_prefix, target_prefix)
             c.key_parts = make_keyparts(c.path)
             c.key_seps = ["."] * (len(c.key_parts) - 1)
-            c.entry = new_entry if c.kind == "aot-entry" else None
+            # Nested aot-entry header in the body — repoint to new
+            # owning entry. Non-aot (table) headers stay as-is.
+            if c.entry is not None:
+                c.entry = new_entry
         cloned.append(c)
         if new_entry is not None:
             new_entry.entry_slots.append(c)
@@ -2063,12 +2059,9 @@ def _clone_entry_slots(
         return cloned
     head = cloned[0]
     assert isinstance(head, StructuralHeaderSlot)
-    head.kind = head_kind
-    if head_kind == "aot-entry":
-        head.entry = new_entry
+    head.entry = new_entry
+    if new_entry is not None:
         head.owner_aot_entry = new_entry
-    else:
-        head.entry = None
     return cloned
 
 
@@ -2265,7 +2258,6 @@ def attach_section_at(
         full_path,
         leading=leading,
         doc=doc,
-        kind="table",
         owner_aot_entry=owner,
     )
 
@@ -2642,7 +2634,6 @@ def replace_aot_entry_with_clone(
             body_owner=dst_entry,
             src_prefix=src_prefix,
             target_prefix=path,
-            head_kind="table",  # unused (no header in this list)
             has_header=False,
             dst_newline=doc._newline,  # noqa: SLF001
         )
