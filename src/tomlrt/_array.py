@@ -1208,12 +1208,11 @@ class AoT(list["Table"]):
             for _ in range(n - 1):
                 self.extend(bodies)
             return self
-        # Preflight: probe every entry's clone-eligibility BEFORE we
-        # start mutating the document, so a failure on entry N does
-        # not leave entries 0..N-1 already cloned.
+        # The validation done by `_validate_clonable_aot_entry` is now
+        # assertion-only, so there is nothing to preflight — every src
+        # entry that exists in an attached AoT is clonable by
+        # construction.
         originals = list(self)
-        for e in originals:
-            _layout_ops.check_clone_aot_entry(self, e)
         for _ in range(n - 1):
             for e in originals:
                 _layout_ops.clone_aot_entry(self, e)

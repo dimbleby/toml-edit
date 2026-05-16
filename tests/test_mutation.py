@@ -1274,6 +1274,59 @@ def test_insert_into_implicit_parent_after_aot_attach() -> None:
     assert tomlrt.dumps(doc) == '[tool]\nv = 1\n\n[[tool.list]]\nname = "foo"\n'
 
 
+def test_install_section_through_scalar_intermediate_raises_typeerror() -> None:
+    """``install("a.b.c", section)`` where ``a`` is a scalar must fail loudly."""
+    doc = tomlrt.loads("a = 1\n")
+    with pytest.raises(TypeError, match="intermediate 'a' is not a table"):
+        doc.install("a.b.c", Table.section({"x": 1}))
+
+
+def test_install_section_walks_through_existing_section_intermediate() -> None:
+    """``install`` reuses an existing section intermediate rather than recreating it."""
+    doc = tomlrt.loads("[a]\nold = 1\n")
+    doc.install("a.b.c", Table.section({"x": 1}))
+    assert tomlrt.dumps(doc) == td("""
+        [a]
+        old = 1
+
+        [a.b.c]
+        x = 1
+        """)
+
+
+def test_aot_setitem_out_of_range_index_raises_indexerror() -> None:
+    """``aot[99] = body`` must raise IndexError, not silently grow the AoT."""
+    src = td("""
+        [[t]]
+        x = 1
+        """)
+    doc = tomlrt.loads(src)
+    aot = doc.aot("t")
+    with pytest.raises(IndexError, match="out of range"):
+        aot[99] = {"x": 2}
+    # AoT unchanged on failure.
+    assert tomlrt.dumps(doc) == src
+
+
+def test_aot_setitem_clone_path_out_of_range_index_raises_indexerror() -> None:
+    """The trivia-preserving clone branch also bounds-checks the index."""
+    src1 = td("""
+        [[t]]
+        x = 1
+        """)
+    src2 = td("""
+        [[other]]
+        y = 2
+        """)
+    doc1 = tomlrt.loads(src1)
+    doc2 = tomlrt.loads(src2)
+    foreign_entry = doc2.aot("other")[0]
+    aot = doc1.aot("t")
+    with pytest.raises(IndexError, match="out of range"):
+        aot[99] = foreign_entry
+    assert tomlrt.dumps(doc1) == src1
+
+
 # ---------------------------------------------------------------------------
 # AoT.add — append-and-return-handle convenience
 # ---------------------------------------------------------------------------
