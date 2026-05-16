@@ -130,6 +130,18 @@ def test_quoted_key_when_bare_invalid() -> None:
     assert _reparses(out) == {"weird key.com": 1}
 
 
+def test_quoted_key_escapes_special_chars() -> None:
+    """Keys containing ``\\``, ``"`` or control chars are basic-quoted with escapes."""
+    doc = tomlrt.loads("")
+    doc['a"b'] = 1
+    doc["c\\d"] = 2
+    doc["e\tf"] = 3  # tab is a control char (U+0009)
+    out = tomlrt.dumps(doc)
+    assert _reparses(out) == {'a"b': 1, "c\\d": 2, "e\tf": 3}
+    # Round-trip confirms the emitted form is parseable.
+    assert tomlrt.loads(out) == doc
+
+
 def test_delete_top_level_dotted_key_in_preamble() -> None:
     # ``a.b = 1`` lives in the headerless preamble: deleting ``a``
     # must classify it as a dotted KV in an unattached section.
@@ -256,6 +268,43 @@ def test_array_pop() -> None:
     assert _reparses(out) == {"xs": [10, 20]}
 
 
+def test_array_pop_out_of_range_raises_indexerror() -> None:
+    doc = tomlrt.loads("xs = [1, 2, 3]\n")
+    xs = doc.array("xs")
+    with pytest.raises(IndexError, match="out of range"):
+        xs.pop(99)
+    with pytest.raises(IndexError, match="out of range"):
+        xs.pop(-99)
+
+
+def test_array_remove_missing_raises_valueerror() -> None:
+    doc = tomlrt.loads("xs = [1, 2, 3]\n")
+    xs = doc.array("xs")
+    with pytest.raises(ValueError, match="not in array"):
+        xs.remove(99)
+
+
+def test_array_delitem_out_of_range_raises_indexerror() -> None:
+    doc = tomlrt.loads("xs = [1, 2]\n")
+    xs = doc.array("xs")
+    with pytest.raises(IndexError):
+        del xs[99]
+
+
+def test_array_delitem_on_empty_array_raises_indexerror() -> None:
+    doc = tomlrt.loads("xs = []\n")
+    xs = doc.array("xs")
+    with pytest.raises(IndexError):
+        del xs[0]
+
+
+def test_array_setitem_slice_extended_size_mismatch_raises_valueerror() -> None:
+    doc = tomlrt.loads("xs = [1, 2, 3, 4, 5]\n")
+    xs = doc.array("xs")
+    with pytest.raises(ValueError, match="extended slice"):
+        xs[::2] = [10, 20]
+
+
 def test_array_setitem_int() -> None:
     doc = tomlrt.loads("xs = [1, 2, 3]\n")
     xs = doc.array("xs")
@@ -331,6 +380,16 @@ def test_array_imul() -> None:
     assert _reparses(out) == {"xs": [1, 2, 1, 2, 1, 2]}
 
 
+def test_array_imul_by_one_is_identity() -> None:
+    """``arr *= 1`` short-circuits — output is byte-identical to the input."""
+    src = "xs = [1, 2]\n"
+    doc = tomlrt.loads(src)
+    xs = doc.array("xs")
+    xs *= 1
+    assert list(xs) == [1, 2]
+    assert tomlrt.dumps(doc) == src
+
+
 def test_array_remove() -> None:
     doc = tomlrt.loads("xs = [1, 2, 3, 2]\n")
     xs = doc.array("xs")
@@ -345,6 +404,20 @@ def test_array_insert() -> None:
     xs.insert(1, 2)
     out = tomlrt.dumps(doc)
     assert _reparses(out) == {"xs": [1, 2, 3]}
+
+
+def test_array_insert_negative_index_clamps_to_zero() -> None:
+    doc = tomlrt.loads("xs = [1, 2, 3]\n")
+    xs = doc.array("xs")
+    xs.insert(-99, 0)
+    assert tomlrt.dumps(doc) == "xs = [0, 1, 2, 3]\n"
+
+
+def test_array_insert_past_end_appends() -> None:
+    doc = tomlrt.loads("xs = [1, 2, 3]\n")
+    xs = doc.array("xs")
+    xs.insert(99, 4)
+    assert tomlrt.dumps(doc) == "xs = [1, 2, 3, 4]\n"
 
 
 def test_array_insert_at_zero_does_not_duplicate_leading_comment() -> None:

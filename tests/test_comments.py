@@ -68,6 +68,57 @@ def test_leading_comments_absent_raises_on_get() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_set_eol_comment_on_unknown_key_raises_keyerror() -> None:
+    """Setter refuses to invent a key — ``key not in container`` → KeyError."""
+    doc = tomlrt.loads("a = 1\n")
+    with pytest.raises(KeyError, match="missing"):
+        doc.comments["missing"] = "x"
+
+
+def test_set_leading_comments_on_unknown_key_raises_keyerror() -> None:
+    doc = tomlrt.loads("a = 1\n")
+    with pytest.raises(KeyError, match="missing"):
+        doc.leading_comments["missing"] = ("x",)
+
+
+def test_eol_comment_contains_non_str_returns_false() -> None:
+    """``__contains__`` on a non-str key must return False, not raise."""
+    doc = tomlrt.loads("a = 1  # one\n")
+    assert 1 not in doc.comments  # type: ignore[comparison-overlap]
+    assert None not in doc.comments
+    assert (1, 2) not in doc.comments  # type: ignore[comparison-overlap]
+
+
+def test_leading_comments_contains_non_str_returns_false() -> None:
+    doc = tomlrt.loads("# above\na = 1\n")
+    assert 1 not in doc.leading_comments  # type: ignore[comparison-overlap]
+    assert object() not in doc.leading_comments
+
+
+def test_set_leading_comments_non_iterable_raises_typeerror() -> None:
+    doc = tomlrt.loads("a = 1\n")
+    with pytest.raises(TypeError, match="iterable of comment strings"):
+        doc.leading_comments["a"] = 42  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
+
+
+def test_set_leading_comments_element_not_str_raises_typeerror() -> None:
+    doc = tomlrt.loads("a = 1\n")
+    with pytest.raises(TypeError, match="entries must be strings"):
+        doc.leading_comments["a"] = ("ok", 5)  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
+
+
+def test_preamble_element_not_str_raises_typeerror() -> None:
+    doc = tomlrt.loads("a = 1\n")
+    with pytest.raises(TypeError, match="entries must be strings"):
+        doc.preamble = ("ok", 7)  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
+
+
+def test_preamble_element_with_embedded_newline_rejected() -> None:
+    doc = tomlrt.loads("a = 1\n")
+    with pytest.raises(tomlrt.TOMLError, match="line terminator"):
+        doc.preamble = ("a\nb",)
+
+
 def test_set_eol_comment_on_uncommented_key() -> None:
     doc = tomlrt.loads('name = "ada"\n')
     doc.comments["name"] = "the lovelace"
@@ -152,6 +203,13 @@ def test_set_eol_comment_rejects_newline() -> None:
     doc = tomlrt.loads("a = 1\n")
     with pytest.raises(tomlrt.TOMLError):
         doc.comments["a"] = "no\nway"
+
+
+def test_set_eol_comment_rejects_non_str_value() -> None:
+    """The setter validates the value type up-front."""
+    doc = tomlrt.loads("a = 1\n")
+    with pytest.raises(TypeError, match="must be str"):
+        doc.comments["a"] = 123  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
 
 
 @pytest.mark.parametrize("ch", ["\x00", "\x01", "\x1f", "\x0b", "\x0c", "\x7f"])
@@ -1288,6 +1346,37 @@ def test_epilogue_delete() -> None:
     assert doc.epilogue == ()
 
 
+def test_del_preamble_clears_block() -> None:
+    """``del doc.preamble`` is equivalent to ``doc.preamble = ()``."""
+    doc = tomlrt.loads(
+        td("""
+            # one
+            # two
+
+            a = 1
+            """)
+    )
+    del doc.preamble
+    assert tomlrt.dumps(doc) == "a = 1\n"
+    assert doc.preamble == ()
+
+
+def test_del_epilogue_clears_block() -> None:
+    """``del doc.epilogue`` is equivalent to ``doc.epilogue = ()``."""
+    doc = tomlrt.loads("a = 1\n# bye\n")
+    del doc.epilogue
+    assert tomlrt.dumps(doc) == "a = 1\n"
+    assert doc.epilogue == ()
+
+
+def test_del_preamble_on_empty_doc() -> None:
+    """Empty-doc preamble lives in `_trailing`; `del` must clear it there too."""
+    doc = tomlrt.loads("# only\n")
+    del doc.preamble
+    assert tomlrt.dumps(doc) == ""
+    assert doc.preamble == ()
+
+
 def test_epilogue_set_on_empty_doc_raises() -> None:
     doc = tomlrt.loads("")
     with pytest.raises(tomlrt.TOMLError, match="no structural content"):
@@ -1442,6 +1531,96 @@ def test_array_leading_comments_delitem_missing_raises_keyerror() -> None:
     arr = doc.array("xs")
     with pytest.raises(KeyError):
         del arr.leading_comments[0]
+
+
+def test_array_leading_comments_set_empty_on_no_comments_is_noop() -> None:
+    """Setting ``()`` when no leading comments exist must not raise.
+
+    The setter still runs ``_ensure_multiline`` (so an inline array is
+    promoted), but the no-op delete path is the branch we care about.
+    """
+    doc = tomlrt.loads(
+        td("""
+            xs = [
+              1,
+              2,
+            ]
+            """)
+    )
+    arr = doc.array("xs")
+    arr.leading_comments[0] = ()
+    assert 0 not in arr.leading_comments
+    assert tomlrt.dumps(doc) == td("""
+        xs = [
+          1,
+          2,
+        ]
+        """)
+
+
+def test_array_eol_comment_getitem_raises_keyerror_when_absent() -> None:
+    """Index exists but item has no EOL: KeyError, not None / IndexError."""
+    doc = tomlrt.loads("xs = [1, 2]\n")
+    arr = doc.array("xs")
+    with pytest.raises(KeyError):
+        _ = arr.comments[0]
+
+
+def test_array_leading_comments_set_on_inline_array_synthesises_indent() -> None:
+    """Setting leading comments on a single-line inline array promotes it.
+
+    The array has no pre-existing pad (header_trivia is empty) so the
+    setter must synthesise ``[NL, WS(indent)]`` rather than copy from
+    a non-existent template.
+    """
+    doc = tomlrt.loads("xs = [1, 2]\n")
+    arr = doc.array("xs")
+    arr.leading_comments[1] = ("about two",)
+    out = tomlrt.dumps(doc)
+    # Round-trips and the comment is recovered.
+    assert tomlrt.loads(out).array("xs").leading_comments[1] == ("about two",)
+
+
+def test_array_eol_comment_del_on_last_no_comma_item() -> None:
+    """Deleting an EOL on a trailing item without a comma needs no NL restore."""
+    src = td("""
+        xs = [
+          1,
+          2  # bye
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    arr = doc.array("xs")
+    assert arr.comments[1] == "bye"
+    del arr.comments[1]
+    assert 1 not in arr.comments
+    # Round-trips through the parser.
+    assert tomlrt.loads(tomlrt.dumps(doc)) == {"xs": [1, 2]}
+
+
+def test_array_eol_comment_set_on_internal_item_strips_structural_newline() -> None:
+    """Setting an EOL on a multiline item replaces the row's structural newline.
+
+    The synthesised EOL carries its own newline; the structural newline
+    that previously terminated the row must be dropped or the row would
+    render with a blank line after the comment.
+    """
+    src = td("""
+        xs = [
+          1,
+          2,
+        ]
+        """)
+    doc = tomlrt.loads(src)
+    arr = doc.array("xs")
+    arr.comments[0] = "first"
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        xs = [
+          1, # first
+          2,
+        ]
+        """)
 
 
 def test_array_leading_comments_repr_lists_only_present_indices() -> None:

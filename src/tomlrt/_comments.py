@@ -215,12 +215,6 @@ def _split_leading_into_lines(leading: Trivia) -> list[list[TriviaPiece]]:
     return lines
 
 
-def _line_is_blank(line: list[TriviaPiece]) -> bool:
-    return not any(isinstance(p, CommentNode) for p in line) and any(
-        isinstance(p, NewlineNode) for p in line
-    )
-
-
 def _line_is_comment(line: list[TriviaPiece]) -> bool:
     return any(isinstance(p, CommentNode) for p in line)
 
