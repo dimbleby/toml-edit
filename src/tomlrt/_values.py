@@ -17,9 +17,10 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
-from tomlrt._trivia import Trivia
+from tomlrt._trivia import Trivia, WhitespaceNode, clone_trivia, split_above_block
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from datetime import date, datetime, time
 
 
@@ -256,6 +257,25 @@ Value = (
     | InlineTableValue
 )
 
+# Per-item shape shared by ArrayItem and InlineTableEntry. The two
+# classes stay distinct — see AGENTS.md for the divergence — but
+# helpers that walk their per-item trivia uniformly take this union.
+CommaItem = ArrayItem | InlineTableEntry
+
+
+def inter_item_separator(items: Sequence[CommaItem]) -> Trivia:
+    """Structural-pad portion of ``items[1].leading``; ``" "`` if ``len < 2``.
+
+    Excludes any above-item comment block, which belongs to the item's
+    leading rather than to the separator.
+    """
+    if len(items) >= 2:
+        pad, _above = split_above_block(items[1].leading)
+        if pad.pieces:
+            return pad
+        return clone_trivia(items[1].leading)
+    return Trivia([WhitespaceNode(text=" ")])
+
 
 def retarget_value_newlines(v: Value, target: str) -> None:
     """Recursively rewrite every ``NewlineNode.text`` under ``v`` to ``target``.
@@ -270,8 +290,9 @@ def retarget_value_newlines(v: Value, target: str) -> None:
     """
     from tomlrt._trivia import retarget_trivia_newlines  # noqa: PLC0415
 
+    items: list[ArrayItem] | list[InlineTableEntry]
     if isinstance(v, ArrayValue):
-        items: list[ArrayItem] | list[InlineTableEntry] = v.items
+        items = v.items
     elif isinstance(v, InlineTableValue):
         items = v.entries
     else:
@@ -290,6 +311,7 @@ __all__ = [
     "ArrayItem",
     "ArrayValue",
     "BoolValue",
+    "CommaItem",
     "DateLikeKind",
     "DateTimeValue",
     "FloatValue",
@@ -301,5 +323,6 @@ __all__ = [
     "StringStyle",
     "StringValue",
     "Value",
+    "inter_item_separator",
     "retarget_value_newlines",
 ]

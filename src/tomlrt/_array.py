@@ -44,6 +44,7 @@ from tomlrt._values import (
     ArrayItem,
     ArrayValue,
     InlineTableValue,
+    inter_item_separator,
 )
 
 if TYPE_CHECKING:
@@ -53,6 +54,7 @@ if TYPE_CHECKING:
 
     from tomlrt._trivia import TriviaPiece
     from tomlrt._values import (
+        CommaItem,
         InlineTableEntry,
         Value,
     )
@@ -714,12 +716,10 @@ def _detect_style(value: ArrayValue | None, *, multiline_flag: bool) -> _ArraySt
     is_multiline = has_newline or multiline_flag
     # Inter-item separator: structural pad portion of items[1].leading
     # (the part before any above-item-1 comment block). For single-item
-    # arrays, derive from header_trivia indent.
-    if len(items) >= 2:
-        pad, _above = split_above_block(items[1].leading)
-        inter_sep = pad if pad.pieces else clone_trivia(items[1].leading)
-    elif is_multiline:
-        # Single-item multiline: synthesise from header_trivia indent.
+    # multiline arrays, synthesise from header_trivia indent — there's
+    # no peer to sample from. (Inline tables can't be multiline so this
+    # branch is array-specific; the shared helper handles the rest.)
+    if is_multiline and len(items) < 2:
         nl_text = "\n"
         for p in value.header_trivia.pieces:
             if isinstance(p, NewlineNode):
@@ -735,7 +735,7 @@ def _detect_style(value: ArrayValue | None, *, multiline_flag: bool) -> _ArraySt
             indent = _indent_from_final_trivia(value.final_trivia) or "    "
         inter_sep = Trivia([NewlineNode(text=nl_text), WhitespaceNode(text=indent)])
     else:
-        inter_sep = Trivia([WhitespaceNode(text=" ")])
+        inter_sep = inter_item_separator(items)
     # Trailing-comma policy: the last item's has_comma if any.
     trailing_comma = items[-1].has_comma if items else is_multiline
     # Trailing post: pad portion of final_trivia (drops any
@@ -908,22 +908,19 @@ def _structural_trailing_post(tp: Trivia, *, multiline: bool) -> Trivia:
 
 
 def _value_has_any_comment(val: Value) -> bool:
+    items: list[ArrayItem] | list[InlineTableEntry]
     if isinstance(val, ArrayValue):
-        if trivia_has_comment(val.header_trivia) or trivia_has_comment(
-            val.final_trivia
-        ):
-            return True
-        return any(_item_has_any_comment(it) for it in val.items)
-    if isinstance(val, InlineTableValue):
-        if trivia_has_comment(val.header_trivia) or trivia_has_comment(
-            val.final_trivia
-        ):
-            return True
-        return any(_entry_has_any_comment(e) for e in val.entries)
-    return False
+        items = val.items
+    elif isinstance(val, InlineTableValue):
+        items = val.entries
+    else:
+        return False
+    if trivia_has_comment(val.header_trivia) or trivia_has_comment(val.final_trivia):
+        return True
+    return any(_item_has_any_comment(it) for it in items)
 
 
-def _item_has_any_comment(item: ArrayItem) -> bool:
+def _item_has_any_comment(item: CommaItem) -> bool:
     if (
         trivia_has_comment(item.leading)
         or trivia_has_comment(item.trailing)
@@ -931,14 +928,6 @@ def _item_has_any_comment(item: ArrayItem) -> bool:
     ):
         return True
     return _value_has_any_comment(item.value)
-
-
-def _entry_has_any_comment(entry: InlineTableEntry) -> bool:
-    if trivia_has_comment(entry.leading) or trivia_has_comment(entry.trailing):
-        return True
-    if trivia_has_comment(entry.post_comma_trivia):
-        return True
-    return _value_has_any_comment(entry.value)
 
 
 def _renormalise_commas(items: list[ArrayItem], style: _ArrayStyle) -> None:
