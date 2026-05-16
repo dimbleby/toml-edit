@@ -55,8 +55,13 @@ def build_initial_containers(doc: Document, slots: list[Slot]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _record_ref(c: Container, slot: Slot, local_key: str | None) -> SlotRef:
+def _record_ref(c: Container, slot: Slot) -> SlotRef:
     """Append a `SlotRef` to ``c._refs`` (and ``c._index`` if keyed).
+
+    The ``_index`` key, when filed, is :attr:`SlotRef.local_key` —
+    derived from ``(slot, container)`` geometry. Callers don't
+    pass it, so they can't accidentally file the ref under a key
+    that disagrees with the property's derivation.
 
     ``c._subtree_tail`` is exposed as a derived property over ``_refs``
     so it does not need explicit maintenance here. ``_body_tail`` is
@@ -64,6 +69,7 @@ def _record_ref(c: Container, slot: Slot, local_key: str | None) -> SlotRef:
     """
     ref = SlotRef(slot, c)
     c._refs.append(ref)  # noqa: SLF001
+    local_key = ref.local_key
     if local_key is not None:
         c._index.setdefault(local_key, []).append(ref)  # noqa: SLF001
     return ref
@@ -114,8 +120,8 @@ def _open_table(doc: Document, header: StructuralHeaderSlot) -> Table:
     parent = parent_chain[-1]
     name = path[-1]
     # Ancestor binding refs (chain[:i] -> child step path[i]).
-    for i, ancestor in enumerate(parent_chain):
-        _record_ref(ancestor, header, path[i])
+    for ancestor in parent_chain:
+        _record_ref(ancestor, header)
     existing = parent.get(name)
     if existing is None:
         table = _make_table(parent, path, owner=header.owner_aot_entry)
@@ -127,7 +133,7 @@ def _open_table(doc: Document, header: StructuralHeaderSlot) -> Table:
         )
         table = existing
     # Own-header ref + body-tail reset for this container.
-    own_ref = _record_ref(table, header, None)
+    own_ref = _record_ref(table, header)
     table._header_ref = own_ref  # noqa: SLF001
     table._body_tail = header  # noqa: SLF001
     return table
@@ -144,8 +150,8 @@ def _open_aot_entry(
     parent = parent_chain[-1]
     name = path[-1]
     # Ancestor binding refs to the [[..]] header slot.
-    for i, ancestor in enumerate(parent_chain):
-        _record_ref(ancestor, header, path[i])
+    for ancestor in parent_chain:
+        _record_ref(ancestor, header)
     aot = parent.get(name)
     if aot is None:
         aot = AoT()
@@ -159,7 +165,7 @@ def _open_aot_entry(
     )
     table = _make_table(parent, path, owner=entry)
     list.append(aot, table)
-    own_ref = _record_ref(table, header, None)
+    own_ref = _record_ref(table, header)
     table._header_ref = own_ref  # noqa: SLF001
     table._body_tail = header  # noqa: SLF001
     return table
@@ -254,8 +260,8 @@ def _apply_kv(slot: KVSlot, *, host: Container) -> None:
     )
     # `decoded` has the per-step local_keys in lock-step with leaf_chain.
     assert len(decoded) == len(leaf_chain)
-    for i, ancestor in enumerate(leaf_chain):
-        _record_ref(ancestor, slot, decoded[i])
+    for ancestor in leaf_chain:
+        _record_ref(ancestor, slot)
         _maybe_advance_body_tail(ancestor, slot)
     dict.__setitem__(
         target,
