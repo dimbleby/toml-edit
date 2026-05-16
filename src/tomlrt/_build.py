@@ -258,8 +258,6 @@ def _apply_kv(slot: KVSlot, *, host: Container) -> None:
         f"duplicate key {name!r} reached builder under {target._path}; "  # noqa: SLF001
         "validator drift"
     )
-    # `decoded` has the per-step local_keys in lock-step with leaf_chain.
-    assert len(decoded) == len(leaf_chain)
     for ancestor in leaf_chain:
         _record_ref(ancestor, slot)
         _maybe_advance_body_tail(ancestor, slot)

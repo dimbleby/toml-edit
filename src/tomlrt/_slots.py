@@ -233,17 +233,12 @@ class SlotRef:
         """
         slot = self.slot
         c_path = self.container._path  # noqa: SLF001
-        if isinstance(slot, StructuralHeaderSlot):
-            if slot.path == c_path:
-                return None
-            # Binding ref in an ancestor: next path step.
-            assert len(slot.path) > len(c_path)
-            assert slot.path[: len(c_path)] == c_path
-            return slot.path[len(c_path)]
-        assert isinstance(slot, KVSlot)
-        j = len(c_path) - len(slot.host_path)
-        assert 0 <= j < len(slot.key_parts)
-        return slot.key_parts[j].value
+        if isinstance(slot, KVSlot):
+            return slot.key[len(c_path) - len(slot.host_path)]
+        assert isinstance(slot, StructuralHeaderSlot)
+        if slot.path == c_path:
+            return None
+        return slot.path[len(c_path)]
 
 
 def retarget_slot_newlines(slot: Slot, target: str) -> None:
