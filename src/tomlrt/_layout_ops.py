@@ -153,8 +153,38 @@ def _ancestor_chain(c: Container) -> list[Container]:
 def _file_ref_at_tail(c: Container, ref: SlotRef) -> None:
     """Append ``ref`` to ``c._refs`` and (when keyed) ``c._index``."""
     c._refs.append(ref)  # noqa: SLF001
-    if ref.local_key is not None:
-        c._index.setdefault(ref.local_key, []).append(ref)  # noqa: SLF001
+    local_key = ref.local_key
+    if local_key is not None:
+        c._index.setdefault(local_key, []).append(ref)  # noqa: SLF001
+
+
+def record_ref(c: Container, slot: Slot) -> SlotRef:
+    """Create a `SlotRef(slot, c)` and file it at the tail of ``c``'s caches.
+
+    The ``_index`` key, when filed, is :attr:`SlotRef.local_key` —
+    derived from ``(slot, container)`` geometry. Callers don't pass
+    it, so they can't accidentally file the ref under a key that
+    disagrees with the property's derivation.
+
+    Used by ``_build`` (initial population from a parse) and by
+    section-clone install paths. For one-off keyed refs constructed
+    elsewhere, callers can use ``_file_ref_at_tail`` directly.
+    """
+    ref = SlotRef(slot, c)
+    _file_ref_at_tail(c, ref)
+    return ref
+
+
+def maybe_advance_body_tail(c: Container, slot: Slot) -> None:
+    """Advance ``c._body_tail`` if ``slot`` is a body-region KV of ``c``.
+
+    Body-region predicate matches :func:`_is_body_kv`. Used by
+    ``_build``'s initial population pass; mutation-time appends
+    set ``_body_tail`` directly because they know they are
+    appending a body slot by construction.
+    """
+    if _is_body_kv(c, slot):
+        c._body_tail = slot  # noqa: SLF001
 
 
 def _file_header_binding_chain(

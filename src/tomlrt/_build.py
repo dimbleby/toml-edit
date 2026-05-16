@@ -14,8 +14,8 @@ from typing import TYPE_CHECKING
 
 from tomlrt._array import AoT, Array
 from tomlrt._container import Container, Document, Table
-from tomlrt._kind import _Kind
-from tomlrt._slots import KVSlot, SlotRef, StructuralHeaderSlot
+from tomlrt._layout_ops import maybe_advance_body_tail, record_ref
+from tomlrt._slots import KVSlot, StructuralHeaderSlot
 from tomlrt._values import (
     ArrayValue,
     InlineTableValue,
@@ -55,44 +55,10 @@ def build_initial_containers(doc: Document, slots: list[Slot]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _record_ref(c: Container, slot: Slot) -> SlotRef:
-    """Append a `SlotRef` to ``c._refs`` (and ``c._index`` if keyed).
-
-    The ``_index`` key, when filed, is :attr:`SlotRef.local_key` —
-    derived from ``(slot, container)`` geometry. Callers don't
-    pass it, so they can't accidentally file the ref under a key
-    that disagrees with the property's derivation.
-
-    ``c._subtree_tail`` is exposed as a derived property over ``_refs``
-    so it does not need explicit maintenance here. ``_body_tail`` is
-    updated by callers per the body-region rules.
-    """
-    ref = SlotRef(slot, c)
-    c._refs.append(ref)  # noqa: SLF001
-    local_key = ref.local_key
-    if local_key is not None:
-        c._index.setdefault(local_key, []).append(ref)  # noqa: SLF001
-    return ref
-
-
-def _maybe_advance_body_tail(c: Container, slot: Slot) -> None:
-    """Advance ``c._body_tail`` if ``slot`` belongs to ``c``'s body region.
-
-    A slot belongs to ``c``'s body region iff:
-
-    - ``slot`` is a ``KVSlot``;
-    - ``slot.owner_aot_entry is c._owner_aot_entry``;
-    - either ``c`` has no own structural header (purely implicit /
-      document root / inherited-implicit) **or** the slot is hosted
-      under ``c``'s exact path (``slot.host_path == c._path``).
-    """
-    if not isinstance(slot, KVSlot):
-        return
-    if slot.owner_aot_entry is not c._owner_aot_entry:  # noqa: SLF001
-        return
-    if c._kind is _Kind.SECTION and slot.host_path != c._path:  # noqa: SLF001
-        return
-    c._body_tail = slot  # noqa: SLF001
+# Cache primitives are imported from _layout_ops: ``record_ref`` builds
+# a SlotRef and files it; ``maybe_advance_body_tail`` updates the body-
+# tail cache for body-region KVs. They are shared with mutation-time
+# paths so the cache-maintenance invariant has one canonical source.
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +87,7 @@ def _open_table(doc: Document, header: StructuralHeaderSlot) -> Table:
     name = path[-1]
     # Ancestor binding refs (chain[:i] -> child step path[i]).
     for ancestor in parent_chain:
-        _record_ref(ancestor, header)
+        record_ref(ancestor, header)
     existing = parent.get(name)
     if existing is None:
         table = _make_table(parent, path, owner=header.owner_aot_entry)
@@ -133,7 +99,7 @@ def _open_table(doc: Document, header: StructuralHeaderSlot) -> Table:
         )
         table = existing
     # Own-header ref + body-tail reset for this container.
-    own_ref = _record_ref(table, header)
+    own_ref = record_ref(table, header)
     table._header_ref = own_ref  # noqa: SLF001
     table._body_tail = header  # noqa: SLF001
     return table
@@ -151,7 +117,7 @@ def _open_aot_entry(
     name = path[-1]
     # Ancestor binding refs to the [[..]] header slot.
     for ancestor in parent_chain:
-        _record_ref(ancestor, header)
+        record_ref(ancestor, header)
     aot = parent.get(name)
     if aot is None:
         aot = AoT()
@@ -165,7 +131,7 @@ def _open_aot_entry(
     )
     table = _make_table(parent, path, owner=entry)
     list.append(aot, table)
-    own_ref = _record_ref(table, header)
+    own_ref = record_ref(table, header)
     table._header_ref = own_ref  # noqa: SLF001
     table._body_tail = header  # noqa: SLF001
     return table
@@ -259,8 +225,8 @@ def _apply_kv(slot: KVSlot, *, host: Container) -> None:
         "validator drift"
     )
     for ancestor in leaf_chain:
-        _record_ref(ancestor, slot)
-        _maybe_advance_body_tail(ancestor, slot)
+        record_ref(ancestor, slot)
+        maybe_advance_body_tail(ancestor, slot)
     dict.__setitem__(
         target,
         name,
