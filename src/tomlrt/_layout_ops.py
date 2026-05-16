@@ -48,7 +48,7 @@ from tomlrt._trivia import (
     Trivia,
     WhitespaceNode,
 )
-from tomlrt._values import make_keypart, make_keyparts
+from tomlrt._values import make_keyparts
 
 HeaderKind = Literal["table", "aot-entry"]
 
@@ -59,7 +59,7 @@ if TYPE_CHECKING:
     from tomlrt._container import Container, Document, Table
     from tomlrt._slots import Slot
     from tomlrt._trivia import TriviaPiece
-    from tomlrt._values import KeyPart, Value
+    from tomlrt._values import Value
 
 
 # ---------------------------------------------------------------------------
@@ -207,8 +207,6 @@ def _file_synthetic_header_and_kv(
     new_kv = _new_kv_slot(
         host_path=c._path,  # noqa: SLF001
         key=(key,),
-        key_parts=[make_keypart(key)],
-        key_seps=[],
         value=value,
         doc=doc,
         owner=owner,
@@ -920,19 +918,23 @@ def _new_kv_slot(
     *,
     host_path: tuple[str, ...],
     key: tuple[str, ...],
-    key_parts: list[KeyPart],
-    key_seps: list[str],
     value: Value,
     doc: Document,
     owner: AoTEntry | None,
     leading: Trivia,
 ) -> KVSlot:
-    """Synthesise a fresh KV slot, recording it on the active install recorder."""
+    """Synthesise a fresh KV slot, recording it on the active install recorder.
+
+    ``key_parts`` and ``key_seps`` are derived from ``key`` in the
+    canonical synthetic form (``make_keypart`` per segment, ``.`` as
+    separator). Mutation-side construction is the only caller, so the
+    parser's source-text-preserving spelling is not needed here.
+    """
     slot = KVSlot(
         leading=leading,
         host_path=host_path,
-        key_parts=key_parts,
-        key_seps=key_seps,
+        key_parts=make_keyparts(key),
+        key_seps=["."] * (len(key) - 1),
         pre_eq=" ",
         post_eq=" ",
         value=value,
@@ -960,8 +962,6 @@ def _build_kv_slot(c: Container, key: str, value: Value, doc: Document) -> KVSlo
     return _new_kv_slot(
         host_path=c._path,  # noqa: SLF001
         key=(key,),
-        key_parts=[make_keypart(key)],
-        key_seps=[],
         value=value,
         doc=doc,
         owner=c._owner_aot_entry,  # noqa: SLF001
@@ -1018,13 +1018,9 @@ def _append_dotted_kv_under_implicit(c: Container, key: str, value: Value) -> No
 
     # Build the dotted slot: keypath = host..key.
     keypath = (*c._path[len(host._path) :], key)  # noqa: SLF001
-    parts = [make_keypart(k) for k in keypath]
-    seps = ["."] * (len(parts) - 1)
     new_slot = _new_kv_slot(
         host_path=host._path,  # noqa: SLF001
         key=keypath,
-        key_parts=parts,
-        key_seps=seps,
         value=value,
         doc=doc,
         owner=owner,
