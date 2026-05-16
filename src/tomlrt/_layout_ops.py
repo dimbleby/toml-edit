@@ -124,8 +124,7 @@ def reposition_install(parent: Container, key: str, value: Any) -> None:
         if successor_slot is not None:
             successor_leading = list(successor_slot.leading.pieces)
     del parent[key]
-    doc = parent._layout_root  # noqa: SLF001
-    assert doc is not None
+    doc = parent._attached_doc  # noqa: SLF001
     with _record_install(doc) as new_slots:
         parent[key] = value
     if not primary_refs or not new_slots:
@@ -416,9 +415,7 @@ def append_direct_kv(c: Container, key: str, value: Value) -> None:
     if c._owner_aot_entry is not None:  # noqa: SLF001
         msg = "insert into AoT entry sub-table body is not yet supported"
         raise NotImplementedError(msg)
-    layout_root = c._layout_root  # noqa: SLF001
-    assert layout_root is not None
-    doc = layout_root
+    doc = c._attached_doc  # noqa: SLF001
     # Capture the anchor *before* mutating any cache.
     body_tail = c._body_tail  # noqa: SLF001
     header_ref = c._header_ref  # noqa: SLF001
@@ -530,9 +527,7 @@ def delete_key(c: Container, key: str) -> None:
     if key not in c:
         raise KeyError(key)
     val = dict.__getitem__(c, key)
-    layout_root = c._layout_root  # noqa: SLF001
-    assert layout_root is not None
-    doc = layout_root
+    doc = c._attached_doc  # noqa: SLF001
 
     # 1. Owned-slot identity set + retained slot objects (for unlink).
     owned_ids: set[int] = set()
@@ -982,9 +977,7 @@ def _append_dotted_kv_under_implicit(c: Container, key: str, value: Value) -> No
     """
     body_tail = c._body_tail  # noqa: SLF001
     assert body_tail is not None
-    layout_root = c._layout_root  # noqa: SLF001
-    assert layout_root is not None
-    doc = layout_root
+    doc = c._attached_doc  # noqa: SLF001
 
     # Find host: nearest ancestor with a header, or the doc root.
     host: Container = c
@@ -1076,9 +1069,7 @@ def _synthesise_header_then_insert_kv(c: Container, key: str, value: Value) -> N
     Then inserts a fresh single-keypart KV ``key = value`` directly
     after the synthetic header.
     """
-    layout_root = c._layout_root  # noqa: SLF001
-    assert layout_root is not None
-    doc = layout_root
+    doc = c._attached_doc  # noqa: SLF001
 
     if not c._refs:  # noqa: SLF001
         # No descendants left — typically the position-preserving
@@ -1160,9 +1151,7 @@ def _synthesise_header_then_insert_kv_at_doc_tail(
     responsible for repositioning the resulting block to the captured
     anchor when one exists.
     """
-    layout_root = c._layout_root  # noqa: SLF001
-    assert layout_root is not None
-    doc = layout_root
+    doc = c._attached_doc  # noqa: SLF001
     owner = c._owner_aot_entry  # noqa: SLF001
 
     header_slot = _new_section_header(
@@ -1235,9 +1224,7 @@ def _append_kv_in_aot_entry(c: Container, key: str, value: Value) -> None:
     Mirrors the header-bearing path in `append_direct_kv` but also
     keeps the entry's `entry_slots` list in doc-stream order.
     """
-    layout_root = c._layout_root  # noqa: SLF001
-    assert layout_root is not None
-    doc = layout_root
+    doc = c._attached_doc  # noqa: SLF001
     owner = c._owner_aot_entry  # noqa: SLF001
     assert owner is not None
     body_tail = c._body_tail  # noqa: SLF001
@@ -1981,8 +1968,7 @@ def clone_aot(
     """
     from tomlrt._array import AoT  # noqa: PLC0415
 
-    layout_root = parent._layout_root  # noqa: SLF001
-    assert layout_root is not None
+    layout_root = parent._attached_doc  # noqa: SLF001
     target_path = (*parent._path, key)  # noqa: SLF001
 
     new_aot = AoT()
@@ -2247,9 +2233,7 @@ def attach_section_at(
         msg = "sub_path must not be empty"
         raise ValueError(msg)
 
-    layout_root = parent._layout_root  # noqa: SLF001
-    assert layout_root is not None
-    doc = layout_root
+    doc = parent._attached_doc  # noqa: SLF001
     full_path = (*parent._path, *sub)  # noqa: SLF001
 
     leading = _build_section_leading(doc)
@@ -2485,11 +2469,9 @@ def remove_aot_entries(aot: AoT, indices: Iterable[int]) -> list[Table]:
     idx_list = list(indices)
     if not idx_list:
         return []
-    layout_root = aot._layout_root  # noqa: SLF001
+    doc = aot._attached_doc  # noqa: SLF001
     parent = aot._parent  # noqa: SLF001
-    assert layout_root is not None
     assert parent is not None
-    doc = layout_root
 
     # Per-entry: collect owned slots (entry + nested AoT entry slots)
     # and capture the entry table itself for return / reset.
@@ -2712,9 +2694,7 @@ def renormalise_aot_order(aot: AoT, new_logical_order: Sequence[Table]) -> None:
         for t in new_logical_order:
             list.append(aot, t)
         return
-    layout_root = aot._layout_root  # noqa: SLF001
-    assert layout_root is not None
-    doc = layout_root
+    doc = aot._attached_doc  # noqa: SLF001
 
     # Collect every entry's owned slots, in current logical order.
     per_entry_slots: list[list[Slot]] = []
