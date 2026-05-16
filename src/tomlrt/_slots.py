@@ -28,6 +28,7 @@ else:
     from typing_extensions import override
 
 from tomlrt._trivia import EolTrivia
+from tomlrt._values import render_dotted
 
 # ---------------------------------------------------------------------------
 # AoT entry token (physical ownership marker)
@@ -127,16 +128,7 @@ class KVSlot(Slot):
     eol: EolTrivia = field(default_factory=lambda: EolTrivia(None, None, None))
 
     def render_key(self) -> str:
-        parts = self.key_parts
-        if len(parts) == 1:
-            return parts[0].render()
-        out: list[str] = []
-        seps = self.key_seps
-        for i, p in enumerate(parts):
-            if i:
-                out.append(seps[i - 1])
-            out.append(p.render())
-        return "".join(out)
+        return render_dotted(self.key_parts, self.key_seps)
 
     @property
     def key(self) -> tuple[str, ...]:
@@ -174,16 +166,7 @@ class StructuralHeaderSlot(Slot):
     """True iff this header was introduced by mutation."""
 
     def render_key(self) -> str:
-        parts = self.key_parts
-        if len(parts) == 1:
-            return parts[0].render()
-        out: list[str] = []
-        seps = self.key_seps
-        for i, p in enumerate(parts):
-            if i:
-                out.append(seps[i - 1])
-            out.append(p.render())
-        return "".join(out)
+        return render_dotted(self.key_parts, self.key_seps)
 
     @override
     def render(self) -> str:
