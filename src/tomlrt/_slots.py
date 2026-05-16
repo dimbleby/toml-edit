@@ -110,13 +110,13 @@ class Slot:
 class KVSlot(Slot):
     """A single ``key = value`` line."""
 
-    host_path: tuple[str, ...] = ()
+    host_path: tuple[str, ...] = field(kw_only=True)
     """Full path of the host table — the table whose body this KV
     physically belongs to. For top-level KVs ``()``; for KVs under
     ``[a.b]`` ``("a", "b")``.
     """
 
-    key_parts: list[KeyPart] = field(default_factory=list)
+    key_parts: list[KeyPart] = field(kw_only=True)
     """The dotted-key parts as written. ``len >= 1``."""
 
     key_seps: list[str] = field(default_factory=list)
@@ -124,7 +124,7 @@ class KVSlot(Slot):
 
     pre_eq: str = ""
     post_eq: str = ""
-    value: Value | None = None
+    value: Value = field(kw_only=True)
     eol: EolTrivia = field(default_factory=lambda: EolTrivia(None, None, None))
 
     key: tuple[str, ...] = field(kw_only=True)
@@ -142,7 +142,6 @@ class KVSlot(Slot):
 
     @override
     def render(self) -> str:
-        assert self.value is not None
         return (
             f"{self.leading.render()}{self.render_key()}"
             f"{self.pre_eq}={self.post_eq}"
@@ -155,10 +154,10 @@ class StructuralHeaderSlot(Slot):
     """One ``[a.b]`` or ``[[a.b]]`` header line."""
 
     kind: Literal["table", "aot-entry"] = "table"
-    path: tuple[str, ...] = ()
+    path: tuple[str, ...] = field(kw_only=True)
     """Full decoded path of the section / AoT entry header."""
 
-    key_parts: list[KeyPart] = field(default_factory=list)
+    key_parts: list[KeyPart] = field(kw_only=True)
     key_seps: list[str] = field(default_factory=list)
     inner_pre: str = ""
     inner_post: str = ""
@@ -256,8 +255,7 @@ def retarget_slot_newlines(slot: Slot, target: str) -> None:
     retarget_trivia_newlines(slot.leading, target)
     if isinstance(slot, KVSlot):
         retarget_eol_newline(slot.eol, target)
-        if slot.value is not None:
-            retarget_value_newlines(slot.value, target)
+        retarget_value_newlines(slot.value, target)
     elif isinstance(slot, StructuralHeaderSlot):
         retarget_eol_newline(slot.eol, target)
 

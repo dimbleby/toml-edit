@@ -2143,7 +2143,6 @@ def _populate_entry_views(
             continue
         assert isinstance(s, KVSlot)
         host = _ensure_container(s.host_path)
-        assert s.value is not None
         slot_value = s.value
         if len(s.key_parts) == 1:
             key = s.key_parts[0].value

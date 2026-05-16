@@ -257,7 +257,6 @@ def _apply_kv(slot: KVSlot, *, host: Container) -> None:
     for i, ancestor in enumerate(leaf_chain):
         _record_ref(ancestor, slot, decoded[i])
         _maybe_advance_body_tail(ancestor, slot)
-    assert slot.value is not None
     dict.__setitem__(
         target,
         name,
