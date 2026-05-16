@@ -185,6 +185,22 @@ def make_keyparts(path: tuple[str, ...]) -> list[KeyPart]:
     return [make_keypart(p) for p in path]
 
 
+def render_dotted(parts: list[KeyPart], seps: list[str]) -> str:
+    """Render a dotted key as ``part0 sep0 part1 sep1 ...``.
+
+    ``seps`` has length ``len(parts) - 1``; each entry is the literal
+    whitespace + ``.`` between the surrounding parts (e.g. ``" . "``).
+    """
+    if len(parts) == 1:
+        return parts[0].render()
+    out: list[str] = []
+    for i, p in enumerate(parts):
+        if i:
+            out.append(seps[i - 1])
+        out.append(p.render())
+    return "".join(out)
+
+
 @dataclass(slots=True, eq=False)
 class InlineTableEntry:
     """One ``key = value`` slot inside an inline table."""
@@ -200,15 +216,7 @@ class InlineTableEntry:
     post_comma_trivia: Trivia
 
     def render_key(self) -> str:
-        if len(self.key_parts) == 1:
-            return self.key_parts[0].render()
-        out: list[str] = []
-        seps = self.key_seps
-        for i, part in enumerate(self.key_parts):
-            if i:
-                out.append(seps[i - 1])
-            out.append(part.render())
-        return "".join(out)
+        return render_dotted(self.key_parts, self.key_seps)
 
     def render(self) -> str:
         out = (
@@ -263,21 +271,19 @@ def retarget_value_newlines(v: Value, target: str) -> None:
     from tomlrt._trivia import retarget_trivia_newlines  # noqa: PLC0415
 
     if isinstance(v, ArrayValue):
-        retarget_trivia_newlines(v.header_trivia, target)
-        retarget_trivia_newlines(v.final_trivia, target)
-        for it in v.items:
-            retarget_trivia_newlines(it.leading, target)
-            retarget_trivia_newlines(it.trailing, target)
-            retarget_trivia_newlines(it.post_comma_trivia, target)
-            retarget_value_newlines(it.value, target)
+        items: list[ArrayItem] | list[InlineTableEntry] = v.items
     elif isinstance(v, InlineTableValue):
-        retarget_trivia_newlines(v.header_trivia, target)
-        retarget_trivia_newlines(v.final_trivia, target)
-        for e in v.entries:
-            retarget_trivia_newlines(e.leading, target)
-            retarget_trivia_newlines(e.trailing, target)
-            retarget_trivia_newlines(e.post_comma_trivia, target)
-            retarget_value_newlines(e.value, target)
+        items = v.entries
+    else:
+        return
+
+    retarget_trivia_newlines(v.header_trivia, target)
+    retarget_trivia_newlines(v.final_trivia, target)
+    for it in items:
+        retarget_trivia_newlines(it.leading, target)
+        retarget_trivia_newlines(it.trailing, target)
+        retarget_trivia_newlines(it.post_comma_trivia, target)
+        retarget_value_newlines(it.value, target)
 
 
 __all__ = [
