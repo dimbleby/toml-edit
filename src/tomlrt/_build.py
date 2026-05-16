@@ -33,22 +33,21 @@ def build_initial_containers(doc: Document, slots: list[Slot]) -> None:
     """Walk the slot stream and populate ``doc`` and its descendants.
 
     Threads the current header's host container through the loop so
-    consecutive KVs under one header skip the doc-root re-walk in
-    ``_resolve_chain``. The validator guarantees ``slot.host_path``
-    equals the most recent header's ``path`` (or ``()`` if none).
+    each KV skips the doc-root re-walk in ``_resolve_chain``. The
+    validator guarantees ``slot.host_path`` equals the most recent
+    header's ``path`` (or ``()`` if none) — asserted below.
     """
     current_host: Container = doc
-    current_host_path: tuple[str, ...] = ()
     for slot in slots:
         if isinstance(slot, StructuralHeaderSlot):
             current_host = _apply_header(doc, slot)
-            current_host_path = slot.path
         else:
             assert isinstance(slot, KVSlot)
-            if slot.host_path == current_host_path:
-                _apply_kv(doc, slot, host=current_host)
-            else:
-                _apply_kv(doc, slot)
+            assert slot.host_path == current_host._path, (  # noqa: SLF001
+                f"KV host_path {slot.host_path} != current section "
+                f"{current_host._path}; validator drift"  # noqa: SLF001
+            )
+            _apply_kv(slot, host=current_host)
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +214,7 @@ def _make_table(
 # ---------------------------------------------------------------------------
 
 
-def _apply_kv(doc: Document, slot: KVSlot, *, host: Container | None = None) -> None:
+def _apply_kv(slot: KVSlot, *, host: Container) -> None:
     """Bind a `key = value` slot into its host container.
 
     Refs propagate **only** along the slot's logical path starting at
@@ -224,13 +223,12 @@ def _apply_kv(doc: Document, slot: KVSlot, *, host: Container | None = None) -> 
     in `a._index["x"]`; it does NOT contribute a ref to
     `doc._index["a"]`.
 
-    ``host``, if supplied, is the pre-resolved host container for
-    ``slot.host_path`` (threaded through ``build_initial_containers``
-    so consecutive KVs under one header skip the doc-root re-walk).
+    ``host`` is the pre-resolved container for ``slot.host_path``,
+    threaded by ``build_initial_containers`` from the most recent
+    header. Everything else (layout root for dotted intermediates,
+    decoded value attachment) cascades through ``host._layout_root``.
     """
     decoded = slot.key
-    if host is None:
-        host = _resolve_chain(doc, slot.host_path)[-1]
     # Logical container chain along the dotted-KV intermediate steps:
     # host -> host.k0 -> host.k0.k1 -> ... -> host.k[:-1].
     leaf_chain: list[Container] = [host]
