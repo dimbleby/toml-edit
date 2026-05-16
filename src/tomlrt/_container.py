@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias, TypeGuard, TypeVar, overload
 
 if sys.version_info >= (3, 12):
     from typing import Self, override
-else:
+else:  # pragma: no cover -- backport for Python < 3.12
     from typing_extensions import override
 
 from tomlrt import _inline_ops, _layout_ops
