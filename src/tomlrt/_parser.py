@@ -205,6 +205,7 @@ class _Parser:
             value=value,
             eol=EolTrivia(trailing_ws, comment, newline),
             owner_aot_entry=owner,
+            key=key_path,
         )
         if owner is not None:
             owner.entry_slots.append(slot)
@@ -330,6 +331,7 @@ class _Parser:
                         trailing=trailing,
                         has_comma=True,
                         post_comma_trivia=post_comma,
+                        key_path=key_path,
                     )
                 )
                 if sc.peek() == "}":
@@ -349,6 +351,7 @@ class _Parser:
                         trailing=trailing,
                         has_comma=False,
                         post_comma_trivia=Trivia(),
+                        key_path=key_path,
                     )
                 )
                 eol, rest = split_eol_section(entries[-1].trailing)

@@ -30,13 +30,25 @@ if TYPE_CHECKING:
 
 
 def build_initial_containers(doc: Document, slots: list[Slot]) -> None:
-    """Walk the slot stream and populate ``doc`` and its descendants."""
+    """Walk the slot stream and populate ``doc`` and its descendants.
+
+    Threads the current header's host container through the loop so
+    consecutive KVs under one header skip the doc-root re-walk in
+    ``_resolve_chain``. The validator guarantees ``slot.host_path``
+    equals the most recent header's ``path`` (or ``()`` if none).
+    """
+    current_host: Container = doc
+    current_host_path: tuple[str, ...] = ()
     for slot in slots:
         if isinstance(slot, StructuralHeaderSlot):
-            _apply_header(doc, slot)
+            current_host = _apply_header(doc, slot)
+            current_host_path = slot.path
         else:
             assert isinstance(slot, KVSlot)
-            _apply_kv(doc, slot)
+            if slot.host_path == current_host_path:
+                _apply_kv(doc, slot, host=current_host)
+            else:
+                _apply_kv(doc, slot)
 
 
 # ---------------------------------------------------------------------------
@@ -83,12 +95,11 @@ def _maybe_advance_body_tail(c: Container, slot: Slot) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _apply_header(doc: Document, slot: StructuralHeaderSlot) -> None:
+def _apply_header(doc: Document, slot: StructuralHeaderSlot) -> Table:
     if slot.kind == "aot-entry":
         assert slot.entry is not None
-        _open_aot_entry(doc, slot, slot.entry)
-    else:
-        _open_table(doc, slot)
+        return _open_aot_entry(doc, slot, slot.entry)
+    return _open_table(doc, slot)
 
 
 def _open_table(doc: Document, header: StructuralHeaderSlot) -> Table:
@@ -204,7 +215,7 @@ def _make_table(
 # ---------------------------------------------------------------------------
 
 
-def _apply_kv(doc: Document, slot: KVSlot) -> None:
+def _apply_kv(doc: Document, slot: KVSlot, *, host: Container | None = None) -> None:
     """Bind a `key = value` slot into its host container.
 
     Refs propagate **only** along the slot's logical path starting at
@@ -212,10 +223,14 @@ def _apply_kv(doc: Document, slot: KVSlot) -> None:
     `host_path = ("a",)` and `key = ("x",)` generates exactly one ref,
     in `a._index["x"]`; it does NOT contribute a ref to
     `doc._index["a"]`.
+
+    ``host``, if supplied, is the pre-resolved host container for
+    ``slot.host_path`` (threaded through ``build_initial_containers``
+    so consecutive KVs under one header skip the doc-root re-walk).
     """
     decoded = slot.key
-    host_chain = _resolve_chain(doc, slot.host_path)
-    host = host_chain[-1]
+    if host is None:
+        host = _resolve_chain(doc, slot.host_path)[-1]
     # Logical container chain along the dotted-KV intermediate steps:
     # host -> host.k0 -> host.k0.k1 -> ... -> host.k[:-1].
     leaf_chain: list[Container] = [host]
@@ -323,7 +338,7 @@ def _decode_inline_table(
     table._inline = True  # noqa: SLF001
     table._value = value  # noqa: SLF001
     for entry in value.entries:
-        decoded_key = [p.value for p in entry.key_parts]
+        decoded_key = entry.key_path
         cur: Container = table
         for step in decoded_key[:-1]:
             sub = cur.get(step)
