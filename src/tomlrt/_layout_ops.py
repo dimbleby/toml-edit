@@ -1706,7 +1706,7 @@ def clone_aot_entry(
     layout_root = aot._layout_root  # noqa: SLF001
     path = aot._path  # noqa: SLF001
     target_path = dst_path if dst_path is not None else path
-    src_slots = _validate_clonable_aot_entry(src_entry)
+    src_slots = list(src_entry.entry_slots)
     same_aot_clone = target_path == src_entry.path and src_layout_root is layout_root
     return _install_cloned_aot_entry(
         aot,
@@ -1887,7 +1887,7 @@ def clone_aot_entry_as_table(
     if src_entry is None:  # pragma: no cover
         msg = "Source entry has no owning AoTEntry"
         raise RuntimeError(msg)
-    src_slots = _validate_clonable_aot_entry(src_entry)
+    src_slots = list(src_entry.entry_slots)
     return _install_cloned_section(parent, key, src_slots, src_entry.path)
 
 
@@ -2173,19 +2173,6 @@ def _populate_entry_views(
                 owner=body_owner,
             )
             dict.__setitem__(cur, leaf_key, decoded)
-
-
-def _validate_clonable_aot_entry(src_entry: AoTEntry) -> list[Slot]:
-    """Return the source entry's slot list.
-
-    Header slots other than the entry's own at index 0 are always
-    table-kind (``[[t.sub]]`` aot-entry headers live in their own
-    AoTEntry, not the outer one).
-    """
-    src_slots = list(src_entry.entry_slots)
-    assert src_slots
-    assert isinstance(src_slots[0], StructuralHeaderSlot)
-    return src_slots
 
 
 def attach_section_at(
@@ -2569,7 +2556,7 @@ def replace_aot_entry_with_clone(
     assert dst_entry is not None
     assert src_entry is not None
 
-    src_slots = _validate_clonable_aot_entry(src_entry)
+    src_slots = list(src_entry.entry_slots)
     src_prefix = src_entry.path
 
     # Save the destination header (we keep it in place, only its body

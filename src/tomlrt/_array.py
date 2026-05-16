@@ -1208,10 +1208,6 @@ class AoT(list["Table"]):
             for _ in range(n - 1):
                 self.extend(bodies)
             return self
-        # The validation done by `_validate_clonable_aot_entry` is now
-        # assertion-only, so there is nothing to preflight — every src
-        # entry that exists in an attached AoT is clonable by
-        # construction.
         originals = list(self)
         for _ in range(n - 1):
             for e in originals:
