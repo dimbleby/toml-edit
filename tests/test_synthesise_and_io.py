@@ -282,6 +282,53 @@ def test_assign_unsupported_type_raises() -> None:
         doc["x"] = object()
 
 
+def test_assign_inline_table_with_unsupported_value_raises() -> None:
+    """Synthesis recurses into mappings; the inner value gets the same check."""
+    doc = tomlrt.loads("x = 0\n")
+    with pytest.raises(TypeError, match="Cannot convert"):
+        doc["x"] = {"a": object()}
+
+
+def test_assign_inline_array_with_unsupported_value_raises() -> None:
+    doc = tomlrt.loads("x = 0\n")
+    with pytest.raises(TypeError, match="Cannot convert"):
+        doc["x"] = [object()]
+
+
+def test_assign_inline_table_with_non_str_key_raises() -> None:
+    doc = tomlrt.loads("x = 0\n")
+    with pytest.raises(TypeError, match="must be str"):
+        doc["x"] = {1: "v"}
+
+
+def test_assign_inline_table_containing_aot_value_rejected() -> None:
+    """An ``AoT`` cannot live as the value of an inline-table entry."""
+    src = tomlrt.loads(
+        td("""
+            [[products]]
+            name = 'a'
+            """),
+    )
+    dest = tomlrt.loads("dest = 0\n")
+    aot = src.aot("products")
+    with pytest.raises(NotImplementedError, match="AoT"):
+        dest["dest"] = {"items": aot}
+
+
+def test_assign_inline_table_containing_section_container_rejected() -> None:
+    """A section ``Table`` cannot live as the value of an inline-table entry."""
+    src = tomlrt.loads(
+        td("""
+            [sub]
+            x = 1
+            """),
+    )
+    dest = tomlrt.loads("dest = 0\n")
+    section = src.table("sub")
+    with pytest.raises(NotImplementedError, match="section Container"):
+        dest["dest"] = {"nested": section}
+
+
 def test_assign_aot_over_scalar() -> None:
     src = tomlrt.loads(
         td("""
@@ -398,6 +445,40 @@ def test_document_factory_with_data_does_not_share_mutable_state() -> None:
     server_dict["port"] = 9999  # mutate the source after construction
     server = doc.table("server")
     assert server["port"] == 8080
+
+
+def test_document_factory_with_data_passes_aot_through() -> None:
+    """An existing ``AoT`` value passes straight through the init coercion."""
+    src = tomlrt.loads(
+        td("""
+            [[products]]
+            name = 'a'
+            [[products]]
+            name = 'b'
+            """),
+    )
+    out = Document({"products": src.aot("products")})
+    assert tomlrt.dumps(out) == td("""
+        [[products]]
+        name = 'a'
+        [[products]]
+        name = 'b'
+        """)
+
+
+def test_document_factory_with_data_passes_container_through() -> None:
+    """An existing section ``Table`` value passes straight through init."""
+    src = tomlrt.loads(
+        td("""
+            [sub]
+            x = 1
+            """),
+    )
+    out = Document({"sub": src.table("sub")})
+    assert tomlrt.dumps(out) == td("""
+        [sub]
+        x = 1
+        """)
 
 
 def test_document_factory_emits_deprecation_warning() -> None:
@@ -561,6 +642,27 @@ def test_deepcopy_table_subview_supports_nested_mutation() -> None:
     t2 = deepcopy(t)
     t2.table("inner")["x"] = 42
     assert t.table("inner")["x"] == 1
+    assert tomlrt.dumps(doc) == src
+
+
+def test_deepcopy_table_subview_recurses_into_aot_child() -> None:
+    """A section table containing an AoT clones the AoT as typed entries."""
+    src = td("""
+        [t]
+        [[t.items]]
+        x = 1
+        [[t.items]]
+        x = 2
+        """)
+    doc = tomlrt.loads(src)
+    t = doc.table("t")
+    t2 = deepcopy(t)
+    # The clone still exposes the AoT as a typed list of tables.
+    items = t2.aot("items")
+    assert [dict(e) for e in items] == [{"x": 1}, {"x": 2}]
+    # Mutations on the clone do not leak back to the original.
+    items[0]["x"] = 99
+    assert t.aot("items")[0]["x"] == 1
     assert tomlrt.dumps(doc) == src
 
 

@@ -753,17 +753,6 @@ def _detect_style(value: ArrayValue | None, *, multiline_flag: bool) -> _ArraySt
     )
 
 
-def _has_ws_after_last_newline(trivia: Trivia) -> bool:
-    pieces = trivia.pieces
-    last_nl = -1
-    for i, p in enumerate(pieces):
-        if isinstance(p, NewlineNode):
-            last_nl = i
-    if last_nl < 0:
-        return False
-    return last_nl + 1 < len(pieces) and isinstance(pieces[last_nl + 1], WhitespaceNode)
-
-
 def _first_indent_after_newline(trivia: Trivia) -> str:
     pieces = trivia.pieces
     for i, p in enumerate(pieces):
