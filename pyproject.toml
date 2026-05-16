@@ -93,15 +93,15 @@ src = ["src", "tests"]
 [tool.ruff.lint]
 select = ["ALL"]
 ignore = [
-  "C90",               # mccabe
-  "COM",               # flake8-commas
-  "CPY",               # flake8-copyright
-  "ERA",               # eradicate
-  "PD",                # pandas-vet
-  "PLR",               # pylint-refactor
-  "ANN401",            # any-type
-  "E203",              # whitespace before ':'
-  "S101",              # assert-used
+  "C90",                    # mccabe
+  "COM",                    # flake8-commas
+  "CPY",                    # flake8-copyright
+  "ERA",                    # eradicate
+  "PD",                     # pandas-vet
+  "PLR",                    # pylint-refactor
+  "ANN401",                 # any-type
+  "E203",                   # whitespace before ':'
+  "S101",                   # assert-used
 ]
 extend-safe-fixes = ["TC"]
 unfixable = ["F841"]
