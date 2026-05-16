@@ -957,6 +957,16 @@ class AoT(list["Table"]):
         for e in entries:
             list.append(self, _make_unattached_entry(e))
 
+    @property
+    def _attached_doc(self) -> Document:
+        """The owning ``Document``, asserting this AoT is attached.
+
+        Mirror of :attr:`Container._attached_doc` — see that docstring.
+        """
+        lr = self._layout_root
+        assert lr is not None, "AoT is not attached to a document"
+        return lr
+
     def to_list(self) -> list[dict[str, Any]]:
         """Materialise a list of plain-Python ``dict``s (recursive)."""
         return [t.to_dict() for t in self]

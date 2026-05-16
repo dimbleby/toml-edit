@@ -187,6 +187,22 @@ class Container(dict[str, Any]):
         lr = self._layout_root
         return lr is not None and not lr._is_private  # noqa: SLF001
 
+    @property
+    def _attached_doc(self) -> Document:
+        """The owning ``Document``, asserting the container is attached.
+
+        Most ``_layout_ops`` mutation primitives only run when the
+        target container is already wired into a document — they
+        operate on the doc-stream linked list, allocate slots, etc.
+        Reading ``_layout_root`` directly returns ``Document | None``;
+        this accessor narrows the type (and asserts in debug builds)
+        so call sites don't all need ``layout_root = c._layout_root;
+        assert layout_root is not None; doc = layout_root``.
+        """
+        lr = self._layout_root
+        assert lr is not None, "container is not attached to a document"
+        return lr
+
     def _wire(
         self,
         *,
