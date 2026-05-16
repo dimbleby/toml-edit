@@ -216,7 +216,7 @@ class InlineTableEntry:
     has_comma: bool
     post_comma_trivia: Trivia
 
-    key_path: tuple[str, ...] = ()
+    key_path: tuple[str, ...] = field(kw_only=True)
     """Decoded dotted-key path.
 
     Set by every construction site (parser, mutation, synthesis). The
