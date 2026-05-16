@@ -127,14 +127,14 @@ class KVSlot(Slot):
     value: Value | None = None
     eol: EolTrivia = field(default_factory=lambda: EolTrivia(None, None, None))
 
-    key: tuple[str, ...] = ()
+    key: tuple[str, ...] = field(kw_only=True)
     """Decoded dotted-key path.
 
-    Populated by the parser (which already built the tuple to call
-    the validator) and is the canonical source of the decoded path
-    for builder + downstream consumers. Mutation-side construction
-    sites leave it as ``()`` — only parser-built slots are read by
-    ``build_initial_containers`` / ``_apply_kv``.
+    Set by every construction site (parser, mutation, synthesis).
+    The parser passes the tuple it already built for the validator;
+    mutation paths pass the path they were given. Read by
+    ``_build._apply_kv`` (and any future logic that wants the decoded
+    path without re-walking ``key_parts``).
     """
 
     def render_key(self) -> str:

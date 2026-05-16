@@ -206,6 +206,7 @@ def _file_synthetic_header_and_kv(
 
     new_kv = _new_kv_slot(
         host_path=c._path,  # noqa: SLF001
+        key=(key,),
         key_parts=[make_keypart(key)],
         key_seps=[],
         value=value,
@@ -918,6 +919,7 @@ def _kv_separator_leading(c: Container, doc: Document) -> Trivia:
 def _new_kv_slot(
     *,
     host_path: tuple[str, ...],
+    key: tuple[str, ...],
     key_parts: list[KeyPart],
     key_seps: list[str],
     value: Value,
@@ -936,6 +938,7 @@ def _new_kv_slot(
         value=value,
         eol=_default_eol(doc),
         owner_aot_entry=owner,
+        key=key,
     )
     _record_new_slot(doc, slot)
     return slot
@@ -956,6 +959,7 @@ def _build_kv_slot(c: Container, key: str, value: Value, doc: Document) -> KVSlo
 
     return _new_kv_slot(
         host_path=c._path,  # noqa: SLF001
+        key=(key,),
         key_parts=[make_keypart(key)],
         key_seps=[],
         value=value,
@@ -1018,6 +1022,7 @@ def _append_dotted_kv_under_implicit(c: Container, key: str, value: Value) -> No
     seps = ["."] * (len(parts) - 1)
     new_slot = _new_kv_slot(
         host_path=host._path,  # noqa: SLF001
+        key=keypath,
         key_parts=parts,
         key_seps=seps,
         value=value,
