@@ -1381,10 +1381,9 @@ def _belongs_to_parent_extent(
     """
     if isinstance(slot, KVSlot):
         path = slot.host_path
-    elif isinstance(slot, StructuralHeaderSlot):
-        path = slot.path
     else:
-        return False
+        assert isinstance(slot, StructuralHeaderSlot)
+        path = slot.path
     n = len(base_path)
     if path[:n] != base_path:
         return False
@@ -1899,9 +1898,7 @@ def _gather_section_slots(src_table: Container) -> list[Slot]:
     and every nested sub-section's header + KV slots — i.e. the
     entire physical body of ``src_table``.
     """
-    if src_table._header_ref is None:  # noqa: SLF001
-        msg = "Source table has no structural header to clone"
-        raise RuntimeError(msg)
+    assert src_table._header_ref is not None  # noqa: SLF001
 
     owned: set[int] = set()
 
@@ -2179,44 +2176,16 @@ def _populate_entry_views(
 
 
 def _validate_clonable_aot_entry(src_entry: AoTEntry) -> list[Slot]:
-    """Validate the source entry can be cloned; return its slot list.
+    """Return the source entry's slot list.
 
-    Pure validation — no mutation. Raises NotImplementedError for
-    shapes the cloner does not yet support, RuntimeError for
-    invariant violations. Shared between `clone_aot_entry` and
-    `check_clone_aot_entry` so the two cannot drift.
+    Header slots other than the entry's own at index 0 are always
+    table-kind (``[[t.sub]]`` aot-entry headers live in their own
+    AoTEntry, not the outer one).
     """
     src_slots = list(src_entry.entry_slots)
-    if not src_slots or not isinstance(
-        src_slots[0], StructuralHeaderSlot
-    ):  # pragma: no cover
-        msg = "Source entry has no header slot"
-        raise RuntimeError(msg)
-    for s in src_slots[1:]:
-        if isinstance(s, StructuralHeaderSlot):
-            if s.kind != "table":
-                msg = "AoT clone for nested non-table headers is not yet implemented"
-                raise NotImplementedError(msg)
-            continue
-        if not isinstance(s, KVSlot):  # pragma: no cover
-            msg = "AoT clone: unexpected slot type"
-            raise AssertionError(msg)  # noqa: TRY004
+    assert src_slots
+    assert isinstance(src_slots[0], StructuralHeaderSlot)
     return src_slots
-
-
-def check_clone_aot_entry(aot: AoT, src_entry_table: Container) -> None:
-    """Raise NotImplementedError/RuntimeError if `clone_aot_entry` would.
-
-    Same preconditions as `clone_aot_entry`, but without any side
-    effects. Used by `AoT.__imul__` to preflight every source entry
-    so a failure on entry N does not leave entries 0..N-1 cloned.
-    """
-    _ = aot._attached_doc  # noqa: SLF001  # asserts attached invariants
-    src_entry = src_entry_table._owner_aot_entry  # noqa: SLF001
-    if src_entry is None:  # pragma: no cover
-        msg = "Source entry has no owning AoTEntry"
-        raise RuntimeError(msg)
-    _validate_clonable_aot_entry(src_entry)
 
 
 def attach_section_at(
@@ -2238,9 +2207,7 @@ def attach_section_at(
     )
 
     sub = tuple(sub_path)
-    if not sub:
-        msg = "sub_path must not be empty"
-        raise ValueError(msg)
+    assert sub, "attach_section_at requires a non-empty sub_path"
 
     doc = parent._attached_doc  # noqa: SLF001
     full_path = (*parent._path, *sub)  # noqa: SLF001
