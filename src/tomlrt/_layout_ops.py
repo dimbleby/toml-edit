@@ -1424,22 +1424,16 @@ def _splice_at_end(slot: Slot, doc: Document) -> None:
         insert_after(anchor, slot, doc)
 
 
-def _splice_block_at_parent_anchor(
-    slots: list[Slot], parent: Container, doc: Document
-) -> None:
-    """Splice a contiguous block immediately after parent's subtree tail.
-
-    Used by attach / clone primitives when installing a new structural
-    block under ``parent``. Falls back to splice-at-end if ``parent``
-    has no contributing slots yet (so anchor would be None).
-    """
-    anchor = _parent_subtree_tail(parent)
+def _splice_block_after(slots: list[Slot], anchor: Slot | None, doc: Document) -> None:
+    """Splice a contiguous slot block after ``anchor`` or at doc end."""
+    if not slots:
+        return
     if anchor is None:
         _splice_at_end(slots[0], doc)
     else:
         _ensure_terminator(anchor, doc)
         insert_after(anchor, slots[0], doc)
-    prev: Slot = slots[0]
+    prev = slots[0]
     for s in slots[1:]:
         _ensure_terminator(prev, doc)
         insert_after(prev, s, doc)
@@ -1726,6 +1720,36 @@ def clone_aot_entry(
     )
 
 
+def _install_cloned_structural_block(
+    table: Table,
+    *,
+    parent: Container,
+    doc: Document,
+    target_path: tuple[str, ...],
+    owner: AoTEntry | None,
+    cloned_header: StructuralHeaderSlot,
+    cloned_slots: list[Slot],
+    anchor: Slot | None,
+) -> None:
+    _wire_section_container(
+        table,
+        doc=doc,
+        path=target_path,
+        parent=parent,
+        owner=owner,
+        header=cloned_header,
+    )
+    _splice_block_after(cloned_slots, anchor, doc)
+    _file_header_binding_chain(parent, cloned_header)
+    _populate_entry_views(
+        entry_table=table,
+        cloned_slots=cloned_slots[1:],
+        target_prefix=target_path,
+        body_owner=owner,
+        doc=doc,
+    )
+
+
 def _install_cloned_aot_entry(
     aot: AoT,
     src_slots: list[Slot],
@@ -1784,35 +1808,15 @@ def _install_cloned_aot_entry(
     # else: keep source leading verbatim (cross-doc / cross-key).
 
     entry_table = Table()
-    _wire_section_container(
+    _install_cloned_structural_block(
         entry_table,
-        doc=doc,
-        path=target_path,
         parent=parent,
-        owner=new_entry,
-        header=cloned_header,
-    )
-
-    anchor = _last_aot_slot(aot)
-    if anchor is None:
-        _splice_at_end(cloned_header, doc)
-    else:
-        _ensure_terminator(anchor, doc)
-        insert_after(anchor, cloned_header, doc)
-    prev: Slot = cloned_header
-    for s in cloned_slots[1:]:  # pragma: no cover
-        _ensure_terminator(prev, doc)
-        insert_after(prev, s, doc)
-        prev = s
-
-    _file_header_binding_chain(parent, cloned_header)
-
-    _populate_entry_views(
-        entry_table=entry_table,
-        cloned_slots=cloned_slots[1:],
-        target_prefix=target_path,
-        body_owner=new_entry,
         doc=doc,
+        target_path=target_path,
+        owner=new_entry,
+        cloned_header=cloned_header,
+        cloned_slots=cloned_slots,
+        anchor=_last_aot_slot(aot),
     )
 
     list.append(aot, entry_table)
@@ -1859,25 +1863,15 @@ def _install_cloned_section(
     cloned_header.leading = _build_section_leading(doc)
 
     section = Table.section()
-    _wire_section_container(
+    _install_cloned_structural_block(
         section,
-        doc=doc,
-        path=target_path,
         parent=parent,
-        owner=parent._owner_aot_entry,  # noqa: SLF001
-        header=cloned_header,
-    )
-
-    _splice_block_at_parent_anchor(cloned_slots, parent, doc)
-
-    _file_header_binding_chain(parent, cloned_header)
-
-    _populate_entry_views(
-        entry_table=section,
-        cloned_slots=cloned_slots[1:],
-        target_prefix=target_path,
-        body_owner=parent._owner_aot_entry,  # noqa: SLF001
         doc=doc,
+        target_path=target_path,
+        owner=parent._owner_aot_entry,  # noqa: SLF001
+        cloned_header=cloned_header,
+        cloned_slots=cloned_slots,
+        anchor=_parent_subtree_tail(parent),
     )
 
     dict.__setitem__(parent, key, section)
@@ -2313,7 +2307,7 @@ def attach_section_at(
         header=header,
     )
 
-    _splice_block_at_parent_anchor([header], parent, doc)
+    _splice_block_after([header], _parent_subtree_tail(parent), doc)
     if owner is not None:
         # Own the new header on the AoT entry so a later delete of the
         # entry takes the promoted section with it.
@@ -2670,14 +2664,8 @@ def replace_aot_entry_with_clone(
     # After clear(), dst_entry.entry_slots should be [dst_header].
     assert dst_entry.entry_slots == [dst_header]
 
-    # Splice cloned body slots into the doc immediately after the
-    # destination header.
-    prev: Slot = dst_header
-    for s in cloned_body:
-        _ensure_terminator(prev, doc)
-        insert_after(prev, s, doc)
-        prev = s
-        dst_entry.entry_slots.append(s)
+    _splice_block_after(cloned_body, dst_header, doc)
+    dst_entry.entry_slots.extend(cloned_body)
 
     # Rebuild views / dict storage from the cloned body.
     _populate_entry_views(
