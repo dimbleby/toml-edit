@@ -150,9 +150,14 @@ class KVSlot(Slot):
 
 @dataclass(slots=True, eq=False)
 class StructuralHeaderSlot(Slot):
-    """One ``[a.b]`` or ``[[a.b]]`` header line."""
+    """One ``[a.b]`` or ``[[a.b]]`` header line.
 
-    kind: Literal["table", "aot-entry"] = field(kw_only=True)
+    ``entry`` is the discriminator: an aot-entry header carries a
+    non-``None`` :class:`AoTEntry`; a plain table header carries
+    ``None``. The :attr:`kind` property is derived from ``entry``
+    so the two cannot drift apart.
+    """
+
     path: tuple[str, ...] = field(kw_only=True)
     """Full decoded path of the section / AoT entry header."""
 
@@ -163,17 +168,22 @@ class StructuralHeaderSlot(Slot):
     eol: EolTrivia = field(kw_only=True)
 
     entry: AoTEntry | None = None
-    """The AoT entry this header opens, when ``kind == 'aot-entry'``."""
+    """The AoT entry this header opens; ``None`` for a plain table."""
 
     synthetic: bool = False
     """True iff this header was introduced by mutation."""
+
+    @property
+    def kind(self) -> Literal["table", "aot-entry"]:
+        """``"aot-entry"`` iff ``entry is not None``, else ``"table"``."""
+        return "aot-entry" if self.entry is not None else "table"
 
     def render_key(self) -> str:
         return render_dotted(self.key_parts, self.key_seps)
 
     @override
     def render(self) -> str:
-        if self.kind == "aot-entry":
+        if self.entry is not None:
             open_br, close_br = "[[", "]]"
         else:
             open_br, close_br = "[", "]"

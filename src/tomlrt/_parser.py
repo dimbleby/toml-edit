@@ -137,7 +137,6 @@ class _Parser:
 
         slot = StructuralHeaderSlot(
             leading=leading,
-            kind=kind,
             path=path,
             key_parts=key_parts,
             key_seps=key_seps,
