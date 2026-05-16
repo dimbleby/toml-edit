@@ -3421,6 +3421,81 @@ def test_scalar_overwrite_at_doc_tail_preserves_position() -> None:
         """)
 
 
+def test_scalar_overwrite_of_doc_root_section_relocates_before_headers() -> None:
+    """Replacing a top-level section with a scalar must lift the scalar
+    above all sibling section headers.
+
+    A top-level KV (or inline-value KV) is only legal *before* any
+    section header. Preserving the original `[b]` position would put
+    `b = ""` after `[a]` and re-parse as `a.b`, producing a duplicate
+    key. The overwrite must therefore drop position and reinsert at
+    the top-of-doc seam.
+    """
+    src = td("""
+        [a]
+        b = ""
+
+        [b]
+        """)
+    doc = tomlrt.loads(src)
+    doc["b"] = ""
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        b = ""
+
+        [a]
+        b = ""
+        """)
+    # Must round-trip: a top-level `b = ""` after `[a]` would parse
+    # as a duplicate `a.b` and raise.
+    assert tomlrt.dumps(tomlrt.loads(out)) == out
+
+
+def test_synth_inline_overwrite_of_doc_root_section_relocates_before_headers() -> None:
+    """Same shape as the scalar case but with an inline-table value."""
+    src = td("""
+        [a]
+        x = 1
+
+        [b]
+        y = 2
+        """)
+    doc = tomlrt.loads(src)
+    doc["b"] = {"q": 1}
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        b = { q = 1 }
+
+        [a]
+        x = 1
+        """)
+    assert tomlrt.dumps(tomlrt.loads(out)) == out
+
+
+def test_scalar_overwrite_of_doc_root_aot_relocates_before_headers() -> None:
+    """AoT → scalar at the doc root must also lift above sibling headers."""
+    src = td("""
+        [a]
+        x = 1
+
+        [[b]]
+        y = 2
+
+        [[b]]
+        y = 3
+        """)
+    doc = tomlrt.loads(src)
+    doc["b"] = 99
+    out = tomlrt.dumps(doc)
+    assert out == td("""
+        b = 99
+
+        [a]
+        x = 1
+        """)
+    assert tomlrt.dumps(tomlrt.loads(out)) == out
+
+
 def test_scalar_overwrite_of_discontiguous_implicit_binding() -> None:
     """Replacing an implicit binding whose region spans interleaved sections.
 
