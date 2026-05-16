@@ -220,21 +220,14 @@ class _Parser:
         ch = sc.src[pos] if pos < sc.end else ""
         if ch == '"' or ch == "'":
             return sc.scan_string()
-        if ch == "[":
+        if ch in ("[", "{"):
             if self._value_depth >= self._MAX_VALUE_DEPTH:
                 msg = f"value nesting exceeds maximum depth ({self._MAX_VALUE_DEPTH})"
                 raise sc.error(msg)
             self._value_depth += 1
             try:
-                return self._parse_array()
-            finally:
-                self._value_depth -= 1
-        if ch == "{":
-            if self._value_depth >= self._MAX_VALUE_DEPTH:
-                msg = f"value nesting exceeds maximum depth ({self._MAX_VALUE_DEPTH})"
-                raise sc.error(msg)
-            self._value_depth += 1
-            try:
+                if ch == "[":
+                    return self._parse_array()
                 return self._parse_inline_table()
             finally:
                 self._value_depth -= 1
