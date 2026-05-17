@@ -301,7 +301,7 @@ class Container(dict[str, Any]):
         Raises ``TypeError`` if descent passes through a non-table.
         """
         parts = split_path(key)
-        cur: Any = self
+        cur: object = self
         for i, p in enumerate(parts):
             if not isinstance(cur, Container):
                 msg = f"cannot descend into {parts[i - 1]!r}: not a table"
@@ -1344,8 +1344,8 @@ def _install_attached_subtree(
     a ``Table.section`` snapshot is installed at ``dst_path`` to
     carry them.
     """
-    direct_kvs: list[tuple[str, Any]] = []
-    structural: list[tuple[str, Any]] = []
+    direct_kvs: list[tuple[str, object]] = []
+    structural: list[tuple[str, object]] = []
     for k, v in src_table.items():
         if isinstance(v, AoT) or (_is_section(v)):
             structural.append((k, v))
@@ -1582,13 +1582,13 @@ def _retarget_to_doc(val: Value, layout_root: Document | None) -> None:
 
 def _populate_inline_table(
     table: Table | Container,
-    items: list[tuple[Any, Any]],
+    items: list[tuple[object, object]],
     *,
     layout_root: Document | None,
     parent: Container | None,
     path: tuple[str, ...],
     owner: AoTEntry | None,
-) -> tuple[InlineTableValue, Any]:
+) -> tuple[InlineTableValue, Container]:
     """Wire ``table`` as an inline view and populate its entries.
 
     Two callers: the live-attach path (passes a user-supplied

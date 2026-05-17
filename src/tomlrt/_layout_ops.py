@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from tomlrt._kind import _Kind
 from tomlrt._scalar import is_scalar
@@ -2177,7 +2177,7 @@ def attach_section_at(
     parent: Container,
     sub_path: tuple[str, ...] | list[str],
     source: Mapping[str, Any] | Container | None = None,
-) -> Any:
+) -> Table:
     """Synthesise ``[parent_path.sub_path]`` (multi-component) at end-of-doc.
 
     Intermediate components in ``sub_path[:-1]`` become implicit tables;
@@ -2300,11 +2300,7 @@ def attach_section(
     case. ``source`` may be ``None`` (empty section) or a Mapping
     (initial body). Returns the live `Table` view.
     """
-    section = attach_section_at(parent, (key,), source)
-    from tomlrt._container import Table  # noqa: PLC0415
-
-    assert isinstance(section, Table)
-    return section
+    return attach_section_at(parent, (key,), source)
 
 
 def _items_for_synth(source: Mapping[str, Any] | Container) -> list[tuple[str, object]]:
@@ -2328,7 +2324,10 @@ def _last_aot_slot(aot: AoT) -> Slot | None:
     return None
 
 
-def _pop_or_remove(lst: list[Any], item: Any) -> None:
+_PopT = TypeVar("_PopT")
+
+
+def _pop_or_remove(lst: list[_PopT], item: _PopT) -> None:
     """O(1) pop if ``item`` is at the tail; else C-level ``list.remove``.
 
     Both branches are C-implemented; the tail check avoids an
