@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, field, fields
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from tomlrt._container import Container
@@ -79,7 +79,7 @@ class Slot:
     `unfile_ref` (unregisters).
     """
 
-    def __deepcopy__(self, memo: dict[int, Any]) -> Slot:
+    def __deepcopy__(self, memo: dict[int, object]) -> Slot:
         """Deep-copy without following ``_refs``/``_prev``/``_next``.
 
         Cloned slots start with a fresh empty ``_refs`` (callers
@@ -93,7 +93,7 @@ class Slot:
         for f in fields(self):
             match f.name:
                 case "_prev" | "_next":
-                    value: Any = None
+                    value: object = None
                 case "_refs":
                     value = []
                 case _:
