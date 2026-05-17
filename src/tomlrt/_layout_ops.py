@@ -2291,18 +2291,6 @@ def attach_section_at(
     return section
 
 
-def attach_section(
-    parent: Container, key: str, source: Mapping[str, Any] | Container | None = None
-) -> Table:
-    """Synthesise ``[parent_path.key]`` at end-of-doc and attach.
-
-    Thin wrapper around `attach_section_at` for the single-component
-    case. ``source`` may be ``None`` (empty section) or a Mapping
-    (initial body). Returns the live `Table` view.
-    """
-    return attach_section_at(parent, (key,), source)
-
-
 def _items_for_synth(source: Mapping[str, Any] | Container) -> list[tuple[str, object]]:
     """Iterate items of a Mapping/dict/Container source as (key, value)."""
     return list(source.items())
@@ -2889,7 +2877,6 @@ __all__ = [
     "add_aot_entry",
     "append_direct_kv",
     "attach_empty_aot",
-    "attach_section",
     "attach_section_at",
     "delete_key",
     "insert_after",

@@ -446,7 +446,7 @@ def test_synthesise_roundtrip(data: dict[str, Any]) -> None:
 # The bytes-level parser fuzzer in test_fuzz.py never touches the editing
 # API, and the existing mutation property only overrides existing top-
 # level scalar slots; this fills the gap that hid the
-# `attach_section` / `_maybe_demote_synthetic_empty_header` ancestor-
+# `attach_section_at` / `_maybe_demote_synthetic_empty_header` ancestor-
 # anchor bug.
 # ---------------------------------------------------------------------------
 
