@@ -557,7 +557,7 @@ class Container(dict[str, Any]):
             return
         if src_root is not None and src_root._is_private:  # noqa: SLF001
             _reset_table_for_rehome(value)
-        _layout_ops.attach_section(self, key, value)
+        _layout_ops.attach_section_at(self, (key,), value)
 
     def _scalar_replace(self, key: str, value: Any) -> None:
         refs = self._index.get(key)
