@@ -2527,7 +2527,7 @@ def test_insert_before_later_child_section() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Coverage gaps: unattached AoT mutators (Phase 13)
+# Coverage gaps: unattached AoT mutators
 # ---------------------------------------------------------------------------
 
 
@@ -2617,7 +2617,7 @@ def test_unattached_aot_then_attach_preserves_contents() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Coverage gaps: ensure_table edge cases (Phase 13)
+# Coverage gaps: ensure_table edge cases
 # ---------------------------------------------------------------------------
 
 
@@ -2674,7 +2674,7 @@ def test_ensure_table_on_inline_leaf_via_inline_self() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Coverage gaps: AoT clone-with-dotted-key + nested AoT cleanup (Phase 13)
+# Coverage gaps: AoT clone-with-dotted-key + nested AoT cleanup
 # ---------------------------------------------------------------------------
 
 
@@ -2722,7 +2722,7 @@ def test_delete_aot_entry_with_nested_aot() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Coverage gaps: standalone Array multiline + comment inheritance (Phase 13)
+# Coverage gaps: standalone Array multiline + comment inheritance
 # ---------------------------------------------------------------------------
 
 

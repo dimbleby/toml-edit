@@ -88,9 +88,7 @@ class _Parser:
                 slot = self._parse_key_value(leading)
             result.slots.append(slot)
 
-        # Stitch the doubly-linked list. (The list itself is also
-        # returned so render can simply iterate; the `_prev`/`_next`
-        # pointers are for mutation phases.)
+        # Stitch the doubly-linked list.
         prev: Slot | None = None
         for slot in result.slots:
             slot._prev = prev  # noqa: SLF001
