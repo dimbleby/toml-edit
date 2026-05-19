@@ -808,7 +808,7 @@ def test_leading_comments_set_preserves_older_block() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Array element comments (Phase B)
+# Array element comments
 # ---------------------------------------------------------------------------
 
 
