@@ -96,6 +96,5 @@ def basic_string_lexeme(v: str) -> str:
     return "".join(out)
 
 
-def dt_kind(v: object) -> DateLikeKind:
-    assert isinstance(v, datetime)
+def dt_kind(v: datetime) -> DateLikeKind:
     return "offset-datetime" if v.tzinfo is not None else "local-datetime"
