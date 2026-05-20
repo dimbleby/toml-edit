@@ -50,8 +50,8 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     permissions:
-      pages: write
-      id-token: write
+      pages: write # deploy the built site to GitHub Pages
+      id-token: write # OIDC token for actions/deploy-pages authentication
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
